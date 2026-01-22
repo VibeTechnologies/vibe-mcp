@@ -1,0 +1,54 @@
+{
+  "name": "@anthropic/vibe-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Vibe AI Browser - allows AI agents to control your browser",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "vibe-mcp": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/cli.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "browser",
+    "automation",
+    "ai",
+    "vibe",
+    "claude",
+    "cursor",
+    "windsurf"
+  ],
+  "author": "Vibe Technologies",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VibeTechnologies/vibe-mcp.git"
+  },
+  "homepage": "https://vibebrowser.app",
+  "bugs": {
+    "url": "https://github.com/VibeTechnologies/vibe-mcp/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "commander": "^12.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
+}

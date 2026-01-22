@@ -42,7 +42,7 @@ Edit your Claude Desktop config file:
   "mcpServers": {
     "vibe": {
       "command": "npx",
-      "args": ["-y", "@anthropic/vibe-mcp"]
+      "args": ["-y", "@vibebrowser/mcp"]
     }
   }
 }
@@ -63,7 +63,7 @@ Restart Claude Desktop after saving.
 {
   "vibe": {
     "command": "npx",
-    "args": ["-y", "@anthropic/vibe-mcp"]
+    "args": ["-y", "@vibebrowser/mcp"]
   }
 }
 ```
@@ -82,7 +82,7 @@ Add to your VS Code settings.json:
   "github.copilot.chat.mcpServers": {
     "vibe": {
       "command": "npx",
-      "args": ["-y", "@anthropic/vibe-mcp"]
+      "args": ["-y", "@vibebrowser/mcp"]
     }
   }
 }
@@ -102,7 +102,7 @@ Edit `~/.codeium/windsurf/mcp_config.json`:
   "mcpServers": {
     "vibe": {
       "command": "npx",
-      "args": ["-y", "@anthropic/vibe-mcp"]
+      "args": ["-y", "@vibebrowser/mcp"]
     }
   }
 }
@@ -121,7 +121,7 @@ Add to your `.opencode/config.json`:
     "servers": {
       "vibe": {
         "command": "npx",
-        "args": ["-y", "@anthropic/vibe-mcp"]
+        "args": ["-y", "@vibebrowser/mcp"]
       }
     }
   }
@@ -140,7 +140,7 @@ Add to `~/.gemini/settings.json`:
   "mcpServers": {
     "vibe": {
       "command": "npx",
-      "args": ["-y", "@anthropic/vibe-mcp"]
+      "args": ["-y", "@vibebrowser/mcp"]
     }
   }
 }
@@ -158,7 +158,7 @@ Add to your Codex configuration:
   "mcp": {
     "vibe": {
       "command": "npx",
-      "args": ["-y", "@anthropic/vibe-mcp"]
+      "args": ["-y", "@vibebrowser/mcp"]
     }
   }
 }

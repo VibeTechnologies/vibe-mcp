@@ -23,10 +23,11 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
  * Message from extension to MCP server
  */
 export interface ExtensionMessage {
-  type: 'connected' | 'disconnected' | 'tool_result' | 'tools_list' | 'error' | 'snapshot';
+  type: 'connected' | 'disconnected' | 'tool_result' | 'tools_list' | 'error' | 'snapshot' | 'extension_status' | 'extension_disconnected';
   requestId?: string;
   data?: unknown;
   error?: string;
+  connected?: boolean;
 }
 
 /**

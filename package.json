@@ -1,6 +1,7 @@
 {
   "name": "@vibebrowser/mcp",
   "version": "0.1.0",
+  "type": "module",
   "description": "MCP server for Vibe AI Browser - allows AI agents to control your browser",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

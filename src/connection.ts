@@ -1,13 +1,15 @@
 /**
- * Vibe MCP Server - Extension Connection
+ * Vibe MCP Server - Relay Connection
  * 
- * Manages WebSocket connection to the Vibe browser extension.
+ * Connects to the relay server as a WebSocket client.
+ * The relay handles the actual extension connection.
  */
 
-import { WebSocketServer, WebSocket } from 'ws';
+import WebSocket from 'ws';
 import { EventEmitter } from 'events';
+import { spawn } from 'child_process';
+import { dirname, join } from 'path';
 import {
-  DEFAULT_WS_PORT,
   ConnectionStatus,
   ExtensionMessage,
   ServerMessage,
@@ -15,11 +17,15 @@ import {
   ToolResult,
   SnapshotResult,
 } from './types.js';
+import { isRelayRunning, AGENT_PORT, EXTENSION_PORT } from './relay.js';
 
 const NO_CONNECTION_MESSAGE = `No connection to Vibe extension. Please:
 1. Install the Vibe AI Browser extension from https://vibebrowser.app
 2. Click the Vibe extension icon in Chrome
-3. Click "Connect to MCP" to enable external control`;
+3. Enable "MCP External Control" in Settings`;
+
+const RELAY_CONNECT_TIMEOUT = 10000;
+const RELAY_RECONNECT_DELAY = 2000;
 
 /**
  * Pending request waiting for response
@@ -31,10 +37,11 @@ interface PendingRequest {
 }
 
 /**
- * Extension connection manager
+ * Relay connection manager
+ * 
+ * Connects to the relay server instead of directly to the extension.
  */
 export class ExtensionConnection extends EventEmitter {
-  private wss: WebSocketServer | null = null;
   private ws: WebSocket | null = null;
   private status: ConnectionStatus = 'disconnected';
   private pendingRequests: Map<string, PendingRequest> = new Map();
@@ -43,34 +50,128 @@ export class ExtensionConnection extends EventEmitter {
   private debug: boolean;
   private tools: ToolDefinition[] = [];
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private extensionConnected: boolean = false;
 
-  constructor(port: number = DEFAULT_WS_PORT, debug: boolean = false) {
+  constructor(port: number = AGENT_PORT, debug: boolean = false) {
     super();
     this.port = port;
     this.debug = debug;
   }
 
   /**
-   * Start the WebSocket server and wait for extension connection
+   * Start connection to relay server
+   * Spawns relay daemon if not already running
    */
   async start(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    // Check if relay is already running
+    if (!isRelayRunning()) {
+      this.log('Starting relay daemon...');
+      await this.spawnRelay();
+      // Wait for relay to start
+      await this.waitForRelay();
+    }
+
+    // Connect to relay
+    await this.connectToRelay();
+  }
+
+  /**
+   * Spawn relay daemon as detached process
+   */
+  private async spawnRelay(): Promise<void> {
+    // Use __dirname equivalent for ESM
+    const relayScript = join(dirname(new URL(import.meta.url).pathname), 'relay-daemon.js');
+    
+    const child = spawn(process.execPath, [relayScript, this.debug ? '--debug' : ''], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    
+    child.unref();
+    this.log('Relay daemon spawned');
+  }
+
+  /**
+   * Wait for relay to become available
+   */
+  private async waitForRelay(): Promise<void> {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < RELAY_CONNECT_TIMEOUT) {
       try {
-        this.wss = new WebSocketServer({ port: this.port, host: '127.0.0.1' });
+        // Try to connect
+        await new Promise<void>((resolve, reject) => {
+          const ws = new WebSocket(`ws://127.0.0.1:${AGENT_PORT}`);
+          const timeout = setTimeout(() => {
+            ws.close();
+            reject(new Error('Timeout'));
+          }, 1000);
+          
+          ws.on('open', () => {
+            clearTimeout(timeout);
+            ws.close();
+            resolve();
+          });
+          
+          ws.on('error', () => {
+            clearTimeout(timeout);
+            reject(new Error('Connection failed'));
+          });
+        });
         
-        this.wss.on('listening', () => {
-          this.log(`WebSocket server listening on ws://127.0.0.1:${this.port}`);
+        this.log('Relay is ready');
+        return;
+      } catch (error) {
+        // Relay not ready yet, wait and retry
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+    
+    throw new Error('Relay failed to start within timeout');
+  }
+
+  /**
+   * Connect to the relay server
+   */
+  private async connectToRelay(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const url = `ws://127.0.0.1:${AGENT_PORT}`;
+      this.log(`Connecting to relay at ${url}...`);
+
+      try {
+        this.ws = new WebSocket(url);
+
+        this.ws.on('open', () => {
+          this.log('Connected to relay');
+          this.status = 'connected';
+          this.emit('connected');
           resolve();
         });
 
-        this.wss.on('connection', (ws) => {
-          this.handleConnection(ws);
+        this.ws.on('message', (data) => {
+          try {
+            const message = JSON.parse(data.toString());
+            this.handleMessage(message);
+          } catch (error) {
+            this.log(`Failed to parse message: ${error}`);
+          }
         });
 
-        this.wss.on('error', (error) => {
-          this.log(`WebSocket server error: ${error.message}`);
+        this.ws.on('close', () => {
+          this.log('Disconnected from relay');
+          this.ws = null;
+          this.status = 'disconnected';
+          this.emit('disconnected');
+          
+          // Schedule reconnect
+          this.scheduleReconnect();
+        });
+
+        this.ws.on('error', (error) => {
+          this.log(`WebSocket error: ${error.message}`);
           reject(error);
         });
+
       } catch (error) {
         reject(error);
       }
@@ -78,7 +179,26 @@ export class ExtensionConnection extends EventEmitter {
   }
 
   /**
-   * Stop the WebSocket server
+   * Schedule reconnection attempt
+   */
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+
+    this.reconnectTimer = setTimeout(async () => {
+      this.log('Attempting to reconnect to relay...');
+      try {
+        await this.connectToRelay();
+      } catch (error) {
+        this.log(`Reconnect failed: ${error}`);
+        this.scheduleReconnect();
+      }
+    }, RELAY_RECONNECT_DELAY);
+  }
+
+  /**
+   * Stop the connection
    */
   async stop(): Promise<void> {
     if (this.reconnectTimer) {
@@ -89,7 +209,7 @@ export class ExtensionConnection extends EventEmitter {
     // Reject all pending requests
     for (const [id, request] of this.pendingRequests) {
       clearTimeout(request.timeout);
-      request.reject(new Error('Server shutting down'));
+      request.reject(new Error('Connection closed'));
     }
     this.pendingRequests.clear();
 
@@ -98,64 +218,28 @@ export class ExtensionConnection extends EventEmitter {
       this.ws = null;
     }
 
-    if (this.wss) {
-      return new Promise((resolve) => {
-        this.wss!.close(() => {
-          this.wss = null;
-          this.status = 'disconnected';
-          resolve();
-        });
-      });
-    }
+    this.status = 'disconnected';
   }
 
   /**
-   * Handle new WebSocket connection from extension
-   */
-  private handleConnection(ws: WebSocket): void {
-    this.log('Extension connected');
-    
-    // Close previous connection if any
-    if (this.ws) {
-      this.ws.close();
-    }
-    
-    this.ws = ws;
-    this.status = 'connected';
-    this.emit('connected');
-
-    ws.on('message', (data) => {
-      try {
-        const message: ExtensionMessage = JSON.parse(data.toString());
-        this.handleMessage(message);
-      } catch (error) {
-        this.log(`Failed to parse message: ${error}`);
-      }
-    });
-
-    ws.on('close', () => {
-      this.log('Extension disconnected');
-      this.ws = null;
-      this.status = 'disconnected';
-      this.tools = [];
-      this.emit('disconnected');
-    });
-
-    ws.on('error', (error) => {
-      this.log(`WebSocket error: ${error.message}`);
-    });
-
-    // Request available tools
-    this.refreshTools().catch((error) => {
-      this.log(`Failed to get tools: ${error.message}`);
-    });
-  }
-
-  /**
-   * Handle message from extension
+   * Handle message from relay
    */
   private handleMessage(message: ExtensionMessage): void {
     this.log(`Received: ${message.type}`);
+
+    // Handle extension status updates
+    if (message.type === 'extension_status') {
+      this.extensionConnected = message.connected ?? false;
+      this.emit('extension_status', this.extensionConnected);
+      return;
+    }
+
+    if (message.type === 'extension_disconnected') {
+      this.extensionConnected = false;
+      this.tools = [];
+      this.emit('extension_disconnected');
+      return;
+    }
 
     // Handle responses to pending requests
     if (message.requestId) {
@@ -177,6 +261,7 @@ export class ExtensionConnection extends EventEmitter {
     switch (message.type) {
       case 'tools_list':
         this.tools = message.data as ToolDefinition[];
+        this.extensionConnected = true;
         this.emit('tools_updated', this.tools);
         break;
 
@@ -185,13 +270,13 @@ export class ExtensionConnection extends EventEmitter {
         break;
 
       case 'error':
-        this.log(`Extension error: ${message.error}`);
+        this.log(`Error: ${message.error}`);
         break;
     }
   }
 
   /**
-   * Send a message to the extension and wait for response
+   * Send a message to the extension via relay and wait for response
    */
   private async sendRequest<T>(
     type: ServerMessage['type'],
@@ -199,6 +284,10 @@ export class ExtensionConnection extends EventEmitter {
     timeoutMs: number = 30000
   ): Promise<T> {
     if (!this.ws || this.status !== 'connected') {
+      throw new Error('Not connected to relay');
+    }
+
+    if (!this.extensionConnected) {
       throw new Error(NO_CONNECTION_MESSAGE);
     }
 
@@ -253,10 +342,10 @@ export class ExtensionConnection extends EventEmitter {
   }
 
   /**
-   * Check if extension is connected
+   * Check if extension is connected (via relay)
    */
   isConnected(): boolean {
-    return this.status === 'connected';
+    return this.status === 'connected' && this.extensionConnected;
   }
 
   /**
@@ -264,6 +353,13 @@ export class ExtensionConnection extends EventEmitter {
    */
   getStatus(): ConnectionStatus {
     return this.status;
+  }
+
+  /**
+   * Check if extension is connected to relay
+   */
+  isExtensionConnected(): boolean {
+    return this.extensionConnected;
   }
 
   /**

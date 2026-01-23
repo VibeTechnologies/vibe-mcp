@@ -2,9 +2,11 @@
  * Vibe MCP Relay Server
  * 
  * Daemon that multiplexes multiple MCP agents to a single browser extension.
- * - Listens on port 19989 for extension connection (one client)
- * - Listens on port 19988 for MCP agent connections (multiple clients)
+ * - Listens on port 19889 for extension connection (one client)
+ * - Listens on port 19888 for MCP agent connections (multiple clients)
  * - Routes tool calls from agents to extension, responses back to agents
+ * 
+ * Note: Using 19888/19889 to avoid conflict with Playwriter MCP (uses 19988/19989)
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
@@ -13,9 +15,9 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
 
-// Ports
-export const EXTENSION_PORT = 19989;
-export const AGENT_PORT = 19988;
+// Ports (19888/19889 to avoid conflict with Playwriter MCP which uses 19988/19989)
+export const EXTENSION_PORT = 19889;
+export const AGENT_PORT = 19888;
 
 // PID file location
 const VIBE_DIR = join(homedir(), '.vibe-mcp');

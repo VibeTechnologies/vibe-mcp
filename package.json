@@ -1,6 +1,6 @@
 {
   "name": "@vibebrowser/mcp",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "description": "MCP server for browser automation - the only solution supporting multiple AI agents (Claude, Cursor, VS Code) simultaneously controlling your Chrome browser",
   "main": "dist/index.js",

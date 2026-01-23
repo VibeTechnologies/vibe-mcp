@@ -52,7 +52,20 @@ Claude Desktop       Cursor          VS Code         OpenCode
 
 ### 1. Install the Vibe Extension
 
-Get the Vibe AI Browser extension from [vibebrowser.app](https://vibebrowser.app) or the [Chrome Web Store](https://chromewebstore.google.com/detail/vibe-ai-web-agent/ajfjlohdpfgngdjfafhhcnpmijbbdgln).
+Install the Vibe AI Browser extension in Chrome, Brave, or any Chromium browser:
+
+**Option A: Chrome Web Store (Recommended)**
+1. Visit the [Chrome Web Store](https://chromewebstore.google.com/detail/vibe-ai-browser-co-pilot/djodpgokbmobeclicaicnnidccoinado)
+2. Click "Add to Chrome"
+3. The Vibe icon will appear in your toolbar
+
+**Option B: Developer Version**
+1. Download the [latest release ZIP](https://github.com/VibeTechnologies/VibeWebAgent/releases/latest/download/vibe-ai-copilot-latest.zip)
+2. Extract to a permanent folder
+3. Go to `chrome://extensions`, enable Developer Mode
+4. Click "Load unpacked" and select the extracted folder
+
+For detailed instructions, see the [installation guide](https://docs.vibebrowser.app/getting-started/extension).
 
 ### 2. Configure Your AI Application
 

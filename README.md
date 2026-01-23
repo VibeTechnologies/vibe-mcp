@@ -1,34 +1,60 @@
-# Vibe MCP
+# Vibe MCP - Browser Automation for AI Agents
 
-MCP server for [Vibe AI Browser](https://vibebrowser.app) - allows AI agents to control your browser.
+[![npm version](https://img.shields.io/npm/v/@vibebrowser/mcp.svg)](https://www.npmjs.com/package/@vibebrowser/mcp)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-## What is this?
+MCP server for [Vibe AI Browser](https://vibebrowser.app) - the **only browser automation tool that supports multiple AI agents simultaneously**.
 
-Vibe MCP connects AI applications like Claude Desktop, Cursor, VS Code, and others to your Chrome browser through the Vibe extension. This enables AI to:
+## Why Vibe MCP?
 
-- Navigate to websites
-- Click buttons and links
-- Fill out forms
-- Take screenshots
-- Extract page content
-- And much more
+| Feature | Vibe MCP | Playwright MCP | BrowserMCP |
+|---------|----------|----------------|------------|
+| **Multi-Agent Support** | Yes | No | No |
+| Uses Your Browser Profile | Yes | No | No |
+| Logged-In Sessions | Yes | No | No |
+| No Separate Browser | Yes | No | No |
+| Local & Private | Yes | Yes | Partial |
+| Content Script Based | Yes | No | No |
+
+### Multi-Agent Architecture
+
+Vibe MCP is the **only solution that allows multiple AI agents to control the same browser simultaneously**. Run Claude Desktop, Cursor, VS Code Copilot, and OpenCode all at once - they all share control of your browser through our relay architecture.
+
+```
+Claude Desktop       Cursor          VS Code         OpenCode
+     |                  |                |               |
+     v                  v                v               v
+ [vibe-mcp]        [vibe-mcp]       [vibe-mcp]      [vibe-mcp]
+     |                  |                |               |
+     +------------------+----------------+---------------+
+                        |
+                        v
+                  [Relay Daemon]  <-- Auto-spawned, handles multiplexing
+                        |
+                        v
+                 [Vibe Extension]
+                        |
+                        v
+                   [Your Chrome]
+```
+
+**Competitors like Playwright MCP and BrowserMCP fail when you try to run multiple agents** - they get port conflicts or connection errors. Vibe MCP just works.
 
 ## Features
 
-- **Fast** - Automation happens locally on your machine
-- **Private** - Your browser activity stays on your device
-- **Logged In** - Uses your existing browser profile with all your sessions
-- **Stable** - Uses content scripts instead of CDP, avoiding common disconnection issues
+- **Multi-Agent Ready** - Run Claude, Cursor, VS Code, and more simultaneously
+- **Uses Your Browser** - No separate browser instance, uses your existing Chrome with all your logins
+- **Fast & Local** - Automation happens on your machine, no cloud latency
+- **Private** - Your browsing data never leaves your device
+- **Stable** - Content script based, no flaky CDP connections
 
-## Installation
+## Quick Start
 
 ### 1. Install the Vibe Extension
 
-Install the Vibe AI Browser extension from [vibebrowser.app](https://vibebrowser.app) or the [Chrome Web Store](https://chrome.google.com/webstore).
+Get the Vibe AI Browser extension from [vibebrowser.app](https://vibebrowser.app) or the [Chrome Web Store](https://chromewebstore.google.com/detail/vibe-ai-web-agent/ajfjlohdpfgngdjfafhhcnpmijbbdgln).
 
 ### 2. Configure Your AI Application
-
-Add the Vibe MCP server to your AI application's configuration:
 
 <details>
 <summary><strong>Claude Desktop</strong></summary>
@@ -56,7 +82,7 @@ Restart Claude Desktop after saving.
 <summary><strong>Cursor</strong></summary>
 
 1. Open Cursor Settings (Cmd/Ctrl + ,)
-2. Go to "Features" → "MCP Servers"
+2. Go to "Features" -> "MCP Servers"
 3. Click "Add Server" and add:
 
 ```json
@@ -87,8 +113,6 @@ Add to your VS Code settings.json:
   }
 }
 ```
-
-Or use the MCP extension settings UI.
 
 </details>
 
@@ -170,91 +194,76 @@ Add to your Codex configuration:
 
 1. Open Chrome with the Vibe extension installed
 2. Click the Vibe extension icon in the toolbar
-3. Click "Connect to MCP" to enable external control
+3. Go to Settings and enable "MCP External Control"
 4. The status should show "Connected"
 
 ## Available Tools
 
-The MCP server exposes all Vibe browser tools:
-
 | Tool | Description |
 |------|-------------|
-| `navigate_to_url` | Navigate to a URL |
-| `go_back` | Go back in history |
-| `go_forward` | Go forward in history |
-| `click` | Click an element |
-| `type` | Type text into an element |
-| `fill` | Fill a form field |
+| `navigate_to_url` | Navigate to any URL |
+| `go_back` / `go_forward` | Browser history navigation |
+| `click` | Click elements on the page |
+| `type` / `fill` | Enter text into inputs |
 | `scroll` | Scroll the page |
-| `take_screenshot` | Capture a screenshot |
-| `get_page_content` | Get page text content |
-| `list_tabs` | List open browser tabs |
-| `create_new_tab` | Open a new tab |
-| `switch_to_tab` | Switch to a tab |
-| `close_tab` | Close a tab |
-| `keyboard_shortcut` | Press keyboard shortcuts |
+| `take_screenshot` | Capture screenshots |
+| `get_page_content` | Extract page text/HTML |
+| `get_tabs` / `create_new_tab` / `switch_to_tab` / `close_tab` | Tab management |
+| `keyboard_shortcut` | Press keyboard combinations |
 | `web_search` | Search the web |
+
+## How It Works
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│ AI Application  │────>│  Vibe MCP       │────>│ Vibe Extension  │
+│ (Claude/Cursor) │stdio│  (this package) │ WS  │ (Chrome)        │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
+
+1. AI applications connect via MCP protocol (stdio)
+2. Vibe MCP forwards commands to the browser extension via WebSocket
+3. The extension executes actions in your actual browser
+4. Results flow back to the AI
+
+### Multi-Agent Mode
+
+When multiple agents connect, Vibe MCP automatically spawns a relay daemon:
+
+- First agent starts the relay (listens on ports 19988 and 19989)
+- Additional agents connect to the relay as clients
+- Relay multiplexes all agent requests to the single extension connection
+- Each agent receives only its own responses
 
 ## CLI Options
 
 ```bash
-npx @anthropic/vibe-mcp --help
+npx @vibebrowser/mcp --help
 
 Options:
-  -p, --port <number>  WebSocket port for extension connection (default: 19989)
+  -p, --port <number>  WebSocket port for extension (default: 19989)
   -d, --debug          Enable debug logging
   -h, --help           Show help
 ```
-
-## Architecture
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│ AI Application  │────►│ Vibe MCP Server │────►│ Vibe Extension  │
-│ (Claude/Cursor) │stdio│ (this package)  │ WS  │ (Chrome)        │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
-```
-
-The MCP server:
-1. Receives tool calls from AI applications via stdio (MCP protocol)
-2. Forwards them to the Vibe extension via WebSocket
-3. Returns results back to the AI application
 
 ## Troubleshooting
 
 ### "No connection to Vibe extension"
 
-1. Make sure the Vibe extension is installed in Chrome
-2. Click the extension icon and ensure "Connect to MCP" is enabled
-3. Check that no other application is using port 19989
-
-### Port already in use
-
-Use a different port:
-
-```json
-{
-  "mcpServers": {
-    "vibe": {
-      "command": "npx",
-      "args": ["-y", "@anthropic/vibe-mcp", "--port", "19990"]
-    }
-  }
-}
-```
-
-Make sure to also update the port in the extension settings.
+1. Ensure the Vibe extension is installed in Chrome
+2. Click the extension icon and enable "MCP External Control" in Settings
+3. Check that no firewall is blocking localhost connections
 
 ### Debug mode
 
-Enable debug logging to see what's happening:
+Enable debug logging to diagnose issues:
 
 ```json
 {
   "mcpServers": {
     "vibe": {
       "command": "npx",
-      "args": ["-y", "@anthropic/vibe-mcp", "--debug"]
+      "args": ["-y", "@vibebrowser/mcp", "--debug"]
     }
   }
 }
@@ -263,19 +272,16 @@ Enable debug logging to see what's happening:
 ## Development
 
 ```bash
-# Clone the repository
 git clone https://github.com/VibeTechnologies/vibe-mcp.git
 cd vibe-mcp
-
-# Install dependencies
 npm install
-
-# Build
 npm run build
-
-# Run locally
 node dist/cli.js --debug
 ```
+
+## Keywords
+
+browser automation, mcp server, model context protocol, ai browser control, claude desktop browser, cursor browser automation, web automation, chrome automation, ai agent browser, multi-agent browser control, playwright alternative, puppeteer alternative, browser mcp, web scraping ai, ai web agent
 
 ## License
 
@@ -283,7 +289,8 @@ Apache-2.0
 
 ## Links
 
-- [Vibe AI Browser](https://vibebrowser.app)
-- [Documentation](https://docs.vibebrowser.app)
-- [GitHub](https://github.com/VibeTechnologies/vibe-mcp)
-- [Report Issues](https://github.com/VibeTechnologies/vibe-mcp/issues)
+- [Vibe AI Browser](https://vibebrowser.app) - Main product
+- [Documentation](https://docs.vibebrowser.app) - Full docs
+- [Chrome Extension](https://chromewebstore.google.com/detail/vibe-ai-web-agent/ajfjlohdpfgngdjfafhhcnpmijbbdgln) - Install extension
+- [GitHub Issues](https://github.com/VibeTechnologies/vibe-mcp/issues) - Report bugs
+- [npm Package](https://www.npmjs.com/package/@vibebrowser/mcp) - npm registry

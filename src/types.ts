@@ -100,4 +100,8 @@ export interface ServerConfig {
   port: number;
   host: string;
   debug: boolean;
+  /** Remote relay UUID — when set, connects to public relay instead of local */
+  remoteUuid?: string;
+  /** Remote relay URL — defaults to wss://relay.api.vibebrowser.app */
+  remoteRelayUrl?: string;
 }

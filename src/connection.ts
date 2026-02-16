@@ -2,7 +2,9 @@
  * Vibe MCP Server - Relay Connection
  * 
  * Connects to the relay server as a WebSocket client.
- * The relay handles the actual extension connection.
+ * Supports two modes:
+ *   - Local: connects to local relay daemon at ws://127.0.0.1:19888
+ *   - Remote: connects to public relay at wss://relay.api.vibebrowser.app/<uuid>
  */
 
 import WebSocket from 'ws';
@@ -24,8 +26,24 @@ const NO_CONNECTION_MESSAGE = `No connection to Vibe extension. Please:
 2. Click the Vibe extension icon in Chrome
 3. Enable "MCP External Control" in Settings`;
 
+const NO_CONNECTION_REMOTE_MESSAGE = `No connection to Vibe extension via remote relay. Please:
+1. Install the Vibe AI Browser extension from https://vibebrowser.app
+2. Open extension Settings > MCP External
+3. Select "Remote" mode and note your Extension UUID
+4. Make sure the extension is connected to the relay`;
+
 const RELAY_CONNECT_TIMEOUT = 10000;
 const RELAY_RECONNECT_DELAY = 2000;
+
+const DEFAULT_RELAY_URL = 'wss://relay.api.vibebrowser.app';
+
+/**
+ * Remote relay configuration
+ */
+export interface RemoteConfig {
+  uuid: string;
+  relayUrl?: string; // defaults to DEFAULT_RELAY_URL
+}
 
 /**
  * Pending request waiting for response
@@ -39,7 +57,7 @@ interface PendingRequest {
 /**
  * Relay connection manager
  * 
- * Connects to the relay server instead of directly to the extension.
+ * Connects to a relay server (local or remote) to reach the extension.
  */
 export class ExtensionConnection extends EventEmitter {
   private ws: WebSocket | null = null;
@@ -51,19 +69,28 @@ export class ExtensionConnection extends EventEmitter {
   private tools: ToolDefinition[] = [];
   private reconnectTimer: NodeJS.Timeout | null = null;
   private extensionConnected: boolean = false;
+  private remoteConfig: RemoteConfig | null = null;
 
-  constructor(port: number = AGENT_PORT, debug: boolean = false) {
+  constructor(port: number = AGENT_PORT, debug: boolean = false, remote?: RemoteConfig) {
     super();
     this.port = port;
     this.debug = debug;
+    this.remoteConfig = remote || null;
   }
 
   /**
-   * Start connection to relay server
-   * Spawns relay daemon if not already running
+   * Start connection to relay server.
+   * In local mode: spawns relay daemon if needed, then connects.
+   * In remote mode: connects directly to public relay.
    */
   async start(): Promise<void> {
-    // Check if relay is already running
+    if (this.remoteConfig) {
+      this.log(`Remote mode: connecting to relay for UUID ${this.remoteConfig.uuid}`);
+      await this.connectToRelay();
+      return;
+    }
+
+    // Local mode: check if relay is already running
     if (!isRelayRunning()) {
       this.log('Starting relay daemon...');
       await this.spawnRelay();
@@ -76,7 +103,7 @@ export class ExtensionConnection extends EventEmitter {
   }
 
   /**
-   * Spawn relay daemon as detached process
+   * Spawn relay daemon as detached process (local mode only)
    */
   private async spawnRelay(): Promise<void> {
     // Use __dirname equivalent for ESM
@@ -92,7 +119,7 @@ export class ExtensionConnection extends EventEmitter {
   }
 
   /**
-   * Wait for relay to become available
+   * Wait for local relay to become available
    */
   private async waitForRelay(): Promise<void> {
     const startTime = Date.now();
@@ -131,11 +158,24 @@ export class ExtensionConnection extends EventEmitter {
   }
 
   /**
-   * Connect to the relay server
+   * Get the WebSocket URL for connection.
+   * Local mode: ws://127.0.0.1:<port>
+   * Remote mode: wss://relay.api.vibebrowser.app/<uuid>
+   */
+  private getRelayUrl(): string {
+    if (this.remoteConfig) {
+      const base = this.remoteConfig.relayUrl || DEFAULT_RELAY_URL;
+      return `${base}/${this.remoteConfig.uuid}`;
+    }
+    return `ws://127.0.0.1:${this.port}`;
+  }
+
+  /**
+   * Connect to the relay server (local or remote)
    */
   private async connectToRelay(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const url = `ws://127.0.0.1:${AGENT_PORT}`;
+      const url = this.getRelayUrl();
       this.log(`Connecting to relay at ${url}...`);
 
       try {
@@ -288,7 +328,7 @@ export class ExtensionConnection extends EventEmitter {
     }
 
     if (!this.extensionConnected) {
-      throw new Error(NO_CONNECTION_MESSAGE);
+      throw new Error(this.remoteConfig ? NO_CONNECTION_REMOTE_MESSAGE : NO_CONNECTION_MESSAGE);
     }
 
     const requestId = `req_${++this.requestIdCounter}`;

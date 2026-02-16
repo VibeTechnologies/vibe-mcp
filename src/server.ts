@@ -11,7 +11,7 @@ import {
   ListToolsRequestSchema,
   ToolSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { ExtensionConnection } from './connection.js';
+import { ExtensionConnection, RemoteConfig } from './connection.js';
 import { MCP_PROTOCOL_VERSION, ServerConfig, ToolDefinition } from './types.js';
 
 const SERVER_NAME = 'vibe-mcp';
@@ -32,9 +32,15 @@ export class VibeMcpServer {
       port: config.port ?? 19989,
       host: config.host ?? '127.0.0.1',
       debug: config.debug ?? false,
+      remoteUuid: config.remoteUuid,
+      remoteRelayUrl: config.remoteRelayUrl,
     };
 
-    this.connection = new ExtensionConnection(this.config.port, this.config.debug);
+    const remoteConfig: RemoteConfig | undefined = this.config.remoteUuid
+      ? { uuid: this.config.remoteUuid, relayUrl: this.config.remoteRelayUrl }
+      : undefined;
+
+    this.connection = new ExtensionConnection(this.config.port, this.config.debug, remoteConfig);
 
     this.server = new Server(
       {
@@ -111,9 +117,13 @@ export class VibeMcpServer {
    * Start the MCP server
    */
   async start(): Promise<void> {
-    // Start WebSocket server for extension connection
+    // Start connection to extension (local relay or remote)
     await this.connection.start();
-    this.log(`Waiting for Vibe extension connection on port ${this.config.port}...`);
+    if (this.config.remoteUuid) {
+      this.log(`Connected to remote relay for UUID ${this.config.remoteUuid}`);
+    } else {
+      this.log(`Waiting for Vibe extension connection on port ${this.config.port}...`);
+    }
 
     // Connect MCP server to stdio transport
     const transport = new StdioServerTransport();

@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import process from 'node:process';
 import WebSocket from 'ws';
@@ -9,6 +12,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 const EXTENSION_PORT = 19889;
 const RELAY_HOST = '127.0.0.1';
 const TIMEOUT_MS = 120_000;
+const RELAY_PID_FILE = join(homedir(), '.vibe-mcp', 'relay.pid');
 
 const TOOL = {
   name: 'noop',
@@ -38,6 +42,35 @@ const run = (cmd, args, opts = {}) => new Promise((resolve, reject) => {
     resolve({ code, stdout, stderr });
   });
 });
+
+async function stopExistingRelay() {
+  if (!existsSync(RELAY_PID_FILE)) {
+    return;
+  }
+  const pid = parseInt(readFileSync(RELAY_PID_FILE, 'utf-8').trim(), 10);
+  if (!Number.isFinite(pid)) {
+    return;
+  }
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    return;
+  }
+  const start = Date.now();
+  while (Date.now() - start < 5_000) {
+    try {
+      const ws = new WebSocket(`ws://${RELAY_HOST}:${EXTENSION_PORT}`);
+      await new Promise((resolve, reject) => {
+        ws.on('open', () => resolve());
+        ws.on('error', (err) => reject(err));
+      });
+      ws.close();
+      await delay(200);
+    } catch {
+      return;
+    }
+  }
+}
 
 async function waitForRelayReady() {
   const start = Date.now();
@@ -108,6 +141,7 @@ async function main() {
   let extension;
   let client;
   try {
+    await stopExistingRelay();
     relay = await startRelay();
     extension = await startFakeExtension();
 
@@ -136,6 +170,37 @@ async function main() {
 
     if (tools.length === 0) {
       throw new Error('MCP tools did not populate from extension');
+    }
+
+    const toolName = tools[0]?.name;
+    if (!toolName) {
+      throw new Error('No tool name available after tools list');
+    }
+    const callStart = Date.now();
+    let toolResult;
+    let lastCallError;
+    while (Date.now() - callStart < 10_000) {
+      try {
+        toolResult = await client.callTool({ name: toolName, arguments: {} });
+        break;
+      } catch (error) {
+        lastCallError = error;
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/No connection to Vibe extension/i.test(message)) {
+          throw error;
+        }
+        await delay(200);
+      }
+    }
+    if (!toolResult) {
+      throw new Error(`Tool call did not succeed. ${lastCallError instanceof Error ? lastCallError.message : String(lastCallError)}`);
+    }
+    const toolText = (toolResult.content || [])
+      .filter((item) => item.type === 'text' && typeof item.text === 'string')
+      .map((item) => item.text)
+      .join(' ');
+    if (!toolText.includes('ok')) {
+      throw new Error(`Tool call did not return expected response. Got: ${toolText || 'empty'}`);
     }
 
     const opencodeResult = await run('opencode', ['mcp', 'list']);

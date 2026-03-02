@@ -10,9 +10,9 @@
 export const MCP_PROTOCOL_VERSION = '2024-11-05';
 
 /**
- * Default WebSocket port for extension connection
+ * Default WebSocket port for local relay (agent) connection
  */
-export const DEFAULT_WS_PORT = 19989;
+export const DEFAULT_WS_PORT = 19888;
 
 /**
  * Connection status

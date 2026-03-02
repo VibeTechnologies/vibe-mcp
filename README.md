@@ -227,23 +227,31 @@ Add to your Codex configuration:
 
 ## How It Works
 
+Default local mode (no flags):
+
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│ AI Application  │────>│  Vibe MCP       │────>│ Vibe Extension  │
-│ (Claude/Cursor) │stdio│  (this package) │ WS  │ (Chrome)        │
-└─────────────────┘     └─────────────────┘     └─────────────────┘
+Claude / Cursor / VS Code (stdio)
+            │
+            ▼
+       [vibe-mcp]
+            │  ws://127.0.0.1:19888
+            ▼
+     Local Relay (auto-spawned)
+            │  ws://127.0.0.1:19889
+            ▼
+     Vibe Extension (Chrome)
 ```
 
-1. AI applications connect via MCP protocol (stdio)
-2. Vibe MCP forwards commands to the browser extension via WebSocket
-3. The extension executes actions in your actual browser
-4. Results flow back to the AI
+1. AI applications connect via MCP over stdio
+2. `vibe-mcp` connects to the local relay on port `19888`
+3. The relay forwards commands to the extension on port `19889`
+4. Results flow back to the agent
 
 ### Multi-Agent Mode
 
 When multiple agents connect, Vibe MCP automatically spawns a relay daemon:
 
-- First agent starts the relay (listens on ports 19988 and 19989)
+- First agent starts the relay (listens on ports 19888 and 19889)
 - Additional agents connect to the relay as clients
 - Relay multiplexes all agent requests to the single extension connection
 - Each agent receives only its own responses
@@ -254,7 +262,7 @@ When multiple agents connect, Vibe MCP automatically spawns a relay daemon:
 npx @vibebrowser/mcp --help
 
 Options:
-  -p, --port <number>  WebSocket port for extension (default: 19989)
+  -p, --port <number>  WebSocket port for local relay (agent) connection (default: 19888)
   -d, --debug          Enable debug logging
   -h, --help           Show help
 ```

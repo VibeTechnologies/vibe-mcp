@@ -12,7 +12,7 @@ import {
   ToolSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { ExtensionConnection, RemoteConfig } from './connection.js';
-import { MCP_PROTOCOL_VERSION, ServerConfig, ToolDefinition } from './types.js';
+import { DEFAULT_WS_PORT, MCP_PROTOCOL_VERSION, ServerConfig, ToolDefinition } from './types.js';
 
 const SERVER_NAME = 'vibe-mcp';
 const SERVER_VERSION = '0.1.0';
@@ -29,7 +29,7 @@ export class VibeMcpServer {
 
   constructor(config: Partial<ServerConfig> = {}) {
     this.config = {
-      port: config.port ?? 19989,
+      port: config.port ?? DEFAULT_WS_PORT,
       host: config.host ?? '127.0.0.1',
       debug: config.debug ?? false,
       remoteUuid: config.remoteUuid,

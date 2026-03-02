@@ -15,7 +15,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/cli.js",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "test:e2e:agents": "node scripts/e2e-mcp-agents.mjs"
   },
   "keywords": [
     "mcp",

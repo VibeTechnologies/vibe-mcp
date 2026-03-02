@@ -17,7 +17,7 @@ program
   .name('vibe-mcp')
   .description('MCP server for Vibe AI Browser - allows AI agents to control your browser')
   .version('0.1.0')
-  .option('-p, --port <number>', 'WebSocket port for local extension connection', String(DEFAULT_WS_PORT))
+  .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
   .option('-d, --debug', 'Enable debug logging', false)
   .option('-r, --remote <uuid>', 'Connect to a remote extension via public relay (provide the extension UUID)')
   .option('--relay-url <url>', 'Custom relay server URL (default: wss://relay.api.vibebrowser.app)')

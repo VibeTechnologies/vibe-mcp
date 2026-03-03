@@ -16,6 +16,7 @@ const TIMEOUT_MS = 120_000;
 const REAL_E2E = process.env.E2E_REAL === '1';
 const REAL_TASK = process.env.E2E_TASK;
 const TOOLS_TIMEOUT_MS = REAL_E2E ? 60_000 : 10_000;
+const DEBUG_E2E = process.env.E2E_DEBUG === '1';
 const RELAY_PID_FILE = join(homedir(), '.vibe-mcp', 'relay.pid');
 
 const TOOL = {
@@ -95,6 +96,24 @@ async function waitForRelayReady() {
   throw new Error('Relay did not become ready on port 19889');
 }
 
+async function waitForRelayPid() {
+  const start = Date.now();
+  while (Date.now() - start < 5_000) {
+    if (existsSync(RELAY_PID_FILE)) {
+      const pid = parseInt(readFileSync(RELAY_PID_FILE, 'utf-8').trim(), 10);
+      if (Number.isFinite(pid)) {
+        try {
+          process.kill(pid, 0);
+          return;
+        } catch {
+          // keep waiting if pid not alive
+        }
+      }
+    }
+    await delay(100);
+  }
+}
+
 async function startRelay() {
   try {
     await waitForRelayReady();
@@ -104,6 +123,7 @@ async function startRelay() {
       stdio: ['ignore', 'inherit', 'inherit'],
     });
     await waitForRelayReady();
+    await waitForRelayPid();
     return relay;
   }
 }
@@ -113,15 +133,24 @@ async function startFakeExtension() {
   ws.on('message', (data) => {
     const message = JSON.parse(data.toString());
     if (message.type === 'list_tools') {
+      if (DEBUG_E2E) {
+        console.error('[e2e] fake extension received list_tools');
+      }
       ws.send(JSON.stringify({
         type: 'tools_list',
         requestId: message.requestId,
         data: [TOOL],
       }));
+      if (DEBUG_E2E) {
+        console.error('[e2e] fake extension sent tools_list');
+      }
       return;
     }
 
     if (message.type === 'call_tool') {
+      if (DEBUG_E2E) {
+        console.error('[e2e] fake extension received call_tool');
+      }
       ws.send(JSON.stringify({
         type: 'tool_result',
         requestId: message.requestId,
@@ -130,6 +159,9 @@ async function startFakeExtension() {
           content: [{ type: 'text', text: 'ok' }],
         },
       }));
+      if (DEBUG_E2E) {
+        console.error('[e2e] fake extension sent tool_result');
+      }
     }
   });
 
@@ -156,6 +188,13 @@ async function waitForExtensionConnection(timeoutMs) {
           clearTimeout(timer);
           ws.close();
           resolve();
+          return;
+        }
+        if (message.type === 'tools_list' && Array.isArray(message.data) && message.data.length > 0) {
+          clearTimeout(timer);
+          ws.close();
+          resolve();
+          return;
         }
       } catch {
         // ignore parse errors
@@ -175,16 +214,20 @@ function buildCodexPrompt() {
   }
 
   return REAL_TASK || [
-    'You are running an e2e test for vibe-mcp.',
-    'Use the vibe-browser MCP tools to:',
-    '1) Open https://www.google.com/finance',
-    '2) Search for MSFT and open the NASDAQ:MSFT quote page.',
-    '3) In the AI/Research panel, ask for a short AI summary of MSFT stock.',
-    '4) Capture the current price and a short AI summary.',
+    'You are running an e2e test for vibe-mcp using open-source MiniWoB++ tasks.',
+    'Use the vibe-browser MCP tools to complete these tasks in order:',
+    '1) https://miniwob.farama.org/demos/miniwob/click-test-2.html',
+    '2) https://miniwob.farama.org/demos/miniwob/enter-text-2.html',
+    '3) https://miniwob.farama.org/demos/miniwob/use-slider.html',
+    '',
+    'For each page:',
+    '- Read the instruction text shown on the page.',
+    '- Perform the required action to complete the task.',
+    '- If a new instruction appears or a success indicator shows, mark result as ok.',
     '',
     'Return exactly one line of JSON and nothing else:',
-    '{"status":"ok|error","symbol":"MSFT","price":"<string>","ai_summary":"<short text>"}',
-    'If AI data is not available, set status="error" and ai_summary to the reason.',
+    '{"status":"ok|error","tasks":[{"name":"click-test-2","instruction":"<text>","result":"ok|error"},{"name":"enter-text-2","instruction":"<text>","result":"ok|error"},{"name":"use-slider","instruction":"<text>","result":"ok|error"}],"note":"miniwob++","reason":"<only if error>"}',
+    'If any task fails, set status="error" and fill reason.',
   ].join('\n');
 }
 
@@ -208,15 +251,19 @@ async function main() {
   try {
     await stopExistingRelay();
     relay = await startRelay();
+    await waitForRelayPid();
     if (!REAL_E2E) {
       extension = await startFakeExtension();
-    } else {
-      await waitForExtensionConnection(TOOLS_TIMEOUT_MS);
     }
+    await waitForExtensionConnection(TOOLS_TIMEOUT_MS);
 
+    const npxArgs = ['-y', '@vibebrowser/mcp@latest'];
+    if (DEBUG_E2E) {
+      npxArgs.push('--debug');
+    }
     const transport = new StdioClientTransport({
       command: 'npx',
-      args: ['-y', '@vibebrowser/mcp@latest'],
+      args: npxArgs,
       cwd: process.cwd(),
       stderr: 'pipe',
     });
@@ -226,32 +273,36 @@ async function main() {
     client = new Client({ name: 'vibe-mcp-e2e', version: '0.0.0' });
     await client.connect(transport);
 
-    const start = Date.now();
-    let tools = [];
-    while (Date.now() - start < TOOLS_TIMEOUT_MS) {
-      const result = await client.listTools();
-      if (result.tools.length > 0) {
-        tools = result.tools;
-        break;
-      }
-      await delay(200);
-    }
-
-    if (tools.length === 0) {
-      throw new Error(`MCP tools did not populate from extension within ${TOOLS_TIMEOUT_MS}ms`);
-    }
-
     if (!REAL_E2E) {
-      const toolName = tools[0]?.name;
-      if (!toolName) {
-        throw new Error('No tool name available after tools list');
+      const start = Date.now();
+      let tools = [];
+      while (Date.now() - start < TOOLS_TIMEOUT_MS) {
+        const result = await client.listTools();
+        if (result.tools.length > 0) {
+          tools = result.tools;
+          break;
+        }
+        await delay(200);
       }
+      if (tools.length === 0) {
+        throw new Error(`MCP tools did not populate from extension within ${TOOLS_TIMEOUT_MS}ms`);
+      }
+
+      const toolName = 'noop';
       const callStart = Date.now();
       let toolResult;
       let lastCallError;
       while (Date.now() - callStart < 10_000) {
         try {
           toolResult = await client.callTool({ name: toolName, arguments: {} });
+          const contentText = (toolResult?.content || [])
+            .filter((item) => item.type === 'text' && typeof item.text === 'string')
+            .map((item) => item.text)
+            .join(' ');
+          if (/No connection to Vibe extension/i.test(contentText)) {
+            await delay(200);
+            continue;
+          }
           break;
         } catch (error) {
           lastCallError = error;
@@ -281,7 +332,7 @@ async function main() {
     }
 
     const codexPrompt = buildCodexPrompt();
-    const codexArgs = ['exec', '--no-alt-screen', codexPrompt];
+    const codexArgs = ['exec', codexPrompt];
     const codexResult = await run('codex', codexArgs, {
       timeoutMs: REAL_E2E ? 240_000 : TIMEOUT_MS,
     });
@@ -294,7 +345,13 @@ async function main() {
       if (!codexJson) {
         throw new Error(`Codex did not return JSON output. Output:\n${codexCombined}`);
       }
-      if (codexJson.status !== 'ok' || codexJson.symbol !== 'MSFT') {
+      const tasks = Array.isArray(codexJson.tasks) ? codexJson.tasks : [];
+      const expected = ['click-test-2', 'enter-text-2', 'use-slider'];
+      const names = tasks.map((task) => task?.name);
+      const results = tasks.map((task) => task?.result);
+      const hasExpected = expected.every((name) => names.includes(name));
+      const allOk = results.length === expected.length && results.every((result) => result === 'ok');
+      if (codexJson.status !== 'ok' || !hasExpected || !allOk) {
         throw new Error(`Codex task failed. Output:\n${JSON.stringify(codexJson)}`);
       }
     }

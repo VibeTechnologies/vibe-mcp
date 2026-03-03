@@ -105,11 +105,6 @@ async function startRelay() {
 
 async function startFakeExtension() {
   const ws = new WebSocket(`ws://${RELAY_HOST}:${EXTENSION_PORT}`);
-  await new Promise((resolve, reject) => {
-    ws.on('open', () => resolve());
-    ws.on('error', (err) => reject(err));
-  });
-
   ws.on('message', (data) => {
     const message = JSON.parse(data.toString());
     if (message.type === 'list_tools') {
@@ -131,6 +126,11 @@ async function startFakeExtension() {
         },
       }));
     }
+  });
+
+  await new Promise((resolve, reject) => {
+    ws.once('open', () => resolve());
+    ws.once('error', (err) => reject(err));
   });
 
   return ws;

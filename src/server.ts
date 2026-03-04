@@ -49,7 +49,9 @@ export class VibeMcpServer {
       },
       {
         capabilities: {
-          tools: {},
+          tools: {
+            listChanged: true,
+          },
         },
       }
     );
@@ -64,6 +66,15 @@ export class VibeMcpServer {
   private setupHandlers(): void {
     // List available tools
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
+      if (this.connection.getTools().length === 0 && this.connection.isExtensionConnected()) {
+        try {
+          await this.connection.refreshTools();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.log(`tools/list refresh failed: ${message}`);
+        }
+      }
+
       const tools = this.connection.getTools();
       
       return {
@@ -106,10 +117,17 @@ export class VibeMcpServer {
 
     this.connection.on('disconnected', () => {
       this.log('Extension disconnected');
+      this.notifyToolListChanged();
     });
 
     this.connection.on('tools_updated', (tools: ToolDefinition[]) => {
       this.log(`Received ${tools.length} tools from extension`);
+      this.notifyToolListChanged();
+    });
+
+    this.connection.on('extension_disconnected', () => {
+      this.log('Extension disconnected from relay');
+      this.notifyToolListChanged();
     });
   }
 
@@ -159,6 +177,16 @@ export class VibeMcpServer {
     if (this.config.debug) {
       console.error(`[${SERVER_NAME}] ${message}`);
     }
+  }
+
+  private notifyToolListChanged(): void {
+    if (!(this.server as { transport?: unknown }).transport) {
+      return;
+    }
+    this.server.sendToolListChanged().catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      this.log(`Failed to send tools/list_changed: ${message}`);
+    });
   }
 }
 

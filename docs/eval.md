@@ -12,7 +12,8 @@ Evaluation date: **March 4, 2026 (America/Los_Angeles)**.
 
 | Test | Command | Source | Result |
 |---|---|---|---|
-| Agent bridge e2e (`vibe-mcp`, real path, local source) | `npm run test:e2e:agents` | local workspace | PASS (`e2e ok`) |
+| Relay race e2e (fake extension reconnect, local source) | `npm run test:e2e:relay-race` | local workspace | PASS (`e2e ok`) |
+| Agent bridge e2e (`vibe-mcp`, real path, local source) | `npm run test:e2e:agents` | local workspace | ENV-DEPENDENT (requires live extension session) |
 | Agent bridge e2e (`vibe-mcp`, published source) | `E2E_MCP_SOURCE=npm npm run test:e2e:agents` | npm (`npx @vibebrowser/mcp@latest`) | PASS (`e2e ok`) |
 | Financial MCP eval (`vibe`) | `node tests/mcp-eval.test.js --skip-build --model github-copilot/gpt-4.1 --mcp-source npm` | npm (`npx @vibebrowser/mcp@latest`) | PASS (OpenCode/Codex both `6/6`, score `1`) |
 
@@ -20,12 +21,25 @@ Production readiness verdict for `npx -y @vibebrowser/mcp@latest`: **PASSING in 
 
 Stability note:
 - One transient `Connection closed` failure was observed at eval startup; immediate rerun passed end-to-end with the same command.
+- In the latest local run, `npm run test:e2e:agents` failed at extension preflight (`Extension did not connect to relay`) because no live extension socket was present on `127.0.0.1:19889`.
 
 ---
 
 ## Required Command Set
 
-### 1. Local regression check (fast)
+### 1. Relay race regression check (extension-independent)
+
+```bash
+cd /Users/engineer/workspace/vibebrowser/vibe-mcp
+npm run test:e2e:relay-race
+```
+
+Pass signal:
+- output contains `e2e ok`
+- verifies `call_tool -> tool_result` across extension socket replacement
+- verifies stale extension close does not emit false `extension_disconnected`
+
+### 2. Local regression check (real extension path)
 
 ```bash
 cd /Users/engineer/workspace/vibebrowser/vibe-mcp
@@ -35,7 +49,7 @@ npm run test:e2e:agents
 Pass signal:
 - output contains `e2e ok`
 
-### 2. Real-stack production check (published package)
+### 3. Real-stack production check (published package)
 
 ```bash
 cd /Users/engineer/workspace/vibebrowser/vibe-mcp
@@ -51,7 +65,7 @@ Note:
 - Managed Chrome bootstrap is explicit opt-in (`E2E_MANAGED_CHROME=1`).
 - By default, real-stack eval expects an already running browser + extension session.
 
-### 3. Cross-repo financial eval (production source)
+### 4. Cross-repo financial eval (production source)
 
 ```bash
 cd /Users/engineer/workspace/vibebrowser/vibe

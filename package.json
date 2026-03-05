@@ -6,6 +6,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
+    "vibebrowser-mcp": "./dist/cli.js",
     "vibe-mcp": "./dist/cli.js"
   },
   "publishConfig": {
@@ -16,6 +17,7 @@
     "dev": "tsc --watch",
     "start": "node dist/cli.js",
     "prepublishOnly": "npm run build",
+    "test:e2e:relay-race": "node scripts/e2e-relay-fake-extension-race.mjs",
     "test:e2e:agents": "node scripts/e2e-mcp-agents.mjs"
   },
   "keywords": [

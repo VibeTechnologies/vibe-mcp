@@ -354,10 +354,44 @@ export class ExtensionConnection extends EventEmitter {
   /**
    * Refresh available tools from extension
    */
-  async refreshTools(): Promise<ToolDefinition[]> {
-    const tools = await this.sendRequest<ToolDefinition[]>('list_tools');
+  async refreshTools(timeoutMs: number = 30_000): Promise<ToolDefinition[]> {
+    const tools = await this.sendRequest<ToolDefinition[]>('list_tools', undefined, timeoutMs);
     this.tools = tools;
     return tools;
+  }
+
+  /**
+   * Wait briefly for a tools update event without forcing a request.
+   * This keeps MCP startup responsive when extension announces tools asynchronously.
+   */
+  async waitForToolsUpdate(timeoutMs: number = 1_500): Promise<ToolDefinition[]> {
+    if (this.tools.length > 0) {
+      return this.tools;
+    }
+
+    return new Promise((resolve) => {
+      const onToolsUpdated = (tools: ToolDefinition[]) => {
+        cleanup();
+        resolve(tools);
+      };
+      const onExtensionDisconnected = () => {
+        cleanup();
+        resolve(this.tools);
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(this.tools);
+      }, timeoutMs);
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.off('tools_updated', onToolsUpdated);
+        this.off('extension_disconnected', onExtensionDisconnected);
+      };
+
+      this.on('tools_updated', onToolsUpdated);
+      this.on('extension_disconnected', onExtensionDisconnected);
+    });
   }
 
   /**

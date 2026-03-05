@@ -707,6 +707,35 @@ function createTempOpencodeConfig(tmpDir, mcpCmd) {
   return { isolatedConfigDir };
 }
 
+async function waitForOpencodeMcpReady({ cwd, env, timeoutMs = 30_000 }) {
+  const start = Date.now();
+  let lastOutput = '';
+
+  while (Date.now() - start < timeoutMs) {
+    // Recheck extension connectivity between retries; this can flap briefly.
+    await waitForExtensionConnection(5_000).catch(() => {});
+
+    try {
+      const opencodeResult = await run('opencode', ['mcp', 'list'], {
+        cwd,
+        env,
+      });
+      const opencodeOutput = stripAnsi(opencodeResult.stdout + opencodeResult.stderr);
+      if (/vibe-browser\s+connected/i.test(opencodeOutput)) {
+        return opencodeOutput;
+      }
+      lastOutput = opencodeOutput;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      lastOutput = `${lastOutput}\n${message}`.trim();
+    }
+
+    await delay(1_000);
+  }
+
+  throw new Error(`OpenCode MCP check failed after retries. Last output:\n${lastOutput}`);
+}
+
 function buildCodexPrompt() {
   return REAL_TASK || [
     'You are running an e2e test for vibe-mcp using open-source MiniWoB++ tasks.',
@@ -810,17 +839,14 @@ async function main() {
 
     opencodeTmpDir = mkdtempSync(join(tmpdir(), 'vibe-mcp-opencode-e2e-'));
     const { isolatedConfigDir } = createTempOpencodeConfig(opencodeTmpDir, mcpCmd);
-    const opencodeResult = await run('opencode', ['mcp', 'list'], {
+    await waitForOpencodeMcpReady({
       cwd: opencodeTmpDir,
       env: {
         ...process.env,
         XDG_CONFIG_HOME: isolatedConfigDir,
       },
+      timeoutMs: 45_000,
     });
-    const opencodeOutput = stripAnsi(opencodeResult.stdout + opencodeResult.stderr);
-    if (!/vibe-browser\s+connected/i.test(opencodeOutput)) {
-      throw new Error(`OpenCode MCP check failed. Output:\n${opencodeOutput}`);
-    }
 
     const codexPrompt = buildCodexPrompt();
     const codexArgs = [

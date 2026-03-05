@@ -67,19 +67,29 @@ jobs:
             [[ "${1:-}" == npm_* ]]
           }
 
+          use_token_if_valid() {
+            local candidate="${1:-}"
+            local source="$2"
+            if looks_like_npm_token "$candidate"; then
+              export NODE_AUTH_TOKEN="$candidate"
+              token_available=true
+              token_source="$source"
+              return 0
+            fi
+            if [ -n "$candidate" ]; then
+              echo "Ignoring non-npm token from $source"
+            fi
+            return 1
+          }
+
           token_available=false
           token_source="none"
-          if looks_like_npm_token "${NODE_AUTH_TOKEN:-}"; then
-            token_available=true
-            token_source="NODE_AUTH_TOKEN"
-          elif [ -n "${NPM_TOKEN:-}" ]; then
-            export NODE_AUTH_TOKEN="$NPM_TOKEN"
-            token_available=true
-            token_source="NPM_TOKEN"
-          elif [ -n "${NODE_AUTH_TOKEN_FALLBACK:-}" ]; then
-            export NODE_AUTH_TOKEN="$NODE_AUTH_TOKEN_FALLBACK"
-            token_available=true
-            token_source="NODE_AUTH_TOKEN_FALLBACK"
+          if use_token_if_valid "${NODE_AUTH_TOKEN:-}" "NODE_AUTH_TOKEN"; then
+            :
+          elif use_token_if_valid "${NPM_TOKEN:-}" "NPM_TOKEN"; then
+            :
+          elif use_token_if_valid "${NODE_AUTH_TOKEN_FALLBACK:-}" "NODE_AUTH_TOKEN_FALLBACK"; then
+            :
           fi
 
           echo "Token fallback available: $token_available (source: $token_source)"

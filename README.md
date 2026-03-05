@@ -233,7 +233,7 @@ Default local mode (no flags):
 Claude / Cursor / VS Code (stdio)
             │
             ▼
-       [vibe-mcp]
+   [vibebrowser-mcp]
             │  ws://127.0.0.1:19888
             ▼
      Local Relay (auto-spawned)
@@ -243,7 +243,7 @@ Claude / Cursor / VS Code (stdio)
 ```
 
 1. AI applications connect via MCP over stdio
-2. `vibe-mcp` connects to the local relay on port `19888`
+2. `vibebrowser-mcp` (or `vibe-mcp`) connects to the local relay on port `19888`
 3. The relay forwards commands to the extension on port `19889`
 4. Results flow back to the agent
 

@@ -61,6 +61,9 @@ interface AgentConnection {
 interface PendingRequest {
   agentId: string;
   originalRequestId: string;
+  forwardMessage: ServerMessage;
+  lastSentAt: number;
+  attempts: number;
 }
 
 /**
@@ -75,6 +78,7 @@ export class RelayServer extends EventEmitter {
   private tools: unknown[] = [];
   private requestIdCounter = 0;
   private debug: boolean;
+  private toolsSyncTimer: NodeJS.Timeout | null = null;
 
   constructor(debug: boolean = false) {
     super();
@@ -155,29 +159,35 @@ export class RelayServer extends EventEmitter {
    * Handle extension connection
    */
   private handleExtensionConnection(ws: WebSocket): void {
-    this.log('Extension connected');
-    
-    // Close previous connection if any
+    // Replace prior extension connection (background/sidepanel can reconnect).
     if (this.extensionWs) {
       this.extensionWs.close();
     }
-    
+
+    this.log('Extension connected');
     this.extensionWs = ws;
 
     ws.on('message', (data) => {
       try {
         const message: ExtensionMessage = JSON.parse(data.toString());
-        this.handleExtensionMessage(message);
+        this.handleExtensionMessage(ws, message);
       } catch (error) {
         this.log(`Failed to parse extension message: ${error}`);
       }
     });
 
-    ws.on('close', () => {
-      this.log('Extension disconnected');
+    ws.on('close', (code, reasonBuffer) => {
+      const reason = reasonBuffer?.toString() || '';
+      this.log(`Extension disconnected (code=${code}${reason ? `, reason=${reason}` : ''})`);
+      // Ignore stale close events from replaced sockets.
+      if (this.extensionWs !== ws) {
+        return;
+      }
+
       this.extensionWs = null;
       this.tools = [];
-      
+      this.stopToolsSyncLoop();
+
       // Notify all agents
       this.broadcastToAgents({ type: 'extension_disconnected' });
     });
@@ -186,8 +196,8 @@ export class RelayServer extends EventEmitter {
       this.log(`Extension WebSocket error: ${error.message}`);
     });
 
-    // Request tools list
-    this.requestToolsFromExtension();
+    // Request tools list, with retries in case the extension wasn't ready yet.
+    this.startToolsSyncLoop();
   }
 
   /**
@@ -245,12 +255,22 @@ export class RelayServer extends EventEmitter {
   /**
    * Handle message from extension
    */
-  private handleExtensionMessage(message: ExtensionMessage): void {
+  private handleExtensionMessage(sourceWs: WebSocket, message: ExtensionMessage): void {
+    if (this.extensionWs !== sourceWs) {
+      this.log(`Ignoring stale extension message: ${message.type}`);
+      return;
+    }
+
     this.log(`Extension message: ${message.type}`);
+
+    if (message.type === 'connected') {
+      this.replayPendingRequestsToExtension();
+    }
 
     // Handle tools list
     if (message.type === 'tools_list') {
       this.tools = message.data as unknown[];
+      this.stopToolsSyncLoop();
       // Broadcast to all agents
       this.broadcastToAgents({ type: 'tools_list', data: this.tools });
       return;
@@ -301,16 +321,20 @@ export class RelayServer extends EventEmitter {
     const relayRequestId = `relay_${++this.requestIdCounter}`;
     
     // Store pending request mapping
+    const forwardMessage: ServerMessage = {
+      ...message,
+      requestId: relayRequestId,
+    };
     this.pendingRequests.set(relayRequestId, {
       agentId,
       originalRequestId: message.requestId,
+      forwardMessage,
+      lastSentAt: Date.now(),
+      attempts: 1,
     });
 
     // Forward to extension with relay request ID
-    this.extensionWs.send(JSON.stringify({
-      ...message,
-      requestId: relayRequestId,
-    }));
+    this.extensionWs.send(JSON.stringify(forwardMessage));
   }
 
   /**
@@ -324,6 +348,46 @@ export class RelayServer extends EventEmitter {
       type: 'list_tools',
       requestId,
     }));
+  }
+
+  /**
+   * Replay in-flight agent requests after extension reconnects.
+   */
+  private replayPendingRequestsToExtension(): void {
+    if (!this.extensionWs || this.pendingRequests.size === 0) return;
+
+    for (const [relayRequestId, pending] of this.pendingRequests) {
+      try {
+        pending.attempts += 1;
+        pending.lastSentAt = Date.now();
+        this.pendingRequests.set(relayRequestId, pending);
+        this.extensionWs.send(JSON.stringify(pending.forwardMessage));
+      } catch (error) {
+        this.log(`Failed to replay request ${relayRequestId}: ${error}`);
+      }
+    }
+  }
+
+  /**
+   * Keep requesting tools until extension responds with tools_list.
+   */
+  private startToolsSyncLoop(): void {
+    this.stopToolsSyncLoop();
+    this.requestToolsFromExtension();
+    this.toolsSyncTimer = setInterval(() => {
+      if (!this.extensionWs) {
+        this.stopToolsSyncLoop();
+        return;
+      }
+      this.requestToolsFromExtension();
+    }, 1_000);
+  }
+
+  private stopToolsSyncLoop(): void {
+    if (this.toolsSyncTimer) {
+      clearInterval(this.toolsSyncTimer);
+      this.toolsSyncTimer = null;
+    }
   }
 
   /**
@@ -370,6 +434,7 @@ export class RelayServer extends EventEmitter {
       this.extensionWs.close();
       this.extensionWs = null;
     }
+    this.stopToolsSyncLoop();
 
     // Close servers
     if (this.agentWss) {

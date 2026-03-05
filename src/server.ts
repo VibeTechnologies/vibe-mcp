@@ -16,6 +16,8 @@ import { DEFAULT_WS_PORT, MCP_PROTOCOL_VERSION, ServerConfig, ToolDefinition } f
 
 const SERVER_NAME = 'vibe-mcp';
 const SERVER_VERSION = '0.1.0';
+const STARTUP_TOOLS_REFRESH_TIMEOUT_MS = 4_000;
+const STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS = 1_500;
 
 /**
  * Vibe MCP Server
@@ -68,11 +70,16 @@ export class VibeMcpServer {
     this.server.setRequestHandler(ListToolsRequestSchema, async () => {
       if (this.connection.getTools().length === 0 && this.connection.isExtensionConnected()) {
         try {
-          await this.connection.refreshTools();
+          // Keep startup tool discovery under client startup budgets (e.g. Codex 10s).
+          await this.connection.refreshTools(STARTUP_TOOLS_REFRESH_TIMEOUT_MS);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           this.log(`tools/list refresh failed: ${message}`);
         }
+      }
+
+      if (this.connection.getTools().length === 0 && this.connection.isExtensionConnected()) {
+        await this.connection.waitForToolsUpdate(STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS);
       }
 
       const tools = this.connection.getTools();

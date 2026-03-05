@@ -12,11 +12,14 @@ Evaluation date: **March 4, 2026 (America/Los_Angeles)**.
 
 | Test | Command | Source | Result |
 |---|---|---|---|
-| Agent bridge smoke e2e (`vibe-mcp`) | `npm run test:e2e:agents` | local workspace | PASS (`e2e ok`) |
-| Agent bridge real e2e (`vibe-mcp`) | `E2E_REAL=1 E2E_MANAGED_CHROME=0 E2E_DEBUG=1 npm run test:e2e:agents` | npm (`npx @vibebrowser/mcp@latest`) | FAIL (tool requests timed out) |
-| Financial MCP eval (`vibe`) | `node tests/mcp-eval.test.js --skip-build --model github-copilot/gpt-4.1 --mcp-source npm` | npm (`npx @vibebrowser/mcp@latest`) | FAIL (`mcpToolCallCount=0`) |
+| Agent bridge e2e (`vibe-mcp`, real path, local source) | `npm run test:e2e:agents` | local workspace | PASS (`e2e ok`) |
+| Agent bridge e2e (`vibe-mcp`, published source) | `E2E_MCP_SOURCE=npm npm run test:e2e:agents` | npm (`npx @vibebrowser/mcp@latest`) | PASS (`e2e ok`) |
+| Financial MCP eval (`vibe`) | `node tests/mcp-eval.test.js --skip-build --model github-copilot/gpt-4.1 --mcp-source npm` | npm (`npx @vibebrowser/mcp@latest`) | PASS (OpenCode/Codex both `6/6`, score `1`) |
 
-Production readiness verdict for `npx -y @vibebrowser/mcp@latest`: **NOT READY**.
+Production readiness verdict for `npx -y @vibebrowser/mcp@latest`: **PASSING in current verification runs**.
+
+Stability note:
+- One transient `Connection closed` failure was observed at eval startup; immediate rerun passed end-to-end with the same command.
 
 ---
 
@@ -32,16 +35,21 @@ npm run test:e2e:agents
 Pass signal:
 - output contains `e2e ok`
 
-### 2. Real-stack production check
+### 2. Real-stack production check (published package)
 
 ```bash
 cd /Users/engineer/workspace/vibebrowser/vibe-mcp
-E2E_REAL=1 E2E_MANAGED_CHROME=0 E2E_DEBUG=1 npm run test:e2e:agents
+E2E_MCP_SOURCE=npm npm run test:e2e:agents
 ```
 
 Pass signal:
 - all MiniWoB tasks return `ok`
 - no MCP request timeouts
+
+Note:
+- `scripts/e2e-mcp-agents.mjs` always runs the real-extension path now (no `E2E_REAL` toggle).
+- Managed Chrome bootstrap is explicit opt-in (`E2E_MANAGED_CHROME=1`).
+- By default, real-stack eval expects an already running browser + extension session.
 
 ### 3. Cross-repo financial eval (production source)
 

@@ -63,6 +63,19 @@ jobs:
             npm publish --access public
           }
 
+          token_available=false
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            token_available=true
+          elif [ -n "${NPM_TOKEN:-}" ]; then
+            export NODE_AUTH_TOKEN="$NPM_TOKEN"
+            token_available=true
+          elif [ -n "${NODE_AUTH_TOKEN_FALLBACK:-}" ]; then
+            export NODE_AUTH_TOKEN="$NODE_AUTH_TOKEN_FALLBACK"
+            token_available=true
+          fi
+
+          echo "Token fallback available: $token_available"
+
           echo "Attempting npm publish via OIDC trusted publishing..."
           if publish_with_oidc; then
             echo "mode=oidc" >> "$GITHUB_OUTPUT"
@@ -70,20 +83,21 @@ jobs:
           fi
 
           echo "OIDC publish failed. Attempting token-based publish fallback..."
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+          if [ "$token_available" = "true" ]; then
             if publish_with_token; then
               echo "mode=token" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            echo "Token-based publish failed. Ensure NPM_TOKEN is valid and has publish rights for @vibebrowser/mcp." >&2
+            echo "Token-based publish failed. Ensure NODE_AUTH_TOKEN/NPM_TOKEN is valid and has publish rights for @vibebrowser/mcp." >&2
             exit 1
           fi
 
           echo "No valid npm auth path available." >&2
-          echo "Configure npm trusted publishing for this repository/workflow OR set a valid NPM_TOKEN secret." >&2
+          echo "Configure npm trusted publishing for this repository/workflow OR set a valid NODE_AUTH_TOKEN/NPM_TOKEN secret." >&2
           exit 1
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN_FALLBACK: ${{ secrets.NODE_AUTH_TOKEN }}
       
       - name: Create Git tag
         if: steps.version.outputs.changed == 'true'

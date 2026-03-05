@@ -63,18 +63,26 @@ jobs:
             npm publish --access public
           }
 
+          looks_like_npm_token() {
+            [[ "${1:-}" == npm_* ]]
+          }
+
           token_available=false
-          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+          token_source="none"
+          if looks_like_npm_token "${NODE_AUTH_TOKEN:-}"; then
             token_available=true
+            token_source="NODE_AUTH_TOKEN"
           elif [ -n "${NPM_TOKEN:-}" ]; then
             export NODE_AUTH_TOKEN="$NPM_TOKEN"
             token_available=true
+            token_source="NPM_TOKEN"
           elif [ -n "${NODE_AUTH_TOKEN_FALLBACK:-}" ]; then
             export NODE_AUTH_TOKEN="$NODE_AUTH_TOKEN_FALLBACK"
             token_available=true
+            token_source="NODE_AUTH_TOKEN_FALLBACK"
           fi
 
-          echo "Token fallback available: $token_available"
+          echo "Token fallback available: $token_available (source: $token_source)"
 
           echo "Attempting npm publish via OIDC trusted publishing..."
           if publish_with_oidc; then

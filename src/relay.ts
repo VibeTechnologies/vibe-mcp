@@ -160,6 +160,10 @@ export class RelayServer extends EventEmitter {
     // Replace prior extension connection (background/sidepanel can reconnect).
     if (this.extensionWs) {
       this.extensionWs.close();
+      // Reject pending requests immediately — the old connection is gone and the
+      // extension will send 'connected' again, but we don't want a window where
+      // new requests could slip through to the new socket before rejection.
+      this.rejectPendingRequests('Extension reconnected — previous connection replaced');
     }
 
     this.log('Extension connected');
@@ -262,10 +266,9 @@ export class RelayServer extends EventEmitter {
     this.log(`Extension message: ${message.type}`);
 
     if (message.type === 'connected') {
-      // On reconnect, reject all pending requests instead of replaying them.
-      // Replaying side-effecting tool calls (e.g. new_page) causes duplicate
-      // actions that cascade into infinite page creation loops.
-      // The MCP client layer will surface the error and can retry if needed.
+      // Reject any remaining pending requests (belt-and-suspenders —
+      // handleExtensionConnection already rejects when replacing, but this
+      // covers the case where extension reconnects without a new WS connection).
       this.rejectPendingRequests('Extension reconnected — request may have been lost');
     }
 

@@ -61,9 +61,7 @@ interface AgentConnection {
 interface PendingRequest {
   agentId: string;
   originalRequestId: string;
-  forwardMessage: ServerMessage;
   lastSentAt: number;
-  attempts: number;
 }
 
 /**
@@ -264,7 +262,11 @@ export class RelayServer extends EventEmitter {
     this.log(`Extension message: ${message.type}`);
 
     if (message.type === 'connected') {
-      this.replayPendingRequestsToExtension();
+      // On reconnect, reject all pending requests instead of replaying them.
+      // Replaying side-effecting tool calls (e.g. new_page) causes duplicate
+      // actions that cascade into infinite page creation loops.
+      // The MCP client layer will surface the error and can retry if needed.
+      this.rejectPendingRequests('Extension reconnected — request may have been lost');
     }
 
     // Handle tools list
@@ -320,21 +322,18 @@ export class RelayServer extends EventEmitter {
     // Generate relay request ID
     const relayRequestId = `relay_${++this.requestIdCounter}`;
     
-    // Store pending request mapping
-    const forwardMessage: ServerMessage = {
-      ...message,
-      requestId: relayRequestId,
-    };
+    // Store pending request mapping (without forwardMessage — no replay)
     this.pendingRequests.set(relayRequestId, {
       agentId,
       originalRequestId: message.requestId,
-      forwardMessage,
       lastSentAt: Date.now(),
-      attempts: 1,
     });
 
     // Forward to extension with relay request ID
-    this.extensionWs.send(JSON.stringify(forwardMessage));
+    this.extensionWs.send(JSON.stringify({
+      ...message,
+      requestId: relayRequestId,
+    }));
   }
 
   /**
@@ -351,21 +350,31 @@ export class RelayServer extends EventEmitter {
   }
 
   /**
-   * Replay in-flight agent requests after extension reconnects.
+   * Reject all pending requests and notify agents of the error.
+   * Called when the extension reconnects — responses to in-flight requests
+   * from the previous connection are lost, so we surface an error to let
+   * the MCP client retry if appropriate.
    */
-  private replayPendingRequestsToExtension(): void {
-    if (!this.extensionWs || this.pendingRequests.size === 0) return;
+  private rejectPendingRequests(reason: string): void {
+    if (this.pendingRequests.size === 0) return;
+
+    this.log(`Rejecting ${this.pendingRequests.size} pending request(s): ${reason}`);
 
     for (const [relayRequestId, pending] of this.pendingRequests) {
-      try {
-        pending.attempts += 1;
-        pending.lastSentAt = Date.now();
-        this.pendingRequests.set(relayRequestId, pending);
-        this.extensionWs.send(JSON.stringify(pending.forwardMessage));
-      } catch (error) {
-        this.log(`Failed to replay request ${relayRequestId}: ${error}`);
+      const agent = this.agents.get(pending.agentId);
+      if (agent) {
+        try {
+          agent.ws.send(JSON.stringify({
+            type: 'error',
+            requestId: pending.originalRequestId,
+            error: reason,
+          }));
+        } catch (error) {
+          this.log(`Failed to notify agent for ${relayRequestId}: ${error}`);
+        }
       }
     }
+    this.pendingRequests.clear();
   }
 
   /**

@@ -256,15 +256,66 @@ When multiple agents connect, Vibe MCP automatically spawns a relay daemon:
 - Relay multiplexes all agent requests to the single extension connection
 - Each agent receives only its own responses
 
+## Local LLM: `serve` Command
+
+Run a local LLM with one command — no cloud API keys required. Automatically installs [Ollama](https://ollama.com), downloads the model, and starts serving an OpenAI-compatible API.
+
+```bash
+npx @vibebrowser/mcp serve qwen3.5
+```
+
+That's it. Works on **macOS**, **Linux**, and **Windows**.
+
+### What it does
+
+1. **Detects Ollama** → installs it if missing (via `brew`, `curl`, or `winget`)
+2. **Starts the server** → launches `ollama serve` in the background
+3. **Downloads the model** → streams download progress to your terminal
+4. **Prints connection info** → ready to use with VibeBrowser or any OpenAI-compatible client
+
+### Recommended models
+
+```bash
+npx @vibebrowser/mcp serve qwen3.5      # Best overall for agentic tasks
+npx @vibebrowser/mcp serve llama4        # Strong general reasoning
+npx @vibebrowser/mcp serve deepseek-r1   # Reasoning chains
+npx @vibebrowser/mcp serve mistral       # Lightweight & fast (7B)
+```
+
+### Options
+
+```bash
+npx @vibebrowser/mcp serve <model> [options]
+
+Options:
+  -p, --port <number>  Ollama API port (default: 11434)
+  -y, --yes            Skip install confirmation prompts
+  -d, --debug          Enable debug logging
+```
+
+### Using with VibeBrowser extension
+
+After `serve` completes, configure the extension:
+- **Model provider** → `ollama`
+- **Model name** → the model you served (e.g., `qwen3.5`)
+
+The extension connects to `http://localhost:11434/v1` automatically.
+
 ## CLI Options
 
 ```bash
 npx @vibebrowser/mcp --help
 
-Options:
+# MCP server (default)
+npx @vibebrowser/mcp [start] [options]
   -p, --port <number>  WebSocket port for local relay (agent) connection (default: 19888)
   -d, --debug          Enable debug logging
-  -h, --help           Show help
+
+# Local LLM server
+npx @vibebrowser/mcp serve <model> [options]
+  -p, --port <number>  Ollama API port (default: 11434)
+  -y, --yes            Skip confirmation prompts
+  -d, --debug          Enable debug logging
 ```
 
 ## Troubleshooting

@@ -201,8 +201,19 @@ export class ExtensionConnection extends EventEmitter {
           this.log('Disconnected from relay');
           this.ws = null;
           this.status = 'disconnected';
+
+          // Reject all pending requests — responses will never arrive on a
+          // closed socket.  Without this, requests sit until their individual
+          // timeouts fire, and if the server reconnects before that the MCP
+          // client may retry, causing duplicate tool execution.
+          for (const [id, request] of this.pendingRequests) {
+            clearTimeout(request.timeout);
+            request.reject(new Error('Relay connection lost'));
+          }
+          this.pendingRequests.clear();
+
           this.emit('disconnected');
-          
+
           // Schedule reconnect
           this.scheduleReconnect();
         });

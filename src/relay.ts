@@ -15,12 +15,25 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
 
+function parseEnvPort(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+
+  const port = Number.parseInt(raw, 10);
+  if (!Number.isFinite(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid ${name} value: ${raw}`);
+  }
+  return port;
+}
+
 // Ports (19888/19889 to avoid conflict with Playwriter MCP which uses 19988/19989)
-export const EXTENSION_PORT = 19889;
-export const AGENT_PORT = 19888;
+export const EXTENSION_PORT = parseEnvPort('VIBE_MCP_EXTENSION_PORT', 19889);
+export const AGENT_PORT = parseEnvPort('VIBE_MCP_AGENT_PORT', 19888);
 
 // PID file location
-const VIBE_DIR = join(homedir(), '.vibe-mcp');
+const VIBE_DIR = process.env.VIBE_MCP_STATE_DIR || join(homedir(), '.vibe-mcp');
 const PID_FILE = join(VIBE_DIR, 'relay.pid');
 const LOG_FILE = join(VIBE_DIR, 'relay.log');
 
@@ -62,6 +75,7 @@ interface PendingRequest {
   agentId: string;
   originalRequestId: string;
   lastSentAt: number;
+  forwardMessage: ServerMessage;
 }
 
 /**
@@ -157,19 +171,19 @@ export class RelayServer extends EventEmitter {
    * Handle extension connection
    */
   private handleExtensionConnection(ws: WebSocket): void {
-    // Replace prior extension connection (background/sidepanel can reconnect).
-    if (this.extensionWs) {
-      this.extensionWs.close();
-      // Reject pending requests immediately — the old connection is gone and the
-      // extension will send 'connected' again, but we don't want a window where
-      // new requests could slip through to the new socket before rejection.
-      this.rejectPendingRequests('Extension reconnected — previous connection replaced');
+    const previousWs = this.extensionWs;
+    const replacedConnection = previousWs !== null && previousWs !== ws;
+
+    // Replace prior extension connection (background/service worker can reconnect).
+    if (previousWs && previousWs !== ws) {
+      previousWs.close();
     }
 
     this.log('Extension connected');
     this.extensionWs = ws;
 
     ws.on('message', (data) => {
+      if (this.extensionWs !== ws) return;
       try {
         const message: ExtensionMessage = JSON.parse(data.toString());
         this.handleExtensionMessage(ws, message);
@@ -200,6 +214,10 @@ export class RelayServer extends EventEmitter {
 
     // Request tools list, with retries in case the extension wasn't ready yet.
     this.startToolsSyncLoop();
+
+    if (replacedConnection) {
+      this.replayPendingRequests(ws);
+    }
   }
 
   /**
@@ -266,10 +284,10 @@ export class RelayServer extends EventEmitter {
     this.log(`Extension message: ${message.type}`);
 
     if (message.type === 'connected') {
-      // Reject any remaining pending requests (belt-and-suspenders —
-      // handleExtensionConnection already rejects when replacing, but this
-      // covers the case where extension reconnects without a new WS connection).
-      this.rejectPendingRequests('Extension reconnected — request may have been lost');
+      // Local extension clients announce their websocket handshake with a
+      // standalone `connected` message. That is not itself a failure signal,
+      // and rejecting pending requests here breaks otherwise healthy reconnects.
+      return;
     }
 
     // Handle tools list
@@ -324,19 +342,22 @@ export class RelayServer extends EventEmitter {
 
     // Generate relay request ID
     const relayRequestId = `relay_${++this.requestIdCounter}`;
-    
-    // Store pending request mapping (without forwardMessage — no replay)
+    const forwardMessage: ServerMessage = {
+      ...message,
+      requestId: relayRequestId,
+    };
+
+    // Store pending request mapping so it can be replayed if the extension
+    // swaps sockets mid-flight.
     this.pendingRequests.set(relayRequestId, {
       agentId,
       originalRequestId: message.requestId,
       lastSentAt: Date.now(),
+      forwardMessage,
     });
 
     // Forward to extension with relay request ID
-    this.extensionWs.send(JSON.stringify({
-      ...message,
-      requestId: relayRequestId,
-    }));
+    this.extensionWs.send(JSON.stringify(forwardMessage));
   }
 
   /**
@@ -353,31 +374,26 @@ export class RelayServer extends EventEmitter {
   }
 
   /**
-   * Reject all pending requests and notify agents of the error.
-   * Called when the extension reconnects — responses to in-flight requests
-   * from the previous connection are lost, so we surface an error to let
-   * the MCP client retry if appropriate.
+   * Replay pending requests on a replacement extension connection.
+   *
+   * The browser-side client deduplicates repeated request IDs, so keeping the
+   * same relay request ID lets us survive a transient socket swap without
+   * dropping the original MCP call or double-running it under normal reconnects.
    */
-  private rejectPendingRequests(reason: string): void {
+  private replayPendingRequests(targetWs: WebSocket): void {
     if (this.pendingRequests.size === 0) return;
+    if (targetWs.readyState !== WebSocket.OPEN) return;
 
-    this.log(`Rejecting ${this.pendingRequests.size} pending request(s): ${reason}`);
+    this.log(`Replaying ${this.pendingRequests.size} pending request(s) on replacement connection`);
 
     for (const [relayRequestId, pending] of this.pendingRequests) {
-      const agent = this.agents.get(pending.agentId);
-      if (agent) {
-        try {
-          agent.ws.send(JSON.stringify({
-            type: 'error',
-            requestId: pending.originalRequestId,
-            error: reason,
-          }));
-        } catch (error) {
-          this.log(`Failed to notify agent for ${relayRequestId}: ${error}`);
-        }
+      pending.lastSentAt = Date.now();
+      try {
+        targetWs.send(JSON.stringify(pending.forwardMessage));
+      } catch (error) {
+        this.log(`Failed to replay ${relayRequestId}: ${error}`);
       }
     }
-    this.pendingRequests.clear();
   }
 
   /**
@@ -539,6 +555,7 @@ export function spawnRelayDaemon(debug: boolean = false): void {
     detached: true,
     stdio: 'ignore',
     cwd: VIBE_DIR,
+    env: process.env,
   });
 
   child.unref();

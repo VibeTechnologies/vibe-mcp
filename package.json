@@ -1,13 +1,14 @@
 {
   "name": "@vibebrowser/mcp",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "module",
   "description": "MCP server for browser automation - the only solution supporting multiple AI agents (Claude, Cursor, VS Code) simultaneously controlling your Chrome browser",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "vibebrowser-mcp": "./dist/cli.js",
-    "vibe-mcp": "./dist/cli.js"
+    "vibe-mcp": "./dist/cli.js",
+    "vibebrowser-cli": "./dist/browser-main.js"
   },
   "publishConfig": {
     "access": "public"
@@ -17,6 +18,9 @@
     "dev": "tsc --watch",
     "start": "node dist/cli.js",
     "prepublishOnly": "npm run build",
+    "test": "npm run test:e2e:relay-race && npm run test:e2e:http && npm run test:e2e:browser-cli",
+    "test:e2e:browser-cli": "node scripts/e2e-browser-cli.mjs",
+    "test:e2e:http": "node scripts/e2e-http-streamable.mjs",
     "test:e2e:relay-race": "node scripts/e2e-relay-fake-extension-race.mjs",
     "test:e2e:agents": "node scripts/e2e-mcp-agents.mjs"
   },
@@ -67,6 +71,8 @@
   },
   "files": [
     "dist",
+    "openclaw",
+    "docs",
     "README.md",
     "LICENSE"
   ]

@@ -24,7 +24,7 @@ Vibe MCP is the **only solution that allows multiple AI agents to control the sa
 Claude Desktop       Cursor          VS Code         OpenCode
      |                  |                |               |
      v                  v                v               v
- [vibe-mcp]        [vibe-mcp]       [vibe-mcp]      [vibe-mcp]
+ [vibebrowser-mcp] [vibebrowser-mcp] [vibebrowser-mcp] [vibebrowser-mcp]
      |                  |                |               |
      +------------------+----------------+---------------+
                         |
@@ -243,7 +243,7 @@ Claude / Cursor / VS Code (stdio)
 ```
 
 1. AI applications connect via MCP over stdio
-2. `vibebrowser-mcp` (or `vibe-mcp`) connects to the local relay on port `19888`
+2. `vibebrowser-mcp` connects to the local relay on port `19888`
 3. The relay forwards commands to the extension on port `19889`
 4. Results flow back to the agent
 
@@ -256,12 +256,50 @@ When multiple agents connect, Vibe MCP automatically spawns a relay daemon:
 - Relay multiplexes all agent requests to the single extension connection
 - Each agent receives only its own responses
 
+### Cloud OpenClaw -> Local Browser
+
+If your agent runs in the cloud but you want it to control the user's real local browser, run `vibebrowser-mcp` in HTTP mode and connect it to the Vibe extension in remote relay mode.
+
+```bash
+npx -y --package @vibebrowser/mcp vibebrowser-mcp start --transport http --remote <extension-uuid>
+```
+
+This exposes a local MCP endpoint at `http://127.0.0.1:8788/mcp` by default.
+
+You can print the exact OpenClaw-friendly setup with:
+
+```bash
+npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <extension-uuid>
+```
+
+For the full walkthrough, see `docs/openclaw-local-browser.md`.
+
+### OpenClaw-Compatible Browser CLI
+
+`vibebrowser-cli` mirrors the OpenClaw browser CLI shape for the real local-browser path:
+
+```bash
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> status
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> tabs
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> open https://example.com
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> snapshot
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> click 12
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> type 23 "hello" --submit
+```
+
+The package now exposes two executables:
+
+- `vibebrowser-mcp` for MCP server, HTTP bridge, and helper commands
+- `vibebrowser-cli` for OpenClaw-inspired browser control against the real Vibe-connected session
+
+`vibebrowser-cli` accepts the OpenClaw-style `--browser-profile` flag for compatibility and supports `--json` for machine-readable output. Unlike OpenClaw's managed `openclaw` browser profile, this CLI always targets the real Vibe-connected browser session.
+
 ## Local LLM: `serve` Command
 
 Run a local LLM with one command — no cloud API keys required. Automatically installs [Ollama](https://ollama.com), downloads the model, and starts serving an OpenAI-compatible API.
 
 ```bash
-npx @vibebrowser/mcp serve qwen3.5
+npx -y --package @vibebrowser/mcp vibebrowser-mcp serve qwen3.5
 ```
 
 That's it. Works on **macOS**, **Linux**, and **Windows**.
@@ -276,16 +314,16 @@ That's it. Works on **macOS**, **Linux**, and **Windows**.
 ### Recommended models
 
 ```bash
-npx @vibebrowser/mcp serve qwen3.5      # Best overall for agentic tasks
-npx @vibebrowser/mcp serve llama4        # Strong general reasoning
-npx @vibebrowser/mcp serve deepseek-r1   # Reasoning chains
-npx @vibebrowser/mcp serve mistral       # Lightweight & fast (7B)
+npx -y --package @vibebrowser/mcp vibebrowser-mcp serve qwen3.5      # Best overall for agentic tasks
+npx -y --package @vibebrowser/mcp vibebrowser-mcp serve llama4        # Strong general reasoning
+npx -y --package @vibebrowser/mcp vibebrowser-mcp serve deepseek-r1   # Reasoning chains
+npx -y --package @vibebrowser/mcp vibebrowser-mcp serve mistral       # Lightweight & fast (7B)
 ```
 
 ### Options
 
 ```bash
-npx @vibebrowser/mcp serve <model> [options]
+npx -y --package @vibebrowser/mcp vibebrowser-mcp serve <model> [options]
 
 Options:
   -p, --port <number>  Ollama API port (default: 11434)
@@ -304,15 +342,33 @@ The extension connects to `http://localhost:11434/v1` automatically.
 ## CLI Options
 
 ```bash
-npx @vibebrowser/mcp --help
+npx -y --package @vibebrowser/mcp vibebrowser-mcp --help
+npx -y --package @vibebrowser/mcp vibebrowser-cli --help
 
 # MCP server (default)
-npx @vibebrowser/mcp [start] [options]
+npx -y --package @vibebrowser/mcp vibebrowser-mcp [start] [options]
   -p, --port <number>  WebSocket port for local relay (agent) connection (default: 19888)
   -d, --debug          Enable debug logging
+  --transport <mode>   MCP transport to expose: stdio or http (default: stdio)
+  --host <host>        Host to bind the HTTP server to (default: 127.0.0.1)
+  --http-port <number> Port for streamable HTTP MCP transport (default: 8788)
+  --http-path <path>   Path for streamable HTTP MCP transport (default: /mcp)
+  --allow-host <host>  Allowed host header for HTTP transport (repeatable)
+  -r, --remote <uuid>  Connect to a remote extension via public relay
+  --relay-url <url>    Custom relay server URL
+
+# OpenClaw helper
+npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <extension-uuid>
+
+# OpenClaw-compatible browser CLI
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> status
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> tabs
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> snapshot --json
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> click 12
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> type 23 "hello" --submit
 
 # Local LLM server
-npx @vibebrowser/mcp serve <model> [options]
+npx -y --package @vibebrowser/mcp vibebrowser-mcp serve <model> [options]
   -p, --port <number>  Ollama API port (default: 11434)
   -y, --yes            Skip confirmation prompts
   -d, --debug          Enable debug logging
@@ -326,6 +382,13 @@ npx @vibebrowser/mcp serve <model> [options]
 2. Click the extension icon and enable "MCP External Control" in Settings
 3. Check that no firewall is blocking localhost connections
 
+### "OpenClaw cannot reach my local browser bridge"
+
+1. Start `vibebrowser-mcp` in HTTP mode instead of stdio
+2. Make sure the bridge process is still running on the user's machine
+3. Confirm the extension is in `Remote` mode and connected
+4. Verify the MCP URL in OpenClaw matches the bridge URL, usually `http://127.0.0.1:8788/mcp`
+
 ### Debug mode
 
 Enable debug logging to diagnose issues:
@@ -335,7 +398,7 @@ Enable debug logging to diagnose issues:
   "mcpServers": {
     "vibe": {
       "command": "npx",
-      "args": ["-y", "@vibebrowser/mcp", "--debug"]
+      "args": ["-y", "--package", "@vibebrowser/mcp", "vibebrowser-mcp", "--debug"]
     }
   }
 }

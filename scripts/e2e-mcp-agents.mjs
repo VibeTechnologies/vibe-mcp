@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   cpSync,
   existsSync,
@@ -20,14 +20,20 @@ import WebSocket from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
-const EXTENSION_PORT = 19889;
-const AGENT_PORT = 19888;
 const RELAY_HOST = '127.0.0.1';
 const TIMEOUT_MS = 120_000;
 const REAL_TASK = process.env.E2E_TASK;
 const TOOLS_TIMEOUT_MS = 60_000;
 const DEBUG_E2E = process.env.E2E_DEBUG === '1';
-const RELAY_PID_FILE = join(homedir(), '.vibe-mcp', 'relay.pid');
+const configuredAgentPort = getConfiguredPort('VIBE_MCP_TEST_AGENT_PORT', 'E2E_AGENT_PORT');
+const configuredExtensionPort = getConfiguredPort('VIBE_MCP_TEST_EXTENSION_PORT', 'E2E_EXTENSION_PORT');
+const RESERVED_PORTS = new Set();
+const TEST_AGENT_PORT = configuredAgentPort ?? await findFreePort(RESERVED_PORTS);
+RESERVED_PORTS.add(TEST_AGENT_PORT);
+const TEST_EXTENSION_PORT = configuredExtensionPort ?? await findFreePort(RESERVED_PORTS);
+RESERVED_PORTS.add(TEST_EXTENSION_PORT);
+const RELAY_STATE_DIR = process.env.E2E_RELAY_STATE_DIR || join(tmpdir(), `vibe-mcp-e2e-relay-${process.pid}`);
+const RELAY_PID_FILE = join(RELAY_STATE_DIR, 'relay.pid');
 const EXTENSION_CONNECT_TIMEOUT_MS = Number(process.env.E2E_EXTENSION_TIMEOUT_MS)
   || 120_000;
 // Managed Chrome bootstrap must be explicit opt-in.
@@ -39,14 +45,56 @@ const MANAGED_CHROME_USER_DATA = process.env.E2E_MANAGED_CHROME_USER_DATA
   || join(homedir(), 'Library/Application Support/Google/Chrome Dev');
 const MANAGED_CHROME_CDP_PORT = Number(process.env.E2E_MANAGED_CHROME_CDP_PORT) || 9223;
 const E2E_MCP_SOURCE = (process.env.E2E_MCP_SOURCE || 'local').toLowerCase();
+const E2E_MCP_PACKAGE = process.env.E2E_MCP_PACKAGE;
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const PACKAGE_ROOT = resolve(SCRIPT_DIR, '..');
 const LOCAL_MCP_CLI = resolve(SCRIPT_DIR, '..', 'dist', 'cli.js');
+const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const NPX_BIN = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+let packedPackageDir = null;
+let packedPackageSpec = null;
 
 const stripAnsi = (input) => input.replace(/[\u001b\u009b][[\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
 
+function getConfiguredPort(...names) {
+  for (const name of names) {
+    const raw = process.env[name];
+    if (!raw) continue;
+    const port = Number.parseInt(raw, 10);
+    if (Number.isFinite(port) && port > 0 && port <= 65535) {
+      return port;
+    }
+    throw new Error(`Invalid ${name}: ${raw}`);
+  }
+  return null;
+}
+
+function findFreePort(exclude) {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on('error', reject);
+    server.listen(0, RELAY_HOST, () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        if (!port || exclude.has(port)) {
+          findFreePort(exclude).then(resolve, reject);
+          return;
+        }
+        resolve(port);
+      });
+    });
+  });
+}
+
 function getE2EMcpCommand() {
-  if (!['local', 'npm'].includes(E2E_MCP_SOURCE)) {
-    throw new Error(`Invalid E2E_MCP_SOURCE="${E2E_MCP_SOURCE}". Expected one of: local, npm`);
+  if (!['local', 'pack', 'npm'].includes(E2E_MCP_SOURCE)) {
+    throw new Error(`Invalid E2E_MCP_SOURCE="${E2E_MCP_SOURCE}". Expected one of: local, pack, npm`);
   }
 
   if (E2E_MCP_SOURCE === 'local') {
@@ -54,6 +102,7 @@ function getE2EMcpCommand() {
       throw new Error(`Local MCP CLI not found at ${LOCAL_MCP_CLI}. Build first with: npm run build`);
     }
     const args = [LOCAL_MCP_CLI];
+    args.push('--port', String(TEST_AGENT_PORT));
     if (DEBUG_E2E) args.push('--debug');
     return {
       source: 'local',
@@ -62,13 +111,64 @@ function getE2EMcpCommand() {
     };
   }
 
-  const args = ['-y', '@vibebrowser/mcp@latest'];
+  const packageSpec = E2E_MCP_SOURCE === 'pack'
+    ? resolvePackedPackageSpec()
+    : '@vibebrowser/mcp@latest';
+  const args = ['-y', '--package', packageSpec, 'vibebrowser-mcp', '--port', String(TEST_AGENT_PORT)];
   if (DEBUG_E2E) args.push('--debug');
   return {
-    source: 'npm',
-    command: 'npx',
+    source: E2E_MCP_SOURCE,
+    command: NPX_BIN,
     args,
   };
+}
+
+function resolvePackedPackageSpec() {
+  if (E2E_MCP_PACKAGE) {
+    return normalizePackageSpec(E2E_MCP_PACKAGE);
+  }
+
+  if (!existsSync(LOCAL_MCP_CLI)) {
+    throw new Error(`Local MCP CLI not found at ${LOCAL_MCP_CLI}. Build first with: npm run build`);
+  }
+
+  if (!packedPackageSpec) {
+    packedPackageDir = mkdtempSync(join(tmpdir(), 'vibe-mcp-pack-e2e-'));
+    const result = spawnSync(
+      NPM_BIN,
+      ['pack', '--json', '--pack-destination', packedPackageDir],
+      {
+        cwd: PACKAGE_ROOT,
+        encoding: 'utf-8',
+      },
+    );
+
+    if (result.status !== 0) {
+      throw new Error(`npm pack failed with status ${result.status}\nstdout=${result.stdout}\nstderr=${result.stderr}`);
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(result.stdout);
+    } catch (error) {
+      throw new Error(`Failed to parse npm pack output: ${result.stdout}\n${error}`);
+    }
+
+    const filename = Array.isArray(payload) ? payload[0]?.filename : null;
+    if (!filename) {
+      throw new Error(`npm pack did not report a filename: ${result.stdout}`);
+    }
+
+    packedPackageSpec = join(packedPackageDir, filename);
+  }
+
+  return packedPackageSpec;
+}
+
+function normalizePackageSpec(spec) {
+  return spec.endsWith('.tgz') || spec.startsWith('.') || spec.startsWith('/')
+    ? resolve(process.cwd(), spec)
+    : spec;
 }
 
 function assertSafeCliValue(value, label) {
@@ -366,10 +466,10 @@ async function bootstrapManagedChromeForRealE2E() {
       message: { type: 'MCP_EXTERNAL:DISCONNECT' },
     }).catch(() => null);
     await delay(500);
-    await sendExtensionRuntimeMessageViaPage({
-      pageWsUrl,
-      message: { type: 'MCP_EXTERNAL:CONNECT', port: EXTENSION_PORT, mode: 'local' },
-    });
+      await sendExtensionRuntimeMessageViaPage({
+        pageWsUrl,
+        message: { type: 'MCP_EXTERNAL:CONNECT', port: TEST_EXTENSION_PORT, mode: 'local' },
+      });
     await delay(500);
     const connectResult = await sendExtensionRuntimeMessageViaPage({
       pageWsUrl,
@@ -435,8 +535,8 @@ async function stopExistingRelay() {
   }
   const start = Date.now();
   while (Date.now() - start < 5_000) {
-    const extensionOpen = await probePort(EXTENSION_PORT);
-    const agentOpen = await probePort(AGENT_PORT);
+    const extensionOpen = await probePort(TEST_EXTENSION_PORT);
+    const agentOpen = await probePort(TEST_AGENT_PORT);
     if (!extensionOpen && !agentOpen) {
       return;
     }
@@ -455,8 +555,8 @@ async function stopConflictingExtensionPortClients() {
     if (!Number.isFinite(pid) || pid === process.pid) continue;
 
     try {
-      const isConflictingMcpClient = /vibe-mcp\/dist\/cli\.js|@vibebrowser\/mcp/.test(cmd)
-        && /--port\s+19889\b/.test(cmd);
+      const isConflictingMcpClient = /vibe-mcp\/dist\/cli\.js|vibebrowser-mcp|@vibebrowser\/mcp/.test(cmd)
+        && new RegExp(`--port\\s+${TEST_EXTENSION_PORT}\\b`).test(cmd);
       if (isConflictingMcpClient) {
         process.kill(pid, 'SIGTERM');
       }
@@ -487,14 +587,14 @@ async function stopManagedChromeByUserDataDir(userDataDir) {
 async function waitForRelayReady() {
   const start = Date.now();
   while (Date.now() - start < 10_000) {
-    const extensionOpen = await probePort(EXTENSION_PORT);
-    const agentOpen = await probePort(AGENT_PORT);
+    const extensionOpen = await probePort(TEST_EXTENSION_PORT);
+    const agentOpen = await probePort(TEST_AGENT_PORT);
     if (extensionOpen && agentOpen) {
       return;
     }
     await delay(200);
   }
-  throw new Error('Relay did not become ready on port 19889');
+  throw new Error(`Relay did not become ready on ports ${TEST_AGENT_PORT}/${TEST_EXTENSION_PORT}`);
 }
 
 async function waitForRelayPid() {
@@ -522,9 +622,15 @@ async function startRelay() {
   } catch {
     const relayArgs = ['dist/relay-daemon.js'];
     if (DEBUG_E2E) relayArgs.push('--debug');
-    const relay = spawn(process.execPath, relayArgs, {
-      stdio: ['ignore', 'inherit', 'inherit'],
-    });
+      const relay = spawn(process.execPath, relayArgs, {
+        stdio: ['ignore', 'inherit', 'inherit'],
+        env: {
+          ...process.env,
+          VIBE_MCP_AGENT_PORT: String(TEST_AGENT_PORT),
+          VIBE_MCP_EXTENSION_PORT: String(TEST_EXTENSION_PORT),
+          VIBE_MCP_STATE_DIR: RELAY_STATE_DIR,
+        },
+      });
     await waitForRelayReady();
     await waitForRelayPid();
     return relay;
@@ -532,7 +638,7 @@ async function startRelay() {
 }
 
 async function probeExtensionConnection() {
-  const ws = new WebSocket(`ws://${RELAY_HOST}:${AGENT_PORT}`);
+  const ws = new WebSocket(`ws://${RELAY_HOST}:${TEST_AGENT_PORT}`);
   return new Promise((resolve) => {
     let settled = false;
     const finish = (value) => {
@@ -818,6 +924,12 @@ async function main() {
       command: mcpCmd.command,
       args: mcpCmd.args,
       cwd: process.cwd(),
+      env: {
+        ...process.env,
+        VIBE_MCP_AGENT_PORT: String(TEST_AGENT_PORT),
+        VIBE_MCP_EXTENSION_PORT: String(TEST_EXTENSION_PORT),
+        VIBE_MCP_STATE_DIR: RELAY_STATE_DIR,
+      },
       stderr: 'pipe',
     });
     if (transport.stderr) {
@@ -919,6 +1031,9 @@ async function main() {
     }
     if (opencodeTmpDir) {
       rmSync(opencodeTmpDir, { recursive: true, force: true });
+    }
+    if (packedPackageDir) {
+      rmSync(packedPackageDir, { recursive: true, force: true });
     }
     if (relay) {
       relay.kill('SIGTERM');

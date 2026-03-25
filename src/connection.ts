@@ -70,6 +70,7 @@ export class ExtensionConnection extends EventEmitter {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private extensionConnected: boolean = false;
   private remoteConfig: RemoteConfig | null = null;
+  private stopping = false;
 
   constructor(port: number = AGENT_PORT, debug: boolean = false, remote?: RemoteConfig) {
     super();
@@ -84,6 +85,7 @@ export class ExtensionConnection extends EventEmitter {
    * In remote mode: connects directly to public relay.
    */
   async start(): Promise<void> {
+    this.stopping = false;
     if (this.remoteConfig) {
       this.log(`Remote mode: connecting to relay for UUID ${this.remoteConfig.uuid}`);
       await this.connectToRelay();
@@ -112,6 +114,7 @@ export class ExtensionConnection extends EventEmitter {
     const child = spawn(process.execPath, [relayScript, this.debug ? '--debug' : ''], {
       detached: true,
       stdio: 'ignore',
+      env: process.env,
     });
     
     child.unref();
@@ -128,7 +131,7 @@ export class ExtensionConnection extends EventEmitter {
       try {
         // Try to connect
         await new Promise<void>((resolve, reject) => {
-          const ws = new WebSocket(`ws://127.0.0.1:${AGENT_PORT}`);
+          const ws = new WebSocket(`ws://127.0.0.1:${this.port}`);
           const timeout = setTimeout(() => {
             ws.close();
             reject(new Error('Timeout'));
@@ -214,8 +217,10 @@ export class ExtensionConnection extends EventEmitter {
 
           this.emit('disconnected');
 
-          // Schedule reconnect
-          this.scheduleReconnect();
+          if (!this.stopping) {
+            // Schedule reconnect
+            this.scheduleReconnect();
+          }
         });
 
         this.ws.on('error', (error) => {
@@ -252,6 +257,7 @@ export class ExtensionConnection extends EventEmitter {
    * Stop the connection
    */
   async stop(): Promise<void> {
+    this.stopping = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -452,7 +458,7 @@ export class ExtensionConnection extends EventEmitter {
    */
   private log(message: string): void {
     if (this.debug) {
-      console.error(`[vibe-mcp] ${message}`);
+      console.error(`[vibebrowser-mcp] ${message}`);
     }
   }
 }

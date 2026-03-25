@@ -24,9 +24,10 @@ import {
   type ServerTransportMode,
   type ToolDefinition,
 } from './types.js';
+import { getPackageVersion } from './version.js';
 
-const SERVER_NAME = 'vibe-mcp';
-const SERVER_VERSION = '0.2.4';
+const SERVER_NAME = 'vibebrowser-mcp';
+const SERVER_VERSION = getPackageVersion();
 const STARTUP_TOOLS_REFRESH_TIMEOUT_MS = 4_000;
 const STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS = 1_500;
 

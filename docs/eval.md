@@ -119,7 +119,22 @@ Pass signal:
 - `vibebrowser-mcp --help` prints the branded CLI
 - `vibebrowser-cli --help` prints the standalone OpenClaw-compatible CLI
 
-### 4. Real-extension agent eval
+### 4. Published npm CLI validation
+
+```bash
+cd /Users/engineer/workspace/vibebrowser/vibe-mcp
+npx -y --package @vibebrowser/mcp@latest vibebrowser-mcp --version
+npx -y --package @vibebrowser/mcp@latest vibe-mcp --version
+npx -y --package @vibebrowser/mcp@latest vibebrowser-cli --version
+E2E_BROWSER_CLI_SOURCE=npm node scripts/e2e-browser-cli.mjs
+```
+
+Pass signal:
+
+- all three binaries print the published version
+- `browser cli e2e ok` proves `vibebrowser-cli` works from the npm registry package, not only from a local tarball
+
+### 5. Real-extension agent eval
 
 ```bash
 cd /Users/engineer/workspace/vibebrowser/vibe-mcp
@@ -137,7 +152,7 @@ Hard requirement:
 - a live Vibe extension session must already be connected or connectable on the relay path
 - this harness does **not** prove anything if the extension is absent
 
-### 5. Full OpenCode browser eval in sibling repo
+### 6. Full OpenCode browser eval in sibling repo
 
 ```bash
 cd /Users/engineer/workspace/vibebrowser/vibe
@@ -169,10 +184,13 @@ Commands executed in this session:
 | `npm pack --json --pack-destination <tmp>` | PASS | tarball includes both `dist/cli.js` and `dist/browser-main.js` plus docs/openclaw skill files |
 | `npx -y --package <local-tarball> vibebrowser-mcp --help` | PASS | branded `vibebrowser-mcp` binary available from package artifact |
 | `npx -y --package <local-tarball> vibebrowser-cli --help` | PASS | standalone `vibebrowser-cli` binary available from package artifact |
+| `gh workflow run "Publish to npm" --ref release/vibebrowser-cli-0.2.5` | PASS | GitHub publish workflow completed successfully |
+| `npm view @vibebrowser/mcp version dist-tags.latest bin --json` | PASS | npm `latest` is now `0.2.5` and includes `vibebrowser-mcp`, `vibe-mcp`, and `vibebrowser-cli` |
+| `npx -y --package @vibebrowser/mcp@latest vibebrowser-mcp --version` | PASS | published npm binary resolves to `0.2.5` |
+| `npx -y --package @vibebrowser/mcp@latest vibe-mcp --version` | PASS | legacy alias still resolves to `0.2.5` |
+| `npx -y --package @vibebrowser/mcp@latest vibebrowser-cli --version` | PASS | standalone CLI is now available from npm `latest` |
+| `E2E_BROWSER_CLI_SOURCE=npm node scripts/e2e-browser-cli.mjs` | PASS | npm-installed `vibebrowser-cli` passed end to end |
 | `E2E_MCP_SOURCE=pack node scripts/e2e-mcp-agents.mjs` | FAIL (environment) | timed out waiting for a live Vibe extension connection on the relay path |
-| `npx -y --package @vibebrowser/mcp@latest vibebrowser-mcp --help` | PASS, but stale | published npm has the `vibebrowser-mcp` alias, but not the full new standalone CLI release shape |
-| `npx -y --package @vibebrowser/mcp@latest vibebrowser-cli --help` | FAIL | `vibebrowser-cli` is not present in the current npm `latest` release |
-| `npm whoami` | FAIL | `ENEEDAUTH`; publish from this machine is currently blocked |
 
 Observed real-extension agent failure:
 
@@ -184,26 +202,26 @@ Interpretation:
 
 - packaged artifacts are valid locally
 - the standalone CLI branding and binaries are correct in the tarball
-- published npm `latest` is **not yet** updated to the new branded binaries
+- published npm `latest` is now updated to `0.2.5` with all intended binaries
 - real-agent validation currently depends on a live extension session and was not satisfiable in this shell session
 
 ## Publish Reality
 
 Current npm state:
 
-- `npm view @vibebrowser/mcp version dist-tags.latest --json` returned `0.2.4`
-- `@latest` still resolves to a partial older package surface
-- `npm whoami` failed with `ENEEDAUTH`
+- `npm view @vibebrowser/mcp version dist-tags.latest bin --json` returns `0.2.5`
+- `@latest` now includes:
+  - `vibebrowser-mcp`
+  - `vibe-mcp`
+  - `vibebrowser-cli`
+- publish succeeded via GitHub Actions workflow `Publish to npm`
 
 Consequences:
 
-- the new `vibebrowser-mcp` / `vibebrowser-cli` binaries are verified in a local tarball artifact
-- they are **not yet published** to npm from this machine
-- do not claim npm end-to-end availability until:
-  - a new version is cut
-  - publish auth is configured
-  - `npx -y --package @vibebrowser/mcp@<new-version> vibebrowser-cli --help` succeeds
+- the new `vibebrowser-mcp` / `vibebrowser-cli` binaries are published to npm and verified from the registry
+- the remaining non-green item is the real-extension agent eval, which still requires a live Vibe extension session on the relay path
 
 ## Tracking
 
 - Tracking issue: `VibeTechnologies/vibe-mcp#22`
+- Release PR: `VibeTechnologies/vibe-mcp#23`

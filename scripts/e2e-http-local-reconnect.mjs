@@ -7,28 +7,18 @@ import { join } from 'node:path';
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
 import WebSocket from 'ws';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const HOST = '127.0.0.1';
-const configuredAgentPort = getConfiguredPort('VIBE_MCP_TEST_AGENT_PORT', 'E2E_AGENT_PORT');
-const configuredExtensionPort = getConfiguredPort('VIBE_MCP_TEST_EXTENSION_PORT', 'E2E_EXTENSION_PORT');
 const RESERVED_PORTS = new Set();
-const AGENT_PORT = configuredAgentPort ?? await findFreePort(RESERVED_PORTS);
+const MCP_HTTP_PORT = await findFreePort(RESERVED_PORTS);
+RESERVED_PORTS.add(MCP_HTTP_PORT);
+const AGENT_PORT = await findFreePort(RESERVED_PORTS);
 RESERVED_PORTS.add(AGENT_PORT);
-const EXTENSION_PORT = configuredExtensionPort ?? await findFreePort(RESERVED_PORTS);
+const EXTENSION_PORT = await findFreePort(RESERVED_PORTS);
 RESERVED_PORTS.add(EXTENSION_PORT);
-
-function getConfiguredPort(...names) {
-  for (const name of names) {
-    const raw = process.env[name];
-    if (!raw) continue;
-    const port = Number.parseInt(raw, 10);
-    if (Number.isFinite(port) && port > 0 && port <= 65535) {
-      return port;
-    }
-    throw new Error(`Invalid ${name}: ${raw}`);
-  }
-  return null;
-}
+const MCP_URL = `http://${HOST}:${MCP_HTTP_PORT}/mcp`;
 
 function findFreePort(exclude) {
   return new Promise((resolve, reject) => {
@@ -60,20 +50,20 @@ function probePort(port) {
       socket.destroy();
       resolve(true);
     });
-    socket.on('error', () => {
-      resolve(false);
-    });
+    socket.on('error', () => resolve(false));
   });
 }
 
 async function assertPortsFree() {
-  const [agentBusy, extensionBusy] = await Promise.all([
+  const [httpBusy, agentBusy, extensionBusy] = await Promise.all([
+    probePort(MCP_HTTP_PORT),
     probePort(AGENT_PORT),
     probePort(EXTENSION_PORT),
   ]);
-  if (agentBusy || extensionBusy) {
+
+  if (httpBusy || agentBusy || extensionBusy) {
     throw new Error(
-      `Relay ports are already in use (${AGENT_PORT}/${EXTENSION_PORT}). Stop existing relay daemon and retry.`
+      `Test ports are already in use (${MCP_HTTP_PORT}/${AGENT_PORT}/${EXTENSION_PORT}). Stop existing processes and retry.`
     );
   }
 }
@@ -81,7 +71,9 @@ async function assertPortsFree() {
 async function waitForPort(port, timeoutMs = 15_000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (await probePort(port)) return;
+    if (await probePort(port)) {
+      return;
+    }
     await delay(100);
   }
   throw new Error(`Timed out waiting for port ${port}`);
@@ -93,7 +85,7 @@ function captureMessages(ws) {
     try {
       messages.push(JSON.parse(raw.toString()));
     } catch {
-      // Ignore malformed messages in test harness.
+      // Ignore malformed harness messages.
     }
   });
   return messages;
@@ -131,12 +123,26 @@ function connectWebSocket(url, timeoutMs = 10_000) {
   });
 }
 
+function onceProcessExit(child) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    child.once('exit', finish);
+    child.once('close', finish);
+  });
+}
+
 async function main() {
   let relay = null;
-  let agent = null;
+  let serverProcess = null;
   let extension1 = null;
   let extension2 = null;
-  const stateDir = mkdtempSync(join(tmpdir(), 'vibe-mcp-relay-race-'));
+  let client = null;
+  const stateDir = mkdtempSync(join(tmpdir(), 'vibe-mcp-http-local-reconnect-'));
 
   try {
     await assertPortsFree();
@@ -155,76 +161,105 @@ async function main() {
 
     await Promise.all([waitForPort(AGENT_PORT), waitForPort(EXTENSION_PORT)]);
 
+    serverProcess = spawn(
+      process.execPath,
+      [
+        'dist/cli.js',
+        'start',
+        '--transport',
+        'http',
+        '--host',
+        HOST,
+        '--http-port',
+        String(MCP_HTTP_PORT),
+        '--port',
+        String(AGENT_PORT),
+      ],
+      {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: {
+          ...process.env,
+          VIBE_MCP_STATE_DIR: stateDir,
+        },
+      },
+    );
+    serverProcess.stdout.on('data', (chunk) => process.stdout.write(chunk.toString()));
+    serverProcess.stderr.on('data', (chunk) => process.stderr.write(chunk.toString()));
+
+    await waitForPort(MCP_HTTP_PORT);
+
     extension1 = await connectWebSocket(`ws://${HOST}:${EXTENSION_PORT}`);
     const extension1Messages = captureMessages(extension1);
 
-    agent = await connectWebSocket(`ws://${HOST}:${AGENT_PORT}`);
-    const agentMessages = captureMessages(agent);
+    client = new Client({ name: 'vibe-mcp-http-local-reconnect', version: '1.0.0' });
+    const transport = new StreamableHTTPClientTransport(new URL(MCP_URL));
+    await client.connect(transport);
 
-    const extensionStatus = await waitForMessage(
-      agentMessages,
-      (msg) => msg.type === 'extension_status',
-      'agent extension_status'
-    );
-    if (extensionStatus.connected !== true) {
-      throw new Error('Agent did not see extension connected=true after extension #1 joined');
-    }
-
-    await waitForMessage(
+    const listToolsPromise = client.listTools();
+    const listToolsRequest = await waitForMessage(
       extension1Messages,
       (msg) => msg.type === 'list_tools',
-      'list_tools to extension #1'
+      'initial list_tools to extension #1'
     );
     extension1.send(JSON.stringify({
       type: 'tools_list',
+      requestId: listToolsRequest.requestId,
       data: [
         {
-          name: 'wait',
-          inputSchema: { type: 'object', properties: {}, additionalProperties: true },
+          name: 'echo',
+          description: 'Echo a string',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              text: { type: 'string' },
+            },
+            required: ['text'],
+          },
         },
       ],
     }));
 
-    await waitForMessage(
-      agentMessages,
-      (msg) => msg.type === 'tools_list' && Array.isArray(msg.data) && msg.data.length > 0,
-      'tools_list broadcast to agent'
-    );
+    const tools = await listToolsPromise;
+    if (!tools.tools.some((tool) => tool.name === 'echo')) {
+      throw new Error(`Expected echo tool in listTools response: ${JSON.stringify(tools)}`);
+    }
 
-    agent.send(JSON.stringify({
-      type: 'call_tool',
-      requestId: 'agent_req_1',
-      data: {
-        name: 'wait',
-        arguments: { seconds: 0.1 },
-      },
-    }));
-
+    const callResultPromise = client.callTool({
+      name: 'echo',
+      arguments: { text: 'hello after reconnect' },
+    });
     const forwardedToExtension1 = await waitForMessage(
       extension1Messages,
-      (msg) => msg.type === 'call_tool' && typeof msg.requestId === 'string',
+      (msg) => msg.type === 'call_tool' && msg.data?.name === 'echo',
       'initial call_tool forwarded to extension #1'
     );
 
     extension2 = await connectWebSocket(`ws://${HOST}:${EXTENSION_PORT}`);
     const extension2Messages = captureMessages(extension2);
 
-    await waitForMessage(
+    const listToolsToExtension2 = await waitForMessage(
       extension2Messages,
       (msg) => msg.type === 'list_tools',
-      'list_tools to extension #2'
+      'list_tools to extension #2 after reconnect'
     );
     extension2.send(JSON.stringify({
       type: 'tools_list',
+      requestId: listToolsToExtension2.requestId,
       data: [
         {
-          name: 'wait',
-          inputSchema: { type: 'object', properties: {}, additionalProperties: true },
+          name: 'echo',
+          description: 'Echo a string',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              text: { type: 'string' },
+            },
+            required: ['text'],
+          },
         },
       ],
     }));
 
-    // Simulate the extension's normal websocket handshake on the replacement socket.
     extension2.send(JSON.stringify({ type: 'connected' }));
 
     const replayedToExtension2 = await waitForMessage(
@@ -235,72 +270,27 @@ async function main() {
     extension2.send(JSON.stringify({
       type: 'tool_result',
       requestId: replayedToExtension2.requestId,
-      data: { value: 'replayed-ok' },
-    }));
-
-    const firstResult = await waitForMessage(
-      agentMessages,
-      (msg) => msg.type === 'tool_result' && msg.requestId === 'agent_req_1',
-      'tool_result back to agent for replayed in-flight request'
-    );
-    if (firstResult?.data?.value !== 'replayed-ok') {
-      throw new Error(`Unexpected replayed tool result payload: ${JSON.stringify(firstResult)}`);
-    }
-
-    // Ensure stale close from extension #1 does not invalidate live extension #2.
-    await delay(200);
-    const staleCloseDisconnected = agentMessages.some((msg) => msg.type === 'extension_disconnected');
-    if (staleCloseDisconnected) {
-      throw new Error('Agent observed extension_disconnected from stale extension close event');
-    }
-
-    agent.send(JSON.stringify({
-      type: 'call_tool',
-      requestId: 'agent_req_2',
       data: {
-        name: 'wait',
-        arguments: { seconds: 0.1 },
+        success: true,
+        content: [{ type: 'text', text: 'hello after reconnect' }],
       },
     }));
 
-    const secondForwarded = await waitForMessage(
-      extension2Messages,
-      (msg) => msg.type === 'call_tool',
-      'second call_tool routed to extension #2'
-    );
-    extension2.send(JSON.stringify({
-      type: 'tool_result',
-      requestId: secondForwarded.requestId,
-      data: { value: 'fresh-ok' },
-    }));
-
-    const secondResult = await waitForMessage(
-      agentMessages,
-      (msg) => msg.type === 'tool_result' && msg.requestId === 'agent_req_2',
-      'second tool_result back to agent'
-    );
-    if (secondResult?.data?.value !== 'fresh-ok') {
-      throw new Error(`Unexpected second tool result payload: ${JSON.stringify(secondResult)}`);
+    const callResult = await callResultPromise;
+    const textContent = callResult.content.find((item) => item.type === 'text');
+    if (!textContent || textContent.text !== 'hello after reconnect') {
+      throw new Error(`Unexpected tool result after reconnect: ${JSON.stringify(callResult)}`);
     }
 
-    const reconnectError = agentMessages.find(
-      (msg) => msg.type === 'error' && /Extension reconnected/i.test(String(msg.error || ''))
-    );
-    if (reconnectError) {
-      throw new Error(`Observed unexpected reconnect error: ${JSON.stringify(reconnectError)}`);
-    }
-
-    const noConnectionError = agentMessages.find(
-      (msg) => msg.type === 'error' && /No extension connected/i.test(String(msg.error || ''))
-    );
-    if (noConnectionError) {
-      throw new Error(`Observed unexpected relay error: ${JSON.stringify(noConnectionError)}`);
-    }
-
-    console.log('e2e ok');
+    await client.close();
+    console.log('http local reconnect e2e ok');
   } finally {
-    if (agent && agent.readyState === WebSocket.OPEN) {
-      agent.close();
+    if (client) {
+      try {
+        await client.close();
+      } catch {
+        // ignore cleanup errors
+      }
     }
     if (extension1 && extension1.readyState === WebSocket.OPEN) {
       extension1.close();
@@ -308,14 +298,19 @@ async function main() {
     if (extension2 && extension2.readyState === WebSocket.OPEN) {
       extension2.close();
     }
+    if (serverProcess) {
+      serverProcess.kill('SIGTERM');
+      await onceProcessExit(serverProcess);
+    }
     if (relay) {
       relay.kill('SIGTERM');
+      await onceProcessExit(relay);
     }
     rmSync(stateDir, { recursive: true, force: true });
   }
 }
 
 main().catch((error) => {
-  console.error(error);
+  console.error(error instanceof Error ? error.stack : String(error));
   process.exit(1);
 });

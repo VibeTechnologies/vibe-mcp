@@ -1,117 +1,227 @@
-# vibe-mcp Evaluation Process
+# vibebrowser-mcp Evaluation Process
 
-## Scope
+This document tracks the current validation matrix for the `vibebrowser-mcp` and `vibebrowser-cli` binaries, with an explicit split between:
 
-This document tracks the current end-to-end evaluation process for `vibe-mcp` against real agent flows and clarifies the difference between local-source validation and npm-production validation.
+- local workspace validation
+- packed package artifact validation (`npm pack`)
+- published npm validation (`@vibebrowser/mcp@latest`)
+- real-extension browser evals versus fake-extension protocol evals
 
-Evaluation date: **March 4, 2026 (America/Los_Angeles)**.
+Evaluation date: **March 25, 2026 (America/Los_Angeles)**.
 
----
+## Coverage Matrix
 
-## Current Status Snapshot
+| Surface | Harness | Source Modes | Backend | What It Proves |
+|---|---|---|---|---|
+| Relay race regression | `npm run test:e2e:relay-race` | local | fake extension socket | relay preserves in-flight tool calls across extension reconnects |
+| HTTP MCP transport | `npm run test:e2e:http` | local | fake extension socket | streamable HTTP MCP path works end to end |
+| OpenClaw-compatible browser CLI | `npm run test:e2e:browser-cli` | `local`, `pack`, `npm` | fake extension socket | `vibebrowser-cli` command shape, JSON output, and tool routing work end to end |
+| Codex + OpenCode MCP bridge | `npm run test:e2e:agents` | `local`, `pack`, `npm` | real extension session | packaged `vibebrowser-mcp` can be launched by Codex/OpenCode tooling and route MCP traffic to a real Vibe-connected browser |
+| OpenCode financial eval (`../vibe`) | `node tests/mcp-eval.test.js --skip-build --model github-copilot/gpt-4.1 --mcp-source ...` | `auto`, `local`, `pack`, `npm` | harness-managed browser + extension | full OpenCode browser task execution against the Vibe extension |
 
-| Test | Command | Source | Result |
-|---|---|---|---|
-| Relay race e2e (fake extension reconnect, local source) | `npm run test:e2e:relay-race` | local workspace | PASS (`e2e ok`) |
-| Agent bridge e2e (`vibe-mcp`, real path, local source) | `npm run test:e2e:agents` | local workspace | ENV-DEPENDENT (requires live extension session) |
-| Agent bridge e2e (`vibe-mcp`, published source) | `E2E_MCP_SOURCE=npm npm run test:e2e:agents` | npm (`npx @vibebrowser/mcp@latest`) | PASS (`e2e ok`) |
-| Financial MCP eval (`vibe`) | `node tests/mcp-eval.test.js --skip-build --model github-copilot/gpt-4.1 --mcp-source npm` | npm (`npx @vibebrowser/mcp@latest`) | PASS (OpenCode/Codex both `6/6`, score `1`) |
+Important scope note:
+- There is **not yet** a full hosted OpenClaw runtime eval in this repo.
+- Current OpenClaw coverage is the **OpenClaw-compatible CLI surface** (`vibebrowser-cli`) plus the `openclaw` helper and HTTP bridge docs.
+- Do not claim full hosted OpenClaw runtime parity based only on the CLI test.
 
-Production readiness verdict for `npx -y @vibebrowser/mcp@latest`: **PASSING in current verification runs**.
+## Source Selectors
 
-Stability note:
-- One transient `Connection closed` failure was observed at eval startup; immediate rerun passed end-to-end with the same command.
-- In the latest local run, `npm run test:e2e:agents` failed at extension preflight (`Extension did not connect to relay`) because no live extension socket was present on `127.0.0.1:19889`.
+### Browser CLI harness
 
----
+`scripts/e2e-browser-cli.mjs` now supports:
 
-## Required Command Set
+- `E2E_BROWSER_CLI_SOURCE=local`
+- `E2E_BROWSER_CLI_SOURCE=pack`
+- `E2E_BROWSER_CLI_SOURCE=npm`
 
-### 1. Relay race regression check (extension-independent)
+Optional override:
+
+- `E2E_BROWSER_CLI_PACKAGE=/absolute/or/relative/path/to/package.tgz`
+
+`pack` mode creates a temporary tarball with `npm pack --json --pack-destination ...` and runs:
+
+```bash
+npx -y --package <local-tarball> vibebrowser-cli ...
+```
+
+### MCP agent harness
+
+`scripts/e2e-mcp-agents.mjs` now supports:
+
+- `E2E_MCP_SOURCE=local`
+- `E2E_MCP_SOURCE=pack`
+- `E2E_MCP_SOURCE=npm`
+
+Optional override:
+
+- `E2E_MCP_PACKAGE=/absolute/or/relative/path/to/package.tgz`
+
+`pack` mode creates a temporary tarball and runs:
+
+```bash
+npx -y --package <local-tarball> vibebrowser-mcp ...
+```
+
+### Cross-repo OpenCode eval
+
+`../vibe/tests/mcp-eval.test.js` now accepts:
+
+- `--mcp-source auto`
+- `--mcp-source local`
+- `--mcp-source pack`
+- `--mcp-source npm`
+- `--mcp-package <tarball-or-package-spec>`
+
+Use `--mcp-source pack` when validating a release candidate before publish.
+
+## Required Commands
+
+### 1. Local regression suite
 
 ```bash
 cd /Users/engineer/workspace/vibebrowser/vibe-mcp
-npm run test:e2e:relay-race
+npm run build
+npm test
 ```
 
 Pass signal:
+
+- `npm test` exits `0`
+- output contains:
+  - `e2e ok`
+  - `http e2e ok`
+  - `browser cli e2e ok`
+
+### 2. Packaged CLI artifact validation
+
+```bash
+cd /Users/engineer/workspace/vibebrowser/vibe-mcp
+E2E_BROWSER_CLI_SOURCE=pack node scripts/e2e-browser-cli.mjs
+```
+
+Pass signal:
+
+- output contains `browser cli e2e ok`
+- `vibebrowser-cli` is installed from a `.tgz` package artifact, not from the workspace
+
+### 3. Packaged binary smoke check
+
+```bash
+cd /Users/engineer/workspace/vibebrowser/vibe-mcp
+TMP_DIR="$(mktemp -d)"
+npm pack --json --pack-destination "$TMP_DIR"
+npx -y --package "$TMP_DIR"/vibebrowser-mcp-*.tgz vibebrowser-mcp --help
+npx -y --package "$TMP_DIR"/vibebrowser-mcp-*.tgz vibebrowser-cli --help
+```
+
+Pass signal:
+
+- `vibebrowser-mcp --help` prints the branded CLI
+- `vibebrowser-cli --help` prints the standalone OpenClaw-compatible CLI
+
+### 4. Published npm CLI validation
+
+```bash
+cd /Users/engineer/workspace/vibebrowser/vibe-mcp
+npx -y --package @vibebrowser/mcp@latest vibebrowser-mcp --version
+npx -y --package @vibebrowser/mcp@latest vibe-mcp --version
+npx -y --package @vibebrowser/mcp@latest vibebrowser-cli --version
+E2E_BROWSER_CLI_SOURCE=npm node scripts/e2e-browser-cli.mjs
+```
+
+Pass signal:
+
+- all three binaries print the published version
+- `browser cli e2e ok` proves `vibebrowser-cli` works from the npm registry package, not only from a local tarball
+
+### 5. Real-extension agent eval
+
+```bash
+cd /Users/engineer/workspace/vibebrowser/vibe-mcp
+E2E_MCP_SOURCE=pack node scripts/e2e-mcp-agents.mjs
+```
+
+Pass signal:
+
 - output contains `e2e ok`
-- verifies `call_tool -> tool_result` across extension socket replacement
-- verifies stale extension close does not emit false `extension_disconnected`
+- Codex uses `vibe-browser.*` tools
+- OpenCode can resolve the same MCP config and report `vibe-browser connected`
 
-### 2. Local regression check (real extension path)
+Hard requirement:
 
-```bash
-cd /Users/engineer/workspace/vibebrowser/vibe-mcp
-npm run test:e2e:agents
-```
+- a live Vibe extension session must already be connected or connectable on the relay path
+- this harness does **not** prove anything if the extension is absent
 
-Pass signal:
-- output contains `e2e ok`
-
-### 3. Real-stack production check (published package)
-
-```bash
-cd /Users/engineer/workspace/vibebrowser/vibe-mcp
-E2E_MCP_SOURCE=npm npm run test:e2e:agents
-```
-
-Pass signal:
-- all MiniWoB tasks return `ok`
-- no MCP request timeouts
-
-Note:
-- `scripts/e2e-mcp-agents.mjs` always runs the real-extension path now (no `E2E_REAL` toggle).
-- Managed Chrome bootstrap is explicit opt-in (`E2E_MANAGED_CHROME=1`).
-- By default, real-stack eval expects an already running browser + extension session.
-
-### 4. Cross-repo financial eval (production source)
+### 6. Full OpenCode browser eval in sibling repo
 
 ```bash
 cd /Users/engineer/workspace/vibebrowser/vibe
-node tests/mcp-eval.test.js --skip-build --model github-copilot/gpt-4.1 --mcp-source npm
+node tests/mcp-eval.test.js --skip-build --model github-copilot/gpt-4.1 --mcp-source pack
 ```
 
 Pass criteria:
+
+- `MCP External enabled: PASS`
+- `Relay connected: PASS`
 - `MCP tools used: PASS`
-- `MCP tool calls >= 4`
-- `Google Finance visited: PASS`
-- `FINAL_TABLE marker: PASS`
 - `Tickers found: 6/6`
 - process exits `0`
 
----
+Note:
 
-## Why Earlier Evals Could Mislead
+- this harness launches its own browser test environment from the `vibe` repo
+- use it when you explicitly want the full browser-task eval, not just package smoke coverage
 
-`mcp-eval.test.js` now supports explicit source selection:
-- `--mcp-source local`
-- `--mcp-source npm`
-- `--mcp-source auto`
+## Latest Verification Snapshot
 
-Using local source can validate unpublished fixes and pass while npm `@latest` is still broken. Production claims must be based on `--mcp-source npm`.
+Commands executed in this session:
 
----
+| Command | Result | Notes |
+|---|---|---|
+| `npm run build` | PASS | local TypeScript build succeeded |
+| `npm test` | PASS | relay race, HTTP, and local browser CLI e2e all passed |
+| `E2E_BROWSER_CLI_SOURCE=pack node scripts/e2e-browser-cli.mjs` | PASS | tarball-installed `vibebrowser-cli` passed end to end |
+| `npm pack --json --pack-destination <tmp>` | PASS | tarball includes both `dist/cli.js` and `dist/browser-main.js` plus docs/openclaw skill files |
+| `npx -y --package <local-tarball> vibebrowser-mcp --help` | PASS | branded `vibebrowser-mcp` binary available from package artifact |
+| `npx -y --package <local-tarball> vibebrowser-cli --help` | PASS | standalone `vibebrowser-cli` binary available from package artifact |
+| `gh workflow run "Publish to npm" --ref release/vibebrowser-cli-0.2.5` | PASS | GitHub publish workflow completed successfully |
+| `npm view @vibebrowser/mcp version dist-tags.latest bin --json` | PASS | npm `latest` is now `0.2.5` and includes `vibebrowser-mcp`, `vibe-mcp`, and `vibebrowser-cli` |
+| `npx -y --package @vibebrowser/mcp@latest vibebrowser-mcp --version` | PASS | published npm binary resolves to `0.2.5` |
+| `npx -y --package @vibebrowser/mcp@latest vibe-mcp --version` | PASS | legacy alias still resolves to `0.2.5` |
+| `npx -y --package @vibebrowser/mcp@latest vibebrowser-cli --version` | PASS | standalone CLI is now available from npm `latest` |
+| `E2E_BROWSER_CLI_SOURCE=npm node scripts/e2e-browser-cli.mjs` | PASS | npm-installed `vibebrowser-cli` passed end to end |
+| `E2E_MCP_SOURCE=pack node scripts/e2e-mcp-agents.mjs` | FAIL (environment) | timed out waiting for a live Vibe extension connection on the relay path |
 
-## Publish Pipeline Reality (Blocking Release)
+Observed real-extension agent failure:
 
-Publish workflow file:
-- `.github/workflows/publish.yml`
+```text
+Error: Extension did not connect to relay within 120000ms. Ensure Vibe extension has MCP External enabled in the active Chrome profile.
+```
 
-Improvements landed:
-- trigger includes `main` (and `master` for compatibility)
-- publish step attempts token path first, then provenance path fallback
+Interpretation:
 
-Current blocker:
-- CI publish fails with `ENEEDAUTH`.
-- `NPM_TOKEN` secret is empty.
-- npm trusted publishing is not configured for `@vibebrowser/mcp`.
+- packaged artifacts are valid locally
+- the standalone CLI branding and binaries are correct in the tarball
+- published npm `latest` is now updated to `0.2.5` with all intended binaries
+- real-agent validation currently depends on a live extension session and was not satisfiable in this shell session
 
-Until one of those is fixed, npm `@latest` cannot be updated from CI.
+## Publish Reality
 
----
+Current npm state:
 
-## References
+- `npm view @vibebrowser/mcp version dist-tags.latest bin --json` returns `0.2.5`
+- `@latest` now includes:
+  - `vibebrowser-mcp`
+  - `vibe-mcp`
+  - `vibebrowser-cli`
+- publish succeeded via GitHub Actions workflow `Publish to npm`
 
-- Tracking issue: `VibeTechnologies/vibe-mcp#11`
-- Fix PR: `VibeTechnologies/vibe-mcp#12`
+Consequences:
+
+- the new `vibebrowser-mcp` / `vibebrowser-cli` binaries are published to npm and verified from the registry
+- the remaining non-green item is the real-extension agent eval, which still requires a live Vibe extension session on the relay path
+
+## Tracking
+
+- Tracking issue: `VibeTechnologies/vibe-mcp#22`
+- Release PR: `VibeTechnologies/vibe-mcp#23`

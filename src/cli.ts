@@ -1,25 +1,31 @@
 #!/usr/bin/env node
 /**
  * Vibe MCP Server - CLI Entry Point
- * 
- * Command-line interface for starting the MCP server.
- * 
+ *
  * Modes:
  *   Local (default): connects to local relay daemon on localhost
  *   Remote (--remote <uuid>): connects to public relay at relay.api.vibebrowser.app
  */
 
 import { program } from 'commander';
+import { registerBrowserCommand } from './browser-cli.js';
 import { createServer } from './server.js';
-import { DEFAULT_WS_PORT } from './types.js';
+import {
+  DEFAULT_HTTP_PATH,
+  DEFAULT_HTTP_PORT,
+  DEFAULT_WS_PORT,
+  type ServerTransportMode,
+} from './types.js';
 import { serve } from './ollama.js';
+import { getPackageVersion } from './version.js';
 
 program
-  .name('vibe-mcp')
+  .name('vibebrowser-mcp')
   .description('MCP server for Vibe AI Browser - allows AI agents to control your browser')
-  .version('0.2.3');
+  .version(getPackageVersion());
 
-// Default command — start MCP server (existing behaviour)
+registerBrowserCommand(program);
+
 program
   .command('start', { isDefault: true })
   .description('Start the MCP server (default)')
@@ -27,21 +33,33 @@ program
   .option('-d, --debug', 'Enable debug logging', false)
   .option('-r, --remote <uuid>', 'Connect to a remote extension via public relay (provide the extension UUID)')
   .option('--relay-url <url>', 'Custom relay server URL (default: wss://relay.api.vibebrowser.app)')
+  .option('--transport <mode>', 'MCP transport to expose: stdio or http', 'stdio')
+  .option('--host <host>', 'Host to bind the HTTP server to', '127.0.0.1')
+  .option('--http-port <number>', 'Port for streamable HTTP MCP transport', String(DEFAULT_HTTP_PORT))
+  .option('--http-path <path>', 'Path for streamable HTTP MCP transport', DEFAULT_HTTP_PATH)
+  .option('--allow-host <host>', 'Allowed host header for HTTP transport (repeatable)', collectRepeatedOption, [])
   .action(async (options) => {
-    const port = parseInt(options.port, 10);
-    
-    if (isNaN(port) || port < 1024 || port > 65535) {
-      console.error('Error: Port must be a number between 1024 and 65535');
-      process.exit(1);
-    }
+    const transport = parseTransportMode(options.transport);
+    const port = parsePort(options.port, 'Relay port');
+    const httpPort = parsePort(options.httpPort, 'HTTP port');
 
     try {
-      await createServer({
+      const server = await createServer({
         port,
+        host: options.host,
         debug: options.debug,
+        transport,
+        httpPort,
+        httpPath: options.httpPath,
+        allowedHosts: options.allowHost.length > 0 ? options.allowHost : undefined,
         remoteUuid: options.remote,
         remoteRelayUrl: options.relayUrl,
       });
+
+      const httpUrl = server.getHttpUrl();
+      if (httpUrl) {
+        console.error(`vibebrowser-mcp HTTP endpoint ready at ${httpUrl}`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Failed to start server: ${message}`);
@@ -49,7 +67,64 @@ program
     }
   });
 
-// Serve command — one-liner local LLM setup via Ollama
+program
+  .command('openclaw')
+  .description('Print OpenClaw-friendly configuration for cloud agent -> local browser relay')
+  .requiredOption('-r, --remote <uuid>', 'Extension UUID from Vibe extension Settings > MCP External > Remote')
+  .option('--relay-url <url>', 'Custom relay server URL (default: wss://relay.api.vibebrowser.app)')
+  .option('--host <host>', 'Host to bind the HTTP server to', '127.0.0.1')
+  .option('--http-port <number>', 'Port for streamable HTTP MCP transport', String(DEFAULT_HTTP_PORT))
+  .option('--http-path <path>', 'Path for streamable HTTP MCP transport', DEFAULT_HTTP_PATH)
+  .option('--allow-host <host>', 'Allowed host header for HTTP transport (repeatable)', collectRepeatedOption, [])
+  .action((options) => {
+    const httpPort = parsePort(options.httpPort, 'HTTP port');
+    const httpPath = normalizePath(options.httpPath);
+    const host = options.host;
+    const httpUrl = `http://${formatHost(host)}:${httpPort}${httpPath}`;
+
+    const cliArgs = [
+      '-y',
+      '--package',
+      '@vibebrowser/mcp',
+      'vibebrowser-mcp',
+      'start',
+      '--transport',
+      'http',
+      '--host',
+      host,
+      '--http-port',
+      String(httpPort),
+      '--http-path',
+      httpPath,
+      '--remote',
+      options.remote,
+    ];
+
+    if (options.relayUrl) {
+      cliArgs.push('--relay-url', options.relayUrl);
+    }
+    for (const allowedHost of options.allowHost as string[]) {
+      cliArgs.push('--allow-host', allowedHost);
+    }
+
+    const openClawConfig = {
+      mcpServers: {
+        vibe: {
+          url: httpUrl,
+        },
+      },
+    };
+
+    console.log('Start a local bridge on the machine running the Vibe extension:');
+    console.log(`npx ${cliArgs.join(' ')}`);
+    console.log('');
+    console.log('Then add this MCP server URL in OpenClaw:');
+    console.log(httpUrl);
+    console.log('');
+    console.log('OpenClaw JSON snippet:');
+    console.log(JSON.stringify(openClawConfig, null, 2));
+  });
+
 program
   .command('serve')
   .description('Install Ollama (if needed), download a model, and start serving it locally')
@@ -72,3 +147,35 @@ program
   });
 
 program.parse();
+
+function parseTransportMode(value: string): ServerTransportMode {
+  if (value === 'stdio' || value === 'http') {
+    return value;
+  }
+  console.error('Error: --transport must be one of: stdio, http');
+  process.exit(1);
+}
+
+function parsePort(value: string, label: string): number {
+  const port = parseInt(value, 10);
+  if (Number.isNaN(port) || port < 1024 || port > 65535) {
+    console.error(`Error: ${label} must be a number between 1024 and 65535`);
+    process.exit(1);
+  }
+  return port;
+}
+
+function collectRepeatedOption(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+function normalizePath(value: string): string {
+  if (!value || value === '/') {
+    return DEFAULT_HTTP_PATH;
+  }
+  return value.startsWith('/') ? value : `/${value}`;
+}
+
+function formatHost(host: string): string {
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+}

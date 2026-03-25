@@ -2,7 +2,7 @@
  * Ollama integration — detect, install, pull, serve.
  *
  * Provides a cross-platform (macOS / Linux / Windows) one-liner experience:
- *   npx @vibebrowser/mcp serve qwen3.5
+ *   npx --yes --package @vibebrowser/mcp vibebrowser-mcp serve qwen3.5
  */
 
 import { execSync, spawn, ChildProcess, execFileSync, SpawnOptions } from 'child_process';
@@ -31,11 +31,11 @@ export interface ServeOptions {
 /* ------------------------------------------------------------------ */
 
 function log(msg: string): void {
-  console.error(`[vibe-mcp] ${msg}`);
+  console.error(`[vibebrowser-mcp] ${msg}`);
 }
 
 function debug(msg: string, opts?: ServeOptions): void {
-  if (opts?.debug) console.error(`[vibe-mcp:debug] ${msg}`);
+  if (opts?.debug) console.error(`[vibebrowser-mcp:debug] ${msg}`);
 }
 
 /** Run a command and return trimmed stdout, or null on failure. */
@@ -222,7 +222,7 @@ export async function pullModel(model: string, base: string = OLLAMA_API): Promi
         if (msg.total && msg.completed) {
           const pct = Math.round((msg.completed / msg.total) * 100);
           if (pct !== lastPercent) {
-            process.stderr.write(`\r[vibe-mcp] Downloading… ${pct}%`);
+            process.stderr.write(`\r[vibebrowser-mcp] Downloading… ${pct}%`);
             lastPercent = pct;
           }
         } else if (msg.status && msg.status !== lastStatus) {

@@ -15,6 +15,21 @@ export const MCP_PROTOCOL_VERSION = '2024-11-05';
 export const DEFAULT_WS_PORT = 19888;
 
 /**
+ * Default HTTP port for streamable HTTP MCP transport
+ */
+export const DEFAULT_HTTP_PORT = 8788;
+
+/**
+ * Default HTTP path for streamable HTTP MCP transport
+ */
+export const DEFAULT_HTTP_PATH = '/mcp';
+
+/**
+ * MCP server transport mode
+ */
+export type ServerTransportMode = 'stdio' | 'http';
+
+/**
  * Connection status
  */
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
@@ -100,6 +115,10 @@ export interface ServerConfig {
   port: number;
   host: string;
   debug: boolean;
+  transport: ServerTransportMode;
+  httpPort: number;
+  httpPath: string;
+  allowedHosts?: string[];
   /** Remote relay UUID — when set, connects to public relay instead of local */
   remoteUuid?: string;
   /** Remote relay URL — defaults to wss://relay.api.vibebrowser.app */

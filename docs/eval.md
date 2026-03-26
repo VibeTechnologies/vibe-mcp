@@ -156,6 +156,25 @@ Hard requirement:
   - `E2E_CODEX_REASONING_EFFORT=low`
   - `E2E_CODEX_TIMEOUT_MS=480000`
 
+### 5b. Latest built extension eval via Chrome for Testing
+
+```bash
+cd /Users/engineer/workspace/vibebrowser/vibe
+npm run build:extension:dev
+
+cd /Users/engineer/workspace/vibebrowser/vibe-mcp
+E2E_TEST_BROWSER=1 \
+E2E_TEST_EXTENSION_PATH=../vibe/dist/extension/dev \
+E2E_MCP_SOURCE=npm \
+node scripts/e2e-mcp-agents.mjs
+```
+
+Pass signal:
+
+- output contains `e2e ok`
+- the eval launches a separate Chrome for Testing instance
+- the loaded extension comes from `../vibe/dist/extension/dev`, not the user’s daily Chrome profile
+
 ### 6. Full OpenCode browser eval in sibling repo
 
 ```bash

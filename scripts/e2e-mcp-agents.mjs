@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   cpSync,
   existsSync,
@@ -29,6 +30,7 @@ const CODEX_MODEL = process.env.E2E_CODEX_MODEL || 'gpt-5';
 const CODEX_REASONING_EFFORT = process.env.E2E_CODEX_REASONING_EFFORT
   || (/^gpt-5\.4/i.test(CODEX_MODEL) ? 'medium' : 'low');
 const CODEX_TIMEOUT_MS = Number(process.env.E2E_CODEX_TIMEOUT_MS) || 480_000;
+const ENABLE_TEST_BROWSER = /^(1|true|yes)$/i.test(process.env.E2E_TEST_BROWSER || '');
 const configuredAgentPort = getConfiguredPort('VIBE_MCP_TEST_AGENT_PORT', 'E2E_AGENT_PORT');
 const configuredExtensionPort = getConfiguredPort('VIBE_MCP_TEST_EXTENSION_PORT', 'E2E_EXTENSION_PORT');
 const RESERVED_PORTS = new Set();
@@ -36,6 +38,8 @@ const TEST_AGENT_PORT = configuredAgentPort ?? await findFreePort(RESERVED_PORTS
 RESERVED_PORTS.add(TEST_AGENT_PORT);
 const TEST_EXTENSION_PORT = configuredExtensionPort ?? await findFreePort(RESERVED_PORTS);
 RESERVED_PORTS.add(TEST_EXTENSION_PORT);
+const TEST_BROWSER_CDP_PORT = getConfiguredPort('E2E_TEST_BROWSER_CDP_PORT') ?? await findFreePort(RESERVED_PORTS);
+RESERVED_PORTS.add(TEST_BROWSER_CDP_PORT);
 const RELAY_STATE_DIR = process.env.E2E_RELAY_STATE_DIR || join(tmpdir(), `vibe-mcp-e2e-relay-${process.pid}`);
 const RELAY_PID_FILE = join(RELAY_STATE_DIR, 'relay.pid');
 const EXTENSION_CONNECT_TIMEOUT_MS = Number(process.env.E2E_EXTENSION_TIMEOUT_MS)
@@ -51,12 +55,27 @@ const MANAGED_CHROME_CDP_PORT = Number(process.env.E2E_MANAGED_CHROME_CDP_PORT) 
 const E2E_MCP_SOURCE = (process.env.E2E_MCP_SOURCE || 'local').toLowerCase();
 const E2E_MCP_PACKAGE = process.env.E2E_MCP_PACKAGE;
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const VIBE_REPO_ROOT = process.env.E2E_VIBE_REPO_ROOT
+  ? resolve(process.cwd(), process.env.E2E_VIBE_REPO_ROOT)
+  : (
+      existsSync(resolve(process.cwd(), '..', 'vibe'))
+        ? resolve(process.cwd(), '..', 'vibe')
+        : resolve(SCRIPT_DIR, '..', '..', 'vibe')
+    );
+const DEFAULT_TEST_EXTENSION_PATH = resolve(VIBE_REPO_ROOT, 'dist', 'extension', 'dev');
+const TEST_EXTENSION_PATH = process.env.E2E_TEST_EXTENSION_PATH
+  ? resolve(process.cwd(), process.env.E2E_TEST_EXTENSION_PATH)
+  : DEFAULT_TEST_EXTENSION_PATH;
 const PACKAGE_ROOT = resolve(SCRIPT_DIR, '..');
 const LOCAL_MCP_CLI = resolve(SCRIPT_DIR, '..', 'dist', 'cli.js');
 const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const NPX_BIN = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 let packedPackageDir = null;
 let packedPackageSpec = null;
+
+if (ENABLE_TEST_BROWSER && ENABLE_MANAGED_CHROME) {
+  throw new Error('E2E_TEST_BROWSER and E2E_MANAGED_CHROME are mutually exclusive.');
+}
 
 const stripAnsi = (input) => input.replace(/[\u001b\u009b][[\]()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
 
@@ -242,6 +261,70 @@ async function waitForCdpReady(port, timeoutMs = 30_000) {
   throw new Error(`Managed Chrome CDP endpoint did not become ready on port ${port}`);
 }
 
+function resolveChromeForTestingExecutable() {
+  if (process.env.E2E_TEST_BROWSER_EXECUTABLE) {
+    const explicitPath = process.env.E2E_TEST_BROWSER_EXECUTABLE;
+    if (!existsSync(explicitPath)) {
+      throw new Error(`E2E_TEST_BROWSER_EXECUTABLE does not exist: ${explicitPath}`);
+    }
+    return explicitPath;
+  }
+
+  const probes = [
+    {
+      cwd: VIBE_REPO_ROOT,
+      code: 'const p=require("puppeteer"); process.stdout.write(p.executablePath())',
+    },
+    {
+      cwd: VIBE_REPO_ROOT,
+      code: 'const { chromium }=require("playwright"); process.stdout.write(chromium.executablePath())',
+    },
+  ];
+
+  for (const probe of probes) {
+    const result = spawnSync(process.execPath, ['-e', probe.code], {
+      cwd: probe.cwd,
+      encoding: 'utf-8',
+    });
+    const executablePath = result.status === 0 ? result.stdout.trim() : '';
+    if (executablePath && existsSync(executablePath)) {
+      return executablePath;
+    }
+  }
+
+  throw new Error(
+    `Could not resolve a Chrome for Testing executable. Install Puppeteer or Playwright in ${VIBE_REPO_ROOT}, or set E2E_TEST_BROWSER_EXECUTABLE.`
+  );
+}
+
+function getTestExtensionId(extensionPath) {
+  if (process.env.E2E_EXTENSION_ID) {
+    return process.env.E2E_EXTENSION_ID;
+  }
+
+  const manifestPath = join(extensionPath, 'manifest.json');
+  if (!existsSync(manifestPath)) {
+    throw new Error(`Extension manifest not found at ${manifestPath}`);
+  }
+
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+  if (!manifest?.key) {
+    throw new Error(`Extension manifest at ${manifestPath} does not include a key, so the extension ID cannot be derived deterministically.`);
+  }
+
+  const digest = createHash('sha256')
+    .update(Buffer.from(manifest.key, 'base64'))
+    .digest()
+    .subarray(0, 16);
+  const alphabet = 'abcdefghijklmnop';
+  let extensionId = '';
+  for (const byte of digest) {
+    extensionId += alphabet[(byte >> 4) & 0x0f];
+    extensionId += alphabet[byte & 0x0f];
+  }
+  return extensionId;
+}
+
 function pickVibeExtensionId(securePreferencesPath) {
   if (!existsSync(securePreferencesPath)) return null;
   try {
@@ -414,6 +497,29 @@ async function sendExtensionRuntimeMessageViaPage({ pageWsUrl, message }) {
   return result?.response;
 }
 
+async function enableExtensionKeepaliveViaPage({ pageWsUrl }) {
+  const result = await cdpEvaluate(pageWsUrl, `(() => {
+    try {
+      if (!globalThis.__vibeMcpKeepalivePort) {
+        const port = chrome.runtime.connect({ name: 'keepalive' });
+        globalThis.__vibeMcpKeepalivePort = port;
+        globalThis.__vibeMcpKeepaliveTimer = setInterval(() => {
+          try {
+            port.postMessage({ type: 'ping' });
+          } catch {}
+        }, 20000);
+      }
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error?.message || error) };
+    }
+  })()`);
+
+  if (!result?.ok) {
+    throw new Error(`Failed to enable extension keepalive: ${result?.error || 'unknown error'}`);
+  }
+}
+
 async function bootstrapManagedChromeForRealE2E() {
   if (!ENABLE_MANAGED_CHROME) return null;
 
@@ -464,6 +570,8 @@ async function bootstrapManagedChromeForRealE2E() {
     });
 
     const pageWsUrl = extensionPage.webSocketDebuggerUrl;
+    await enableExtensionKeepaliveViaPage({ pageWsUrl });
+    await delay(2_000);
     // Hard reset MCP external client state to avoid stale reconnect timers.
     await sendExtensionRuntimeMessageViaPage({
       pageWsUrl,
@@ -485,7 +593,7 @@ async function bootstrapManagedChromeForRealE2E() {
 
     return {
       cleanup: async () => {
-        await stopManagedChromeByUserDataDir(tempUserDataDir);
+        await stopBrowserByUserDataDir(tempUserDataDir);
         await delay(300);
         rmSync(tempUserDataDir, { recursive: true, force: true });
       },
@@ -502,9 +610,103 @@ async function bootstrapManagedChromeForRealE2E() {
     };
   } catch (error) {
     if (tempUserDataDir) {
-      await stopManagedChromeByUserDataDir(tempUserDataDir).catch(() => {});
+      await stopBrowserByUserDataDir(tempUserDataDir).catch(() => {});
       rmSync(tempUserDataDir, { recursive: true, force: true });
     }
+    throw error;
+  }
+}
+
+async function bootstrapTestBrowserWithExtension() {
+  if (!ENABLE_TEST_BROWSER) return null;
+  if (!existsSync(TEST_EXTENSION_PATH)) {
+    throw new Error(`Test extension path does not exist: ${TEST_EXTENSION_PATH}`);
+  }
+
+  const executablePath = resolveChromeForTestingExecutable();
+  const extensionId = getTestExtensionId(TEST_EXTENSION_PATH);
+  const tempUserDataDir = mkdtempSync(join(tmpdir(), 'vibe-mcp-test-browser-'));
+
+  const launchArgs = [
+    `--remote-debugging-port=${TEST_BROWSER_CDP_PORT}`,
+    `--user-data-dir=${tempUserDataDir}`,
+    `--disable-extensions-except=${TEST_EXTENSION_PATH}`,
+    `--load-extension=${TEST_EXTENSION_PATH}`,
+    '--no-first-run',
+    '--disable-default-apps',
+    '--no-default-browser-check',
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-software-rasterizer',
+    '--disable-setuid-sandbox',
+    '--window-size=1920,1080',
+    '--window-position=-2400,-2400',
+    'about:blank',
+  ];
+
+  const browserProcess = spawn(executablePath, launchArgs, {
+    stdio: DEBUG_E2E ? 'inherit' : ['ignore', 'pipe', 'pipe'],
+  });
+
+  if (!DEBUG_E2E) {
+    browserProcess.stderr?.on('data', (chunk) => {
+      const text = chunk.toString();
+      if (text.trim()) process.stderr.write(text);
+    });
+  }
+
+  try {
+    await waitForCdpReady(TEST_BROWSER_CDP_PORT, 30_000);
+    const extensionPage = await openExtensionHomeTarget({
+      cdpPort: TEST_BROWSER_CDP_PORT,
+      extensionId,
+    });
+
+    const pageWsUrl = extensionPage.webSocketDebuggerUrl;
+    await enableExtensionKeepaliveViaPage({ pageWsUrl });
+    await delay(2_000);
+    await sendExtensionRuntimeMessageViaPage({
+      pageWsUrl,
+      message: { type: 'MCP_EXTERNAL:DISCONNECT' },
+    }).catch(() => null);
+    await delay(500);
+    await sendExtensionRuntimeMessageViaPage({
+      pageWsUrl,
+      message: { type: 'MCP_EXTERNAL:CONNECT', port: TEST_EXTENSION_PORT, mode: 'local' },
+    });
+    await delay(500);
+
+    return {
+      cleanup: async () => {
+        try {
+          browserProcess.kill('SIGTERM');
+        } catch {
+          // ignore
+        }
+        await stopBrowserByUserDataDir(tempUserDataDir);
+        await delay(300);
+        rmSync(tempUserDataDir, { recursive: true, force: true });
+      },
+      poke: async () => {
+        try {
+          await sendExtensionRuntimeMessageViaPage({
+            pageWsUrl,
+            message: { type: 'MCP_EXTERNAL:GET_STATUS' },
+          });
+        } catch {
+          // best effort keepalive only
+        }
+      },
+    };
+  } catch (error) {
+    try {
+      browserProcess.kill('SIGTERM');
+    } catch {
+      // ignore
+    }
+    await stopBrowserByUserDataDir(tempUserDataDir).catch(() => {});
+    rmSync(tempUserDataDir, { recursive: true, force: true });
     throw error;
   }
 }
@@ -570,7 +772,7 @@ async function stopConflictingExtensionPortClients() {
   }
 }
 
-async function stopManagedChromeByUserDataDir(userDataDir) {
+async function stopBrowserByUserDataDir(userDataDir) {
   const ps = await run('ps', ['-axo', 'pid=,command=']);
   const lines = ps.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   for (const line of lines) {
@@ -697,13 +899,19 @@ async function waitForExtensionConnection(timeoutMs, options = {}) {
     if (connected) return;
     await delay(1_000);
   }
-  throw new Error(`Extension did not connect to relay within ${timeoutMs}ms. Ensure Vibe extension has MCP External enabled in the active Chrome profile.`);
+  const hint = ENABLE_TEST_BROWSER
+    ? `Ensure the latest extension is built at ${TEST_EXTENSION_PATH} and Chrome for Testing can launch it.`
+    : 'Ensure Vibe extension has MCP External enabled in the active Chrome profile.';
+  throw new Error(`Extension did not connect to relay within ${timeoutMs}ms. ${hint}`);
 }
 
-async function waitForTools(client, timeoutMs) {
+async function waitForTools(client, timeoutMs, options = {}) {
   const start = Date.now();
   let lastError = '';
   while (Date.now() - start < timeoutMs) {
+    if (typeof options.beforeAttempt === 'function') {
+      await options.beforeAttempt();
+    }
     try {
       const result = await client.listTools();
       if (result.tools.length > 0) return result.tools;
@@ -726,7 +934,7 @@ function isRetryablePreflightFailure(message) {
   return /No connection to Vibe extension|Request timed out/i.test(String(message || ''));
 }
 
-async function ensureLiveToolCall(client, tools, timeoutMs) {
+async function ensureLiveToolCall(client, tools, timeoutMs, options = {}) {
   const probeCandidates = [
     {
       name: 'wait',
@@ -753,6 +961,9 @@ async function ensureLiveToolCall(client, tools, timeoutMs) {
   const start = Date.now();
   let lastReason = '';
   while (Date.now() - start < timeoutMs) {
+    if (typeof options.beforeProbe === 'function') {
+      await options.beforeProbe();
+    }
     const connected = await probeExtensionConnection();
     if (!connected) {
       lastReason = 'Extension not connected';
@@ -899,7 +1110,8 @@ async function main() {
   let opencodeTmpDir;
   try {
     const shouldCleanRelay = process.env.E2E_FORCE_CLEAN_RELAY === '1'
-      || ENABLE_MANAGED_CHROME;
+      || ENABLE_MANAGED_CHROME
+      || ENABLE_TEST_BROWSER;
     if (shouldCleanRelay) {
       await stopExistingRelay();
       await stopConflictingExtensionPortClients();
@@ -908,16 +1120,24 @@ async function main() {
     if (relay) {
       await waitForRelayPid();
     }
-    const connected = await probeExtensionConnection();
+    const connected = ENABLE_TEST_BROWSER ? false : await probeExtensionConnection();
     if (!connected) {
-      managedChrome = await bootstrapManagedChromeForRealE2E().catch((error) => {
+      const bootstrap = ENABLE_TEST_BROWSER
+        ? bootstrapTestBrowserWithExtension
+        : bootstrapManagedChromeForRealE2E;
+      managedChrome = await bootstrap().catch((error) => {
         if (DEBUG_E2E) {
           console.error(`[e2e] managed chrome bootstrap failed: ${error instanceof Error ? error.message : String(error)}`);
         }
         return null;
       });
     }
-    await waitForExtensionConnection(EXTENSION_CONNECT_TIMEOUT_MS);
+    const keepExtensionAlive = typeof managedChrome?.poke === 'function'
+      ? () => managedChrome.poke()
+      : undefined;
+    await waitForExtensionConnection(EXTENSION_CONNECT_TIMEOUT_MS, {
+      beforeProbe: keepExtensionAlive,
+    });
 
     const mcpCmd = getE2EMcpCommand();
     validateMcpCommandConfig(mcpCmd);
@@ -944,7 +1164,9 @@ async function main() {
     await client.connect(transport);
     let tools = [];
     try {
-      tools = await waitForTools(client, TOOLS_TIMEOUT_MS);
+      tools = await waitForTools(client, TOOLS_TIMEOUT_MS, {
+        beforeAttempt: keepExtensionAlive,
+      });
     } catch (error) {
       if (DEBUG_E2E) {
         const message = error instanceof Error ? error.message : String(error);
@@ -952,7 +1174,9 @@ async function main() {
       }
     }
 
-    await ensureLiveToolCall(client, tools, 20_000);
+    await ensureLiveToolCall(client, tools, 20_000, {
+      beforeProbe: keepExtensionAlive,
+    });
 
     opencodeTmpDir = mkdtempSync(join(tmpdir(), 'vibe-mcp-opencode-e2e-'));
     const { isolatedConfigDir } = createTempOpencodeConfig(opencodeTmpDir, mcpCmd);

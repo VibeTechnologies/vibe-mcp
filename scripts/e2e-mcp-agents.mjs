@@ -297,23 +297,9 @@ function resolveChromeForTestingExecutable() {
   );
 }
 
-function getTestExtensionId(extensionPath) {
-  if (process.env.E2E_EXTENSION_ID) {
-    return process.env.E2E_EXTENSION_ID;
-  }
-
-  const manifestPath = join(extensionPath, 'manifest.json');
-  if (!existsSync(manifestPath)) {
-    throw new Error(`Extension manifest not found at ${manifestPath}`);
-  }
-
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-  if (!manifest?.key) {
-    throw new Error(`Extension manifest at ${manifestPath} does not include a key, so the extension ID cannot be derived deterministically.`);
-  }
-
+function deriveExtensionIdFromManifestKey(manifestKey) {
   const digest = createHash('sha256')
-    .update(Buffer.from(manifest.key, 'base64'))
+    .update(Buffer.from(manifestKey, 'base64'))
     .digest()
     .subarray(0, 16);
   const alphabet = 'abcdefghijklmnop';
@@ -323,6 +309,31 @@ function getTestExtensionId(extensionPath) {
     extensionId += alphabet[byte & 0x0f];
   }
   return extensionId;
+}
+
+function readExtensionManifest(extensionPath) {
+  const manifestPath = join(extensionPath, 'manifest.json');
+  if (!existsSync(manifestPath)) {
+    throw new Error(`Extension manifest not found at ${manifestPath}`);
+  }
+
+  return {
+    manifestPath,
+    manifest: JSON.parse(readFileSync(manifestPath, 'utf-8')),
+  };
+}
+
+function getTestExtensionId(extensionPath) {
+  if (process.env.E2E_EXTENSION_ID) {
+    return process.env.E2E_EXTENSION_ID;
+  }
+
+  const { manifestPath, manifest } = readExtensionManifest(extensionPath);
+  if (!manifest?.key) {
+    throw new Error(`Extension manifest at ${manifestPath} does not include a key, so the extension ID cannot be derived deterministically.`);
+  }
+
+  return deriveExtensionIdFromManifestKey(manifest.key);
 }
 
 function pickVibeExtensionId(securePreferencesPath) {
@@ -470,6 +481,114 @@ async function cdpEvaluate(wsUrl, expression, timeoutMs = 20_000) {
       }
     });
   });
+}
+
+async function cdpRequest(wsUrl, method, params = {}, timeoutMs = 20_000) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    let requestId = 0;
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      ws.terminate();
+      reject(new Error(`CDP request timed out: ${method}`));
+    }, timeoutMs);
+
+    const finish = (err, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        ws.close();
+      } catch {
+        // ignore close errors
+      }
+      if (err) reject(err);
+      else resolve(value);
+    };
+
+    ws.on('message', (raw) => {
+      let message;
+      try {
+        message = JSON.parse(raw.toString());
+      } catch {
+        return;
+      }
+      if (message.id !== requestId) return;
+      if (message.error) {
+        finish(new Error(`CDP ${method} failed: ${message.error.message || JSON.stringify(message.error)}`));
+        return;
+      }
+      finish(null, message.result);
+    });
+
+    ws.on('error', (error) => finish(error));
+
+    ws.on('open', () => {
+      requestId = 1;
+      ws.send(JSON.stringify({ id: requestId, method, params }));
+    });
+  });
+}
+
+function extractExtensionIdFromUrl(url) {
+  const match = String(url || '').match(/^chrome-extension:\/\/([a-p]{32})\//);
+  return match?.[1] || null;
+}
+
+async function discoverLoadedExtensionId({ cdpPort, extensionPath, timeoutMs = 15_000 }) {
+  if (process.env.E2E_EXTENSION_ID) {
+    return process.env.E2E_EXTENSION_ID;
+  }
+
+  const { manifest } = readExtensionManifest(extensionPath);
+  if (manifest?.key) {
+    return deriveExtensionIdFromManifestKey(manifest.key);
+  }
+
+  const version = await fetchJson(`http://${RELAY_HOST}:${cdpPort}/json/version`);
+  const browserWsUrl = version?.webSocketDebuggerUrl;
+  if (!browserWsUrl) {
+    throw new Error(`CDP browser websocket was not available on port ${cdpPort}`);
+  }
+
+  const start = Date.now();
+  let lastCandidates = [];
+  while (Date.now() - start < timeoutMs) {
+    const result = await cdpRequest(browserWsUrl, 'Target.getTargets');
+    const targetInfos = Array.isArray(result?.targetInfos) ? result.targetInfos : [];
+    const candidates = targetInfos
+      .map((targetInfo) => ({
+        id: extractExtensionIdFromUrl(targetInfo?.url),
+        type: targetInfo?.type || '',
+        title: targetInfo?.title || '',
+        url: targetInfo?.url || '',
+      }))
+      .filter((targetInfo) => targetInfo.id);
+
+    lastCandidates = candidates;
+
+    const prioritized = candidates.filter((targetInfo) =>
+      /\/(home|settings|sidepanel|chat)\.html(?:$|[?#])/i.test(targetInfo.url)
+      || /background|service_worker/i.test(targetInfo.type)
+      || /vibe/i.test(`${targetInfo.title} ${targetInfo.url}`)
+    );
+
+    const ids = [...new Set((prioritized.length > 0 ? prioritized : candidates).map((targetInfo) => targetInfo.id))];
+    if (ids.length === 1) {
+      return ids[0];
+    }
+
+    await delay(500);
+  }
+
+  const observedTargets = lastCandidates
+    .map((targetInfo) => `${targetInfo.type}:${targetInfo.title}:${targetInfo.url}`)
+    .join('\n');
+  throw new Error(
+    `Could not discover the loaded extension ID on port ${cdpPort}. Observed extension targets:\n${observedTargets || 'none'}`
+  );
 }
 
 async function openExtensionHomeTarget({ cdpPort, extensionId }) {
@@ -624,7 +743,6 @@ async function bootstrapTestBrowserWithExtension() {
   }
 
   const executablePath = resolveChromeForTestingExecutable();
-  const extensionId = getTestExtensionId(TEST_EXTENSION_PATH);
   const tempUserDataDir = mkdtempSync(join(tmpdir(), 'vibe-mcp-test-browser-'));
 
   const launchArgs = [
@@ -658,6 +776,10 @@ async function bootstrapTestBrowserWithExtension() {
 
   try {
     await waitForCdpReady(TEST_BROWSER_CDP_PORT, 30_000);
+    const extensionId = await discoverLoadedExtensionId({
+      cdpPort: TEST_BROWSER_CDP_PORT,
+      extensionPath: TEST_EXTENSION_PATH,
+    });
     const extensionPage = await openExtensionHomeTarget({
       cdpPort: TEST_BROWSER_CDP_PORT,
       extensionId,
@@ -1214,6 +1336,8 @@ async function main() {
       'mcp_servers.context7.enabled=false',
       '-c',
       'mcp_servers.whisper-mcp.enabled=false',
+      '-c',
+      'mcp_servers.repo_memory.enabled=false',
       '-c',
       'mcp_servers.vibe-browser.enabled=true',
       '-c',

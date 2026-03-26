@@ -158,15 +158,34 @@ Hard requirement:
 
 ### 5b. Latest built extension eval via Chrome for Testing
 
+Build the dev extension first:
+
 ```bash
 cd /Users/engineer/workspace/vibebrowser/vibe
 npm run build:extension:dev
+```
 
+Use the direct script form when debugging the isolated path, especially from a detached worktree where `../vibe` discovery may not point at the intended sibling repo:
+
+```bash
 cd /Users/engineer/workspace/vibebrowser/vibe-mcp
+E2E_DEBUG=1 \
 E2E_TEST_BROWSER=1 \
-E2E_TEST_EXTENSION_PATH=../vibe/dist/extension/dev \
+E2E_VIBE_REPO_ROOT=/Users/engineer/workspace/vibebrowser/vibe \
+E2E_TEST_EXTENSION_PATH=/Users/engineer/workspace/vibebrowser/vibe/dist/extension/dev \
 E2E_MCP_SOURCE=npm \
 node scripts/e2e-mcp-agents.mjs
+```
+
+Use the package-script entrypoint for the canonical repo-level check:
+
+```bash
+cd /Users/engineer/workspace/vibebrowser/vibe-mcp
+E2E_TEST_BROWSER=1 \
+E2E_VIBE_REPO_ROOT=/Users/engineer/workspace/vibebrowser/vibe \
+E2E_TEST_EXTENSION_PATH=/Users/engineer/workspace/vibebrowser/vibe/dist/extension/dev \
+E2E_MCP_SOURCE=npm \
+npm run test:e2e:agents
 ```
 
 Pass signal:
@@ -213,6 +232,8 @@ Commands executed in this session:
 | `npx -y --package @vibebrowser/mcp@latest vibe-mcp --version` | PASS | legacy alias still resolves to `0.2.5` |
 | `npm run test:e2e:agents` | PASS | local `dist/cli.js` path completed all three MiniWoB tasks with Codex + OpenCode against the live extension session |
 | `E2E_MCP_SOURCE=npm npm run test:e2e:agents` | PASS | published npm binary path completed the same three MiniWoB tasks end to end |
+| `E2E_DEBUG=1 E2E_TEST_BROWSER=1 E2E_VIBE_REPO_ROOT=/Users/engineer/workspace/vibebrowser/vibe E2E_TEST_EXTENSION_PATH=/Users/engineer/workspace/vibebrowser/vibe/dist/extension/dev E2E_MCP_SOURCE=npm node scripts/e2e-mcp-agents.mjs` | PASS | debug run against a separate Chrome for Testing instance with the unpacked extension build |
+| `E2E_TEST_BROWSER=1 E2E_VIBE_REPO_ROOT=/Users/engineer/workspace/vibebrowser/vibe E2E_TEST_EXTENSION_PATH=/Users/engineer/workspace/vibebrowser/vibe/dist/extension/dev E2E_MCP_SOURCE=npm npm run test:e2e:agents` | PASS | canonical repo entrypoint passed against the latest built extension in isolated browser mode |
 | `npx -y --package @vibebrowser/mcp@latest vibebrowser-cli --version` | PASS | standalone CLI is now available from npm `latest` |
 | `E2E_BROWSER_CLI_SOURCE=npm node scripts/e2e-browser-cli.mjs` | PASS | npm-installed `vibebrowser-cli` passed end to end |
 | `E2E_MCP_SOURCE=pack node scripts/e2e-mcp-agents.mjs` | FAIL (environment) | timed out waiting for a live Vibe extension connection on the relay path |

@@ -11,8 +11,9 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { CallToolRequestSchema, isInitializeRequest, ListToolsRequestSchema, } from '@modelcontextprotocol/sdk/types.js';
 import { ExtensionConnection } from './connection.js';
 import { DEFAULT_HTTP_PATH, DEFAULT_HTTP_PORT, DEFAULT_WS_PORT, } from './types.js';
-const SERVER_NAME = 'vibe-mcp';
-const SERVER_VERSION = '0.2.4';
+import { getPackageVersion } from './version.js';
+const SERVER_NAME = 'vibebrowser-mcp';
+const SERVER_VERSION = getPackageVersion();
 const STARTUP_TOOLS_REFRESH_TIMEOUT_MS = 4_000;
 const STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS = 1_500;
 /**

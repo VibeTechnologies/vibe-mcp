@@ -25,6 +25,10 @@ const TIMEOUT_MS = 120_000;
 const REAL_TASK = process.env.E2E_TASK;
 const TOOLS_TIMEOUT_MS = 60_000;
 const DEBUG_E2E = process.env.E2E_DEBUG === '1';
+const CODEX_MODEL = process.env.E2E_CODEX_MODEL || 'gpt-5';
+const CODEX_REASONING_EFFORT = process.env.E2E_CODEX_REASONING_EFFORT
+  || (/^gpt-5\.4/i.test(CODEX_MODEL) ? 'medium' : 'low');
+const CODEX_TIMEOUT_MS = Number(process.env.E2E_CODEX_TIMEOUT_MS) || 480_000;
 const configuredAgentPort = getConfiguredPort('VIBE_MCP_TEST_AGENT_PORT', 'E2E_AGENT_PORT');
 const configuredExtensionPort = getConfiguredPort('VIBE_MCP_TEST_EXTENSION_PORT', 'E2E_EXTENSION_PORT');
 const RESERVED_PORTS = new Set();
@@ -852,12 +856,13 @@ function buildCodexPrompt() {
     '2) https://miniwob.farama.org/demos/miniwob/click-test-2.html',
     '3) https://miniwob.farama.org/demos/miniwob/click-button-sequence.html',
     '',
+    'Open a fresh page for each URL instead of reusing or navigating an existing tab.',
     'For each page:',
     '- Read the instruction text shown on the page (if present).',
     '- Perform the required action to complete the task.',
     '- Do not wait for reward text or success indicators; proceed after the action.',
     '',
-    'Return exactly one line of JSON and nothing else:',
+    'After the final click, return exactly one line of JSON and nothing else:',
     '{"status":"ok|error","tasks":[{"name":"click-test","instruction":"<text>","result":"ok|error"},{"name":"click-test-2","instruction":"<text>","result":"ok|error"},{"name":"click-button-sequence","instruction":"<text>","result":"ok|error"}],"note":"miniwob++","reason":"<only if error>"}',
     'If any task fails, set status="error" and fill reason.',
   ].join('\n');
@@ -964,7 +969,9 @@ async function main() {
     const codexArgs = [
       'exec',
       '-c',
-      'model_reasoning_effort="low"',
+      `model=${JSON.stringify(CODEX_MODEL)}`,
+      '-c',
+      `model_reasoning_effort=${JSON.stringify(CODEX_REASONING_EFFORT)}`,
       '-c',
       'model_verbosity="low"',
       '-c',
@@ -995,7 +1002,7 @@ async function main() {
     }
     codexArgs.push(codexPrompt);
     const codexResult = await run('codex', codexArgs, {
-      timeoutMs: 480_000,
+      timeoutMs: CODEX_TIMEOUT_MS,
       stream: true,
     });
     const codexCombined = stripAnsi(codexResult.stdout + codexResult.stderr);

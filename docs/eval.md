@@ -7,7 +7,7 @@ This document tracks the current validation matrix for the `vibebrowser-mcp` and
 - published npm validation (`@vibebrowser/mcp@latest`)
 - real-extension browser evals versus fake-extension protocol evals
 
-Evaluation date: **March 25, 2026 (America/Los_Angeles)**.
+Evaluation date: **March 26, 2026 (America/Los_Angeles)**.
 
 ## Coverage Matrix
 
@@ -151,6 +151,10 @@ Hard requirement:
 
 - a live Vibe extension session must already be connected or connectable on the relay path
 - this harness does **not** prove anything if the extension is absent
+- default Codex settings are tuned for current CLI compatibility:
+  - `E2E_CODEX_MODEL=gpt-5`
+  - `E2E_CODEX_REASONING_EFFORT=low`
+  - `E2E_CODEX_TIMEOUT_MS=480000`
 
 ### 6. Full OpenCode browser eval in sibling repo
 
@@ -188,6 +192,8 @@ Commands executed in this session:
 | `npm view @vibebrowser/mcp version dist-tags.latest bin --json` | PASS | npm `latest` is now `0.2.5` and includes `vibebrowser-mcp`, `vibe-mcp`, and `vibebrowser-cli` |
 | `npx -y --package @vibebrowser/mcp@latest vibebrowser-mcp --version` | PASS | published npm binary resolves to `0.2.5` |
 | `npx -y --package @vibebrowser/mcp@latest vibe-mcp --version` | PASS | legacy alias still resolves to `0.2.5` |
+| `npm run test:e2e:agents` | PASS | local `dist/cli.js` path completed all three MiniWoB tasks with Codex + OpenCode against the live extension session |
+| `E2E_MCP_SOURCE=npm npm run test:e2e:agents` | PASS | published npm binary path completed the same three MiniWoB tasks end to end |
 | `npx -y --package @vibebrowser/mcp@latest vibebrowser-cli --version` | PASS | standalone CLI is now available from npm `latest` |
 | `E2E_BROWSER_CLI_SOURCE=npm node scripts/e2e-browser-cli.mjs` | PASS | npm-installed `vibebrowser-cli` passed end to end |
 | `E2E_MCP_SOURCE=pack node scripts/e2e-mcp-agents.mjs` | FAIL (environment) | timed out waiting for a live Vibe extension connection on the relay path |

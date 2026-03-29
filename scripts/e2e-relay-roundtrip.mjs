@@ -147,8 +147,21 @@ async function main() {
     }));
 
     // ------ Connect fake agent ------
-    agent = await connectWebSocket(`ws://${HOST}:${AGENT_PORT}`);
-    const agentMessages = captureMessages(agent);
+    // Register message capture BEFORE waiting for open so no messages are
+    // lost if the relay sends extension_status on the same tick as open.
+    {
+      const ws = new WebSocket(`ws://${HOST}:${AGENT_PORT}`);
+      const agentMsgQueue = [];
+      ws.on('message', (raw) => { try { agentMsgQueue.push(JSON.parse(raw.toString())); } catch { /* ignore */ } });
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { ws.terminate(); reject(new Error('Timed out connecting agent')); }, 10_000);
+        ws.once('open', () => { clearTimeout(timer); resolve(); });
+        ws.once('error', (error) => { clearTimeout(timer); reject(error); });
+      });
+      agent = ws;
+      // Use the pre-registered queue instead of calling captureMessages after open.
+      var agentMessages = agentMsgQueue;
+    }
 
     // Wait for the agent to see extension_status connected.
     await waitForMessage(

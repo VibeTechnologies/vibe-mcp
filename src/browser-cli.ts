@@ -6,6 +6,8 @@ import { ExtensionConnection } from './connection.js';
 import { DEFAULT_WS_PORT, type ToolDefinition, type ToolResult } from './types.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+/** Short timeout for the `status` command — it should never block for 30 s. */
+const STATUS_TOOLS_TIMEOUT_MS = 2_000;
 const DEFAULT_BROWSER_PROFILE = process.env.VIBE_BROWSER_PROFILE || 'user';
 const DEFAULT_REMOTE_UUID = process.env.VIBE_EXTENSION_UUID || process.env.VIBE_RELAY_UUID;
 const DEFAULT_REMOTE_RELAY_URL = process.env.VIBE_REMOTE_RELAY_URL || process.env.VIBE_RELAY_URL;
@@ -579,7 +581,10 @@ class BrowserCliContext {
 
   async status(): Promise<CommandOutput> {
     if (this.connection.isExtensionConnected()) {
-      await this.ensureToolsLoaded();
+      // Use a short timeout for status — this is a diagnostic command that
+      // should return quickly.  Fall back to cached tools if the extension
+      // is slow to respond.
+      await this.ensureToolsLoaded(STATUS_TOOLS_TIMEOUT_MS);
     }
 
     return {
@@ -1234,15 +1239,21 @@ class BrowserCliContext {
     );
   }
 
-  private async ensureToolsLoaded(): Promise<void> {
+  private async ensureToolsLoaded(timeoutMs?: number): Promise<void> {
     if (this.toolsLoaded && this.tools.length > 0) {
       return;
     }
+    const effectiveTimeout = timeoutMs ?? this.timeoutMs;
     if (this.connection.isExtensionConnected()) {
       try {
-        this.tools = await this.connection.refreshTools(this.timeoutMs);
+        this.tools = await this.connection.refreshTools(effectiveTimeout);
       } catch {
-        this.tools = await this.connection.waitForToolsUpdate(1_000);
+        // Refresh timed out or failed — fall back to cached tools or a short
+        // passive wait so the status command is not blocked.
+        this.tools = this.connection.getTools();
+        if (this.tools.length === 0) {
+          this.tools = await this.connection.waitForToolsUpdate(1_000);
+        }
       }
     } else {
       this.tools = this.connection.getTools();

@@ -156,12 +156,7 @@ function registerBrowserSubcommands(browser: Command): void {
       await runBrowserCommand(this, 'tab new', true, async (ctx) => ctx.open(url));
     });
 
-  tab
-    .command('select <id>')
-    .description('Focus a tab/page')
-    .action(async function (this: Command, id: string) {
-      await runBrowserCommand(this, 'tab select', true, async (ctx) => ctx.focus(id));
-    });
+  // NOTE: tab select removed — no select_page/focus_tab tool in the extension.
 
   tab
     .command('close <id>')
@@ -184,12 +179,7 @@ function registerBrowserSubcommands(browser: Command): void {
       await runBrowserCommand(this, 'navigate', true, async (ctx) => ctx.navigate(url));
     });
 
-  browser
-    .command('focus <id>')
-    .description('Focus a tab/page')
-    .action(async function (this: Command, id: string) {
-      await runBrowserCommand(this, 'focus', true, async (ctx) => ctx.focus(id));
-    });
+  // NOTE: focus command removed — no select_page/focus_tab tool in the extension.
 
   browser
     .command('close <id>')
@@ -246,39 +236,7 @@ function registerBrowserSubcommands(browser: Command): void {
       );
     });
 
-  browser
-    .command('pdf')
-    .description('Render the current page as PDF when supported')
-    .option('--output <path>', 'Write PDF bytes to a file')
-    .action(async function (this: Command) {
-      await runBrowserCommand(this, 'pdf', true, async (ctx, options) =>
-        ctx.pdf(options.output ? String(options.output) : undefined)
-      );
-    });
-
-  browser
-    .command('console')
-    .description('List console messages')
-    .option('--level <level>', 'Console level filter')
-    .option('--preserve', 'Include preserved messages when supported', false)
-    .action(async function (this: Command) {
-      await runBrowserCommand(this, 'console', true, async (ctx, options) =>
-        ctx.consoleMessages({
-          level: options.level ? String(options.level) : undefined,
-          preserve: Boolean(options.preserve),
-        })
-      );
-    });
-
-  browser
-    .command('errors')
-    .description('List console errors')
-    .option('--clear', 'Compatibility flag', false)
-    .action(async function (this: Command) {
-      await runBrowserCommand(this, 'errors', true, async (ctx) =>
-        ctx.consoleMessages({ level: 'error' })
-      );
-    });
+  // NOTE: pdf, console, errors commands removed — no matching browser tools.
 
   browser
     .command('requests')
@@ -310,17 +268,7 @@ function registerBrowserSubcommands(browser: Command): void {
       );
     });
 
-  browser
-    .command('resize <width> <height>')
-    .description('Resize the browser viewport')
-    .action(async function (this: Command, width: string, height: string) {
-      await runBrowserCommand(this, 'resize', true, async (ctx) =>
-        ctx.resize(
-          parsePositiveInteger(width, 'width'),
-          parsePositiveInteger(height, 'height'),
-        )
-      );
-    });
+  // NOTE: resize command removed — no resize_page tool in the extension.
 
   browser
     .command('click <ref>')
@@ -356,12 +304,7 @@ function registerBrowserSubcommands(browser: Command): void {
       await runBrowserCommand(this, 'hover', true, async (ctx) => ctx.hover(ref));
     });
 
-  browser
-    .command('scrollintoview <ref>')
-    .description('Scroll an element into view when supported')
-    .action(async function (this: Command, ref: string) {
-      await runBrowserCommand(this, 'scrollintoview', true, async (ctx) => ctx.scrollIntoView(ref));
-    });
+  // NOTE: scrollintoview, download, waitfordownload, upload commands removed — no matching tools.
 
   browser
     .command('drag <source> <target>')
@@ -378,30 +321,6 @@ function registerBrowserSubcommands(browser: Command): void {
     });
 
   browser
-    .command('download <ref> [filename]')
-    .description('Trigger/download an element when supported')
-    .action(async function (this: Command, ref: string, filename?: string) {
-      await runBrowserCommand(this, 'download', true, async (ctx) => ctx.download(ref, filename));
-    });
-
-  browser
-    .command('waitfordownload [filename]')
-    .description('Wait for a download when supported')
-    .action(async function (this: Command, filename?: string) {
-      await runBrowserCommand(this, 'waitfordownload', true, async (ctx) => ctx.waitForDownload(filename));
-    });
-
-  browser
-    .command('upload <path>')
-    .description('Upload a file when supported')
-    .option('--ref <ref>', 'Element ref/index')
-    .action(async function (this: Command, path: string) {
-      await runBrowserCommand(this, 'upload', true, async (ctx, options) =>
-        ctx.upload(path, options.ref ? String(options.ref) : undefined)
-      );
-    });
-
-  browser
     .command('fill')
     .description('Fill a form using JSON field descriptors')
     .requiredOption('--fields <json>', 'JSON array of field descriptors')
@@ -411,21 +330,7 @@ function registerBrowserSubcommands(browser: Command): void {
       );
     });
 
-  browser
-    .command('dialog')
-    .description('Accept or dismiss a browser dialog')
-    .option('--accept', 'Accept the dialog', false)
-    .option('--dismiss', 'Dismiss the dialog', false)
-    .option('--prompt <text>', 'Prompt text to enter')
-    .action(async function (this: Command) {
-      await runBrowserCommand(this, 'dialog', true, async (ctx, options) =>
-        ctx.dialog({
-          accept: Boolean(options.accept),
-          dismiss: Boolean(options.dismiss),
-          prompt: options.prompt ? String(options.prompt) : undefined,
-        })
-      );
-    });
+  // NOTE: dialog command removed — no handle_dialog tool in the extension.
 
   browser
     .command('wait')
@@ -459,37 +364,8 @@ function registerBrowserSubcommands(browser: Command): void {
       );
     });
 
-  browser
-    .command('highlight <ref>')
-    .description('Highlight an element when supported')
-    .action(async function (this: Command, ref: string) {
-      await runBrowserCommand(this, 'highlight', true, async (ctx) => ctx.highlight(ref));
-    });
-
-  const trace = browser.command('trace').description('Start/stop browser tracing');
-  trace
-    .command('start')
-    .description('Start a trace')
-    .option('--reload', 'Reload the page during trace start when supported', false)
-    .option('--output <path>', 'Trace output path')
-    .action(async function (this: Command) {
-      await runBrowserCommand(this, 'trace start', true, async (ctx, options) =>
-        ctx.traceStart({
-          reload: Boolean(options.reload),
-          outputPath: options.output ? String(options.output) : undefined,
-        })
-      );
-    });
-
-  trace
-    .command('stop')
-    .description('Stop an active trace')
-    .option('--output <path>', 'Trace output path')
-    .action(async function (this: Command) {
-      await runBrowserCommand(this, 'trace stop', true, async (ctx, options) =>
-        ctx.traceStop(options.output ? String(options.output) : undefined)
-      );
-    });
+  // NOTE: highlight command removed — no highlight tool; users can use 'hover' directly.
+  // NOTE: trace commands removed — no performance_start_trace/performance_stop_trace tools.
 }
 
 async function runBrowserCommand(
@@ -664,20 +540,6 @@ class BrowserCliContext {
     return this.outputFromInvocation('navigate', invocation);
   }
 
-  async focus(id: string): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'focus',
-      [
-        {
-          names: ['select_page', 'switch_to_tab', 'focus_tab'],
-          buildArgs: (tool) => withPageArgs(tool, id),
-        },
-      ],
-      {}
-    );
-    return this.outputFromInvocation('focus', invocation);
-  }
-
   async close(id: string): Promise<CommandOutput> {
     const invocation = await this.callTool(
       'close',
@@ -778,51 +640,6 @@ class BrowserCliContext {
     };
   }
 
-  async pdf(outputPath?: string): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'pdf',
-      [{ names: ['pdf', 'generate_pdf'] }],
-      {}
-    );
-    const savedPath = maybeWriteBinaryOutput(invocation.result, outputPath);
-    return {
-      ok: true,
-      command: 'pdf',
-      profile: this.profile,
-      mode: this.mode(),
-      ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
-      tool: invocation.tool,
-      outputPath: savedPath || outputPath,
-      raw: normalizeToolResult(invocation.result),
-    };
-  }
-
-  async consoleMessages(options: {
-    level?: string;
-    preserve?: boolean;
-  }): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'console',
-      [
-        {
-          names: ['list_console_messages'],
-          buildArgs: (tool) => withConsoleArgs(tool, options),
-        },
-      ],
-      {}
-    );
-    return {
-      ok: true,
-      command: options.level === 'error' ? 'errors' : 'console',
-      profile: this.profile,
-      mode: this.mode(),
-      ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
-      tool: invocation.tool,
-      messages: extractMessages(invocation.result),
-      raw: normalizeToolResult(invocation.result),
-    };
-  }
-
   async requests(options: {
     filter?: string;
     limit?: number;
@@ -898,20 +715,6 @@ class BrowserCliContext {
     };
   }
 
-  async resize(width: number, height: number): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'resize',
-      [
-        {
-          names: ['resize_page'],
-          buildArgs: (tool) => withResizeArgs(tool, width, height),
-        },
-      ],
-      {}
-    );
-    return this.outputFromInvocation('resize', invocation);
-  }
-
   async click(ref: string, options: { double: boolean }): Promise<CommandOutput> {
     const invocation = await this.callTool(
       'click',
@@ -972,20 +775,6 @@ class BrowserCliContext {
     return this.outputFromInvocation('hover', invocation);
   }
 
-  async scrollIntoView(ref: string): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'scrollintoview',
-      [
-        {
-          names: ['scroll_into_view', 'scrollintoview'],
-          buildArgs: (tool) => withRefArgs(tool, ref),
-        },
-      ],
-      {}
-    );
-    return this.outputFromInvocation('scrollintoview', invocation);
-  }
-
   async drag(source: string, target: string): Promise<CommandOutput> {
     const invocation = await this.callTool(
       'drag',
@@ -1018,52 +807,6 @@ class BrowserCliContext {
     return this.outputFromInvocation('select', invocation);
   }
 
-  async download(ref: string, filename?: string): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'download',
-      [
-        {
-          names: ['download'],
-          buildArgs: (tool) => withDownloadArgs(tool, ref, filename),
-        },
-        {
-          names: ['click'],
-          buildArgs: (tool) => withRefArgs(tool, ref),
-        },
-      ],
-      {}
-    );
-    return this.outputFromInvocation('download', invocation);
-  }
-
-  async waitForDownload(filename?: string): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'waitfordownload',
-      [
-        {
-          names: ['wait_for_download', 'waitfordownload'],
-          buildArgs: (tool) => withFilenameArgs(tool, filename),
-        },
-      ],
-      {}
-    );
-    return this.outputFromInvocation('waitfordownload', invocation);
-  }
-
-  async upload(path: string, ref?: string): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'upload',
-      [
-        {
-          names: ['upload_file'],
-          buildArgs: (tool) => withUploadArgs(tool, path, ref),
-        },
-      ],
-      {}
-    );
-    return this.outputFromInvocation('upload', invocation);
-  }
-
   async fillForm(fieldsJson: string): Promise<CommandOutput> {
     const fields = parseJsonValue(fieldsJson, '--fields');
     if (!Array.isArray(fields)) {
@@ -1080,25 +823,6 @@ class BrowserCliContext {
       {}
     );
     return this.outputFromInvocation('fill', invocation);
-  }
-
-  async dialog(options: {
-    accept: boolean;
-    dismiss: boolean;
-    prompt?: string;
-  }): Promise<CommandOutput> {
-    const action = options.accept ? 'accept' : options.dismiss ? 'dismiss' : 'accept';
-    const invocation = await this.callTool(
-      'dialog',
-      [
-        {
-          names: ['handle_dialog'],
-          buildArgs: (tool) => withDialogArgs(tool, action, options.prompt),
-        },
-      ],
-      {}
-    );
-    return this.outputFromInvocation('dialog', invocation);
   }
 
   async wait(options: {
@@ -1151,55 +875,6 @@ class BrowserCliContext {
       {}
     );
     return this.outputFromInvocation('evaluate', invocation);
-  }
-
-  async highlight(ref: string): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'highlight',
-      [
-        {
-          names: ['highlight'],
-          buildArgs: (tool) => withRefArgs(tool, ref),
-        },
-        {
-          names: ['hover'],
-          buildArgs: (tool) => withRefArgs(tool, ref, { duration: 1500 }),
-        },
-      ],
-      {}
-    );
-    return this.outputFromInvocation('highlight', invocation);
-  }
-
-  async traceStart(options: {
-    reload: boolean;
-    outputPath?: string;
-  }): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'trace start',
-      [
-        {
-          names: ['performance_start_trace'],
-          buildArgs: (tool) => withTraceStartArgs(tool, options),
-        },
-      ],
-      {}
-    );
-    return this.outputFromInvocation('trace start', invocation);
-  }
-
-  async traceStop(outputPath?: string): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'trace stop',
-      [
-        {
-          names: ['performance_stop_trace'],
-          buildArgs: (tool) => withTraceStopArgs(tool, outputPath),
-        },
-      ],
-      {}
-    );
-    return this.outputFromInvocation('trace stop', invocation);
   }
 
   private async callGenericCommand(
@@ -1349,14 +1024,6 @@ function formatHumanOutput(commandName: string, output: CommandOutput): string {
       return requests.map((request, index) =>
         `${index + 1}. ${request.method || 'GET'} ${request.url || '(unknown)'}${request.status !== undefined ? ` [${request.status}]` : ''}${request.requestId ? ` [id=${request.requestId}]` : ''}`
       ).join('\n');
-    }
-    case 'console':
-    case 'errors': {
-      const messages = Array.isArray(output.messages) ? output.messages as JsonValue[] : [];
-      if (messages.length > 0) {
-        return messages.map((message) => stringifyJson(message)).join('\n');
-      }
-      return firstDefinedText(output.raw, 'No console messages reported by browser');
     }
     case 'responsebody':
       return String(output.responseBody ?? firstDefinedText(output.raw, ''));
@@ -1530,29 +1197,6 @@ function normalizeRequest(value: unknown): RequestSummary {
     method: firstString(record, ['method']),
     status: firstNumber(record, ['status']),
   };
-}
-
-function extractMessages(result: ToolResult & Record<string, unknown>): JsonValue[] {
-  const direct = extractStructured(result, ['messages', 'consoleMessages']);
-  if (Array.isArray(direct)) {
-    return direct.map((entry) => sanitizeUnknown(entry) ?? null);
-  }
-
-  const parsed = parseResultText(result);
-  if (Array.isArray(parsed)) {
-    return parsed.map((entry) => sanitizeUnknown(entry) ?? null);
-  }
-  if (parsed && typeof parsed === 'object') {
-    for (const key of ['messages', 'consoleMessages']) {
-      const candidate = (parsed as Record<string, unknown>)[key];
-      if (Array.isArray(candidate)) {
-        return candidate.map((entry) => sanitizeUnknown(entry) ?? null);
-      }
-    }
-  }
-
-  const text = firstText(result);
-  return text ? [text] : [];
 }
 
 function extractResponseBody(result: ToolResult & Record<string, unknown>): string {
@@ -1762,27 +1406,6 @@ function withScreenshotArgs(
   return args;
 }
 
-function withConsoleArgs(
-  tool: ToolDefinition,
-  options: {
-    level?: string;
-    preserve?: boolean;
-  },
-): Record<string, unknown> {
-  const args: Record<string, unknown> = {};
-  if (options.level) {
-    if (hasProperty(tool, 'types')) {
-      args.types = [options.level];
-    } else {
-      maybeAssign(args, tool, 'level', options.level);
-    }
-  }
-  if (options.preserve) {
-    maybeAssign(args, tool, 'includePreservedMessages', true);
-  }
-  return args;
-}
-
 function withRequestListArgs(
   tool: ToolDefinition,
   options: {
@@ -1801,13 +1424,6 @@ function withRequestDetailsArgs(tool: ToolDefinition, requestId: string): Record
   const args: Record<string, unknown> = {};
   maybeAssign(args, tool, 'requestId', requestId);
   maybeAssign(args, tool, 'reqid', requestId);
-  return args;
-}
-
-function withResizeArgs(tool: ToolDefinition, width: number, height: number): Record<string, unknown> {
-  const args: Record<string, unknown> = {};
-  maybeAssign(args, tool, 'width', width);
-  maybeAssign(args, tool, 'height', height);
   return args;
 }
 
@@ -1886,40 +1502,10 @@ function withSelectArgs(tool: ToolDefinition, ref: string, values: string[]): Re
   return args;
 }
 
-function withDownloadArgs(tool: ToolDefinition, ref: string, filename?: string): Record<string, unknown> {
-  const args = withRefArgs(tool, ref);
-  maybeAssign(args, tool, 'filename', filename);
-  maybeAssign(args, tool, 'path', filename);
-  return args;
-}
-
-function withFilenameArgs(tool: ToolDefinition, filename?: string): Record<string, unknown> {
-  const args: Record<string, unknown> = {};
-  maybeAssign(args, tool, 'filename', filename);
-  maybeAssign(args, tool, 'path', filename);
-  return args;
-}
-
-function withUploadArgs(tool: ToolDefinition, path: string, ref?: string): Record<string, unknown> {
-  const args: Record<string, unknown> = {};
-  maybeAssign(args, tool, 'filePath', resolve(path));
-  if (ref) {
-    Object.assign(args, withRefArgs(tool, ref));
-  }
-  return args;
-}
-
 function withFillFormArgs(tool: ToolDefinition, fields: JsonValue[]): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   maybeAssign(args, tool, 'fields', fields);
   maybeAssign(args, tool, 'elements', fields);
-  return args;
-}
-
-function withDialogArgs(tool: ToolDefinition, action: string, prompt?: string): Record<string, unknown> {
-  const args: Record<string, unknown> = {};
-  maybeAssign(args, tool, 'action', action);
-  maybeAssign(args, tool, 'promptText', prompt);
   return args;
 }
 
@@ -1955,29 +1541,6 @@ function withEvaluateArgs(
 
   if (values.length > 0) {
     maybeAssign(args, tool, 'args', values);
-  }
-  return args;
-}
-
-function withTraceStartArgs(
-  tool: ToolDefinition,
-  options: {
-    reload: boolean;
-    outputPath?: string;
-  },
-): Record<string, unknown> {
-  const args: Record<string, unknown> = {};
-  maybeAssign(args, tool, 'reload', options.reload || undefined);
-  if (options.outputPath) {
-    maybeAssign(args, tool, 'filePath', resolve(options.outputPath));
-  }
-  return args;
-}
-
-function withTraceStopArgs(tool: ToolDefinition, outputPath?: string): Record<string, unknown> {
-  const args: Record<string, unknown> = {};
-  if (outputPath) {
-    maybeAssign(args, tool, 'filePath', resolve(outputPath));
   }
   return args;
 }

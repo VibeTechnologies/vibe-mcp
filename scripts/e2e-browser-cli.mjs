@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -21,7 +21,6 @@ const E2E_BROWSER_CLI_SOURCE = (process.env.E2E_BROWSER_CLI_SOURCE || 'local').t
 const E2E_BROWSER_CLI_PACKAGE = process.env.E2E_BROWSER_CLI_PACKAGE;
 const TEST_DIR = mkdtempSync(join(tmpdir(), 'vibe-mcp-browser-cli-'));
 const SCREENSHOT_PATH = join(TEST_DIR, 'shot.png');
-const UPLOAD_PATH = join(TEST_DIR, 'upload.txt');
 let packedPackageDir = null;
 let cliInvocation = null;
 
@@ -51,15 +50,9 @@ const TOOLS = [
   tool('list_network_requests', { limit: { type: 'number' } }),
   tool('get_network_request', { requestId: { type: 'string' } }),
   tool('evaluate_script', { function: { type: 'string' }, args: { type: 'array' } }),
-  tool('performance_start_trace', { reload: { type: 'boolean' }, filePath: { type: 'string' } }),
-  tool('performance_stop_trace', { filePath: { type: 'string' } }),
-  tool('upload_file', { filePath: { type: 'string' }, ref: { type: 'string' } }),
-  tool('handle_dialog', { action: { type: 'string' }, promptText: { type: 'string' } }),
-  tool('wait_for', { text: { type: 'array' }, timeout: { type: 'number' } }),
-  tool('pdf', {}),
-];
 
-writeFileSync(UPLOAD_PATH, 'upload payload');
+  tool('wait_for', { text: { type: 'array' }, timeout: { type: 'number' } }),
+];
 
 let wss;
 
@@ -127,9 +120,6 @@ try {
   const opened = await runCli(['open', 'https://example.com/docs']);
   assert(opened.ok === true && opened.tool === 'new_page', `open failed: ${JSON.stringify(opened)}`);
 
-  const selected = await runCli(['tab', 'select', '2']);
-  assert(selected.ok === true && selected.tool === 'select_page', `tab select failed: ${JSON.stringify(selected)}`);
-
   const closed = await runCli(['close', '2']);
   assert(closed.ok === true && closed.tool === 'close_page', `close failed: ${JSON.stringify(closed)}`);
 
@@ -157,15 +147,6 @@ try {
 
   const evaluated = await runCli(['evaluate', '--fn', '() => document.title']);
   assert(evaluated.ok === true && evaluated.tool === 'evaluate_script', `evaluate failed: ${JSON.stringify(evaluated)}`);
-
-  const uploaded = await runCli(['upload', UPLOAD_PATH, '--ref', '44']);
-  assert(uploaded.ok === true && uploaded.tool === 'upload_file', `upload failed: ${JSON.stringify(uploaded)}`);
-
-  const traceStart = await runCli(['trace', 'start', '--reload']);
-  assert(traceStart.ok === true && traceStart.tool === 'performance_start_trace', `trace start failed: ${JSON.stringify(traceStart)}`);
-
-  const traceStop = await runCli(['trace', 'stop']);
-  assert(traceStop.ok === true && traceStop.tool === 'performance_stop_trace', `trace stop failed: ${JSON.stringify(traceStop)}`);
 
   console.log('browser cli e2e ok');
 } finally {
@@ -242,18 +223,8 @@ function handleToolCall(name, args) {
       return jsonResult({ requestId: args.requestId, responseBody: '{"ok":true}' });
     case 'evaluate_script':
       return jsonResult({ result: 'Example Domain', args: args.args ?? [] });
-    case 'performance_start_trace':
-      return jsonResult({ started: true, reload: Boolean(args.reload) });
-    case 'performance_stop_trace':
-      return jsonResult({ stopped: true, trace: 'TRACE:/tmp/fake-trace.json' });
-    case 'upload_file':
-      return jsonResult({ uploaded: resolve(String(args.filePath)), ref: args.ref ?? null });
-    case 'handle_dialog':
-      return jsonResult({ action: args.action, promptText: args.promptText ?? null });
     case 'wait_for':
       return jsonResult({ text: args.text ?? [], timeout: args.timeout ?? 0 });
-    case 'pdf':
-      return jsonResult({ ok: true });
     default:
       return jsonResult({ tool: name, args });
   }

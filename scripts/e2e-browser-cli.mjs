@@ -28,6 +28,9 @@ let cliInvocation = null;
 const ONE_PIXEL_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W6n8AAAAASUVORK5CYII=';
 
+// When true, list_pages returns plain-text format (like the real extension does)
+let listPagesPlainText = false;
+
 const TOOLS = [
   tool('list_pages', {}),
   tool('new_page', { url: { type: 'string' } }),
@@ -112,6 +115,15 @@ try {
   const tabs = await runCli(['tabs']);
   assert(Array.isArray(tabs.pages) && tabs.pages.length === 2, `tabs missing pages: ${JSON.stringify(tabs)}`);
 
+  // Test plain-text format (matches real ListPagesTool output)
+  listPagesPlainText = true;
+  const tabsText = await runCli(['tabs']);
+  assert(Array.isArray(tabsText.pages) && tabsText.pages.length === 2, `tabs (plain-text) missing pages: ${JSON.stringify(tabsText)}`);
+  assert(tabsText.pages[0].title === 'Example Domain', `tabs (plain-text) wrong title: ${JSON.stringify(tabsText.pages[0])}`);
+  assert(tabsText.pages[0].active === true, `tabs (plain-text) wrong active: ${JSON.stringify(tabsText.pages[0])}`);
+  assert(tabsText.pages[1].url === 'https://example.com/docs', `tabs (plain-text) wrong url: ${JSON.stringify(tabsText.pages[1])}`);
+  assert(tabsText.pages[1].active === false, `tabs (plain-text) second page should not be active: ${JSON.stringify(tabsText.pages[1])}`);
+  listPagesPlainText = false;
   const opened = await runCli(['open', 'https://example.com/docs']);
   assert(opened.ok === true && opened.tool === 'new_page', `open failed: ${JSON.stringify(opened)}`);
 
@@ -177,6 +189,16 @@ try {
 function handleToolCall(name, args) {
   switch (name) {
     case 'list_pages':
+      if (listPagesPlainText) {
+        // Matches the real ListPagesTool.call() output format
+        return {
+          success: true,
+          content: [{
+            type: 'text',
+            text: 'Found 2 page(s):\nPage 1 [ACTIVE]: "Example Domain" - https://example.com\nPage 2: "Docs" - https://example.com/docs',
+          }],
+        };
+      }
       return jsonResult({
         pages: [
           { id: 1, title: 'Example Domain', url: 'https://example.com', active: true },

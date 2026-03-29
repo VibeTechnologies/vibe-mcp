@@ -1376,8 +1376,22 @@ function firstDefinedText(value: unknown, fallback: string): string {
   if (typeof value === 'string' && value.length > 0) {
     return value;
   }
-  if (value && typeof value === 'object' && 'text' in value && typeof (value as { text?: unknown }).text === 'string') {
-    return (value as { text: string }).text;
+  if (value && typeof value === 'object') {
+    // Direct { text: "..." } wrapper
+    if ('text' in value && typeof (value as { text?: unknown }).text === 'string') {
+      return (value as { text: string }).text;
+    }
+    // MCP tool result: { content: [{ type: 'text', text: '...' }] }
+    const rec = value as Record<string, unknown>;
+    if (Array.isArray(rec.content)) {
+      const textItem = rec.content.find(
+        (entry: unknown) =>
+          entry && typeof entry === 'object' && (entry as Record<string, unknown>).type === 'text'
+      ) as { text?: string } | undefined;
+      if (textItem && typeof textItem.text === 'string' && textItem.text.length > 0) {
+        return textItem.text;
+      }
+    }
   }
   return fallback;
 }
@@ -1439,7 +1453,36 @@ function extractPages(result: ToolResult & Record<string, unknown>): PageSummary
       }
     }
   }
+
+  // Fallback: parse the plain-text format produced by ListPagesTool
+  // e.g. 'Page 123 [ACTIVE]: "Google" - https://www.google.com'
+  const text = firstText(result);
+  if (text) {
+    const textPages = parsePlainTextPages(text);
+    if (textPages.length > 0) {
+      return textPages;
+    }
+  }
   return [];
+}
+
+// Matches ListPagesTool output: 'Page <id>[ [ACTIVE]]: "title" - url'
+const PAGE_LINE_RE = /^Page\s+(\d+)\s*(\[ACTIVE\])?\s*:\s*"(.*)"\s*-\s*(.*)$/i;
+
+function parsePlainTextPages(text: string): PageSummary[] {
+  const pages: PageSummary[] = [];
+  for (const line of text.split('\n')) {
+    const match = PAGE_LINE_RE.exec(line.trim());
+    if (match) {
+      pages.push({
+        id: Number(match[1]),
+        active: match[2] !== undefined,
+        title: match[3],
+        url: match[4].trim(),
+      });
+    }
+  }
+  return pages;
 }
 
 function normalizePage(value: unknown): PageSummary {

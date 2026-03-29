@@ -190,9 +190,9 @@ function handleToolCall(name, args) {
   switch (name) {
     case 'list_pages':
       if (listPagesPlainText) {
-        // Matches the real ListPagesTool.call() output format
+        // Matches the real extension's executeBrowserTool() output — no
+        // success field, no structured pages/tabs keys, just MCP content.
         return {
-          success: true,
           content: [{
             type: 'text',
             text: 'Found 2 page(s):\nPage 1 [ACTIVE]: "Example Domain" - https://example.com\nPage 2: "Docs" - https://example.com/docs',

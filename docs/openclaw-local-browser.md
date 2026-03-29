@@ -59,25 +59,46 @@ So the missing piece was a streamable HTTP MCP transport.
 
 That is what `vibebrowser-mcp start --transport http` now provides.
 
-## What to install
+## Prerequisites
+
+You need:
+
+1. **Node.js 18+** - `vibebrowser-mcp` requires Node.js
+2. **Chrome/Brave/Chromium** with the Vibe extension installed
+3. **OpenClaw** configured with an MCP server URL
+
+## What gets installed
 
 The user needs three pieces:
 
 1. the Vibe Co-Pilot browser extension
 2. `vibebrowser-mcp` on the same machine as the browser
-3. an OpenClaw MCP server entry pointing at the local `vibebrowser-mcp` HTTP endpoint
+3. an OpenClaw MCP server entry pointing to the local `vibebrowser-mcp` HTTP endpoint
 
-## Step 1: install the Vibe extension
+## Step 1: Install the Vibe extension
 
-Install the Vibe Co-Pilot extension from `https://vibebrowser.app`.
+1. Install the Vibe Co-Pilot extension from [Chrome Web Store](https://chromewebstore.google.com/detail/vibe-ai-browser-co-pilot/djodpgokbmobeclicaicnnidccoinado)
+2. Open Chrome and click the Vibe extension icon
+3. Go to **Settings** (gear icon)
+4. Find **MCP External** (or "MCP External Control")
+5. Enable it and select **Remote** mode
+6. Copy the **Extension UUID** shown - you'll need this for the next step
 
-Then open the extension settings and enable `MCP External`.
+> **Note**: The Extension UUID is a unique identifier that allows `vibebrowser-mcp` to connect to your specific browser session through the Vibe relay.
 
-For cloud OpenClaw, choose **Remote** mode and copy the **Extension UUID**.
-
-## Step 2: start the local HTTP bridge
+## Step 2: Start the local HTTP bridge
 
 On the same machine where the browser extension is installed, run:
+
+**Option A: Using the helper command (recommended)**
+
+```bash
+npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <extension-uuid>
+```
+
+This prints the exact commands and MCP URL you need.
+
+**Option B: Manual command**
 
 ```bash
 npx -y --package @vibebrowser/mcp vibebrowser-mcp start --transport http --remote <extension-uuid>
@@ -85,21 +106,11 @@ npx -y --package @vibebrowser/mcp vibebrowser-mcp start --transport http --remot
 
 By default this starts a local MCP endpoint at:
 
-```text
+```
 http://127.0.0.1:8788/mcp
 ```
 
-If you want the exact OpenClaw-friendly snippet, you can also run:
-
-```bash
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <extension-uuid>
-```
-
-That prints:
-
-- the bridge command
-- the MCP URL to register in OpenClaw
-- a JSON snippet you can paste into config
+Keep this terminal open - the bridge must stay running for OpenClaw to connect.
 
 For operator workflows and OpenClaw skills, you can also use the OpenClaw-compatible browser CLI surface directly:
 
@@ -126,6 +137,43 @@ Register the bridge URL in OpenClaw:
 ```
 
 Once that is configured, the cloud OpenClaw agent can use the Vibe browser tools through the local bridge.
+
+## Optional: Use the OpenClaw skill for local agents
+
+For OpenClaw agents running locally (not in the cloud) that need access to your real browser, you can use the Vibe skill instead of configuring an MCP server URL.
+
+### Install the skill
+
+Copy `openclaw/vibe-local-browser/SKILL.md` from this package to your OpenClaw skills directory. The skill provides OpenClaw-compatible CLI commands that target your Vibe-connected browser.
+
+### Configure environment
+
+Set the extension UUID in your shell:
+
+```bash
+export VIBE_EXTENSION_UUID="<your-extension-uuid>"
+```
+
+### Available commands
+
+```bash
+# Check status
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json status
+
+# List tabs
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json tabs
+
+# Open a page
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json open https://example.com
+
+# Click element by index
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json click 12
+
+# Type into element
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json type 23 "hello"
+```
+
+See [`openclaw/vibe-local-browser/SKILL.md`](../openclaw/vibe-local-browser/SKILL.md) for the full command reference.
 
 ## When to use this setup
 
@@ -171,3 +219,30 @@ That is a much better fit than asking users to move their life into a fresh clou
 The end result is simple:
 
 **OpenClaw stays in the cloud. The browser stays local. Vibe MCP connects them cleanly.**
+
+## Troubleshooting
+
+### "Extension UUID not found"
+
+Make sure you've enabled **Remote** mode in the Vibe extension settings. The UUID only appears when Remote mode is active.
+
+### "Connection refused" errors
+
+1. Ensure the `vibebrowser-mcp` process is still running
+2. Check the terminal for error messages
+3. Verify the MCP URL matches exactly (including the `/mcp` path)
+
+### "No extension connected"
+
+1. Open Chrome and click the Vibe extension icon
+2. Verify MCP External is enabled in Settings
+3. Check the extension shows "Connected" status
+
+### MCP URL format
+
+The correct format is:
+```
+http://127.0.0.1:8788/mcp
+```
+
+Not `http://127.0.0.1:8788` (missing `/mcp` path).

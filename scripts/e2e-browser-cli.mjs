@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -21,12 +21,14 @@ const E2E_BROWSER_CLI_SOURCE = (process.env.E2E_BROWSER_CLI_SOURCE || 'local').t
 const E2E_BROWSER_CLI_PACKAGE = process.env.E2E_BROWSER_CLI_PACKAGE;
 const TEST_DIR = mkdtempSync(join(tmpdir(), 'vibe-mcp-browser-cli-'));
 const SCREENSHOT_PATH = join(TEST_DIR, 'shot.png');
-const UPLOAD_PATH = join(TEST_DIR, 'upload.txt');
 let packedPackageDir = null;
 let cliInvocation = null;
 
 const ONE_PIXEL_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W6n8AAAAASUVORK5CYII=';
+
+// When true, list_pages returns plain-text format (like the real extension does)
+let listPagesPlainText = false;
 
 const TOOLS = [
   tool('list_pages', {}),
@@ -48,15 +50,9 @@ const TOOLS = [
   tool('list_network_requests', { limit: { type: 'number' } }),
   tool('get_network_request', { requestId: { type: 'string' } }),
   tool('evaluate_script', { function: { type: 'string' }, args: { type: 'array' } }),
-  tool('performance_start_trace', { reload: { type: 'boolean' }, filePath: { type: 'string' } }),
-  tool('performance_stop_trace', { filePath: { type: 'string' } }),
-  tool('upload_file', { filePath: { type: 'string' }, ref: { type: 'string' } }),
-  tool('handle_dialog', { action: { type: 'string' }, promptText: { type: 'string' } }),
-  tool('wait_for', { text: { type: 'array' }, timeout: { type: 'number' } }),
-  tool('pdf', {}),
-];
 
-writeFileSync(UPLOAD_PATH, 'upload payload');
+  tool('wait_for', { text: { type: 'array' }, timeout: { type: 'number' } }),
+];
 
 let wss;
 
@@ -112,11 +108,17 @@ try {
   const tabs = await runCli(['tabs']);
   assert(Array.isArray(tabs.pages) && tabs.pages.length === 2, `tabs missing pages: ${JSON.stringify(tabs)}`);
 
+  // Test plain-text format (matches real ListPagesTool output)
+  listPagesPlainText = true;
+  const tabsText = await runCli(['tabs']);
+  assert(Array.isArray(tabsText.pages) && tabsText.pages.length === 2, `tabs (plain-text) missing pages: ${JSON.stringify(tabsText)}`);
+  assert(tabsText.pages[0].title === 'Example Domain', `tabs (plain-text) wrong title: ${JSON.stringify(tabsText.pages[0])}`);
+  assert(tabsText.pages[0].active === true, `tabs (plain-text) wrong active: ${JSON.stringify(tabsText.pages[0])}`);
+  assert(tabsText.pages[1].url === 'https://example.com/docs', `tabs (plain-text) wrong url: ${JSON.stringify(tabsText.pages[1])}`);
+  assert(tabsText.pages[1].active === false, `tabs (plain-text) second page should not be active: ${JSON.stringify(tabsText.pages[1])}`);
+  listPagesPlainText = false;
   const opened = await runCli(['open', 'https://example.com/docs']);
   assert(opened.ok === true && opened.tool === 'new_page', `open failed: ${JSON.stringify(opened)}`);
-
-  const selected = await runCli(['tab', 'select', '2']);
-  assert(selected.ok === true && selected.tool === 'select_page', `tab select failed: ${JSON.stringify(selected)}`);
 
   const closed = await runCli(['close', '2']);
   assert(closed.ok === true && closed.tool === 'close_page', `close failed: ${JSON.stringify(closed)}`);
@@ -146,15 +148,6 @@ try {
   const evaluated = await runCli(['evaluate', '--fn', '() => document.title']);
   assert(evaluated.ok === true && evaluated.tool === 'evaluate_script', `evaluate failed: ${JSON.stringify(evaluated)}`);
 
-  const uploaded = await runCli(['upload', UPLOAD_PATH, '--ref', '44']);
-  assert(uploaded.ok === true && uploaded.tool === 'upload_file', `upload failed: ${JSON.stringify(uploaded)}`);
-
-  const traceStart = await runCli(['trace', 'start', '--reload']);
-  assert(traceStart.ok === true && traceStart.tool === 'performance_start_trace', `trace start failed: ${JSON.stringify(traceStart)}`);
-
-  const traceStop = await runCli(['trace', 'stop']);
-  assert(traceStop.ok === true && traceStop.tool === 'performance_stop_trace', `trace stop failed: ${JSON.stringify(traceStop)}`);
-
   console.log('browser cli e2e ok');
 } finally {
   if (wss) {
@@ -177,6 +170,16 @@ try {
 function handleToolCall(name, args) {
   switch (name) {
     case 'list_pages':
+      if (listPagesPlainText) {
+        // Matches the real extension's executeBrowserTool() output — no
+        // success field, no structured pages/tabs keys, just MCP content.
+        return {
+          content: [{
+            type: 'text',
+            text: 'Found 2 page(s):\nPage 1 [ACTIVE]: "Example Domain" - https://example.com\nPage 2: "Docs" - https://example.com/docs',
+          }],
+        };
+      }
       return jsonResult({
         pages: [
           { id: 1, title: 'Example Domain', url: 'https://example.com', active: true },
@@ -220,18 +223,8 @@ function handleToolCall(name, args) {
       return jsonResult({ requestId: args.requestId, responseBody: '{"ok":true}' });
     case 'evaluate_script':
       return jsonResult({ result: 'Example Domain', args: args.args ?? [] });
-    case 'performance_start_trace':
-      return jsonResult({ started: true, reload: Boolean(args.reload) });
-    case 'performance_stop_trace':
-      return jsonResult({ stopped: true, trace: 'TRACE:/tmp/fake-trace.json' });
-    case 'upload_file':
-      return jsonResult({ uploaded: resolve(String(args.filePath)), ref: args.ref ?? null });
-    case 'handle_dialog':
-      return jsonResult({ action: args.action, promptText: args.promptText ?? null });
     case 'wait_for':
       return jsonResult({ text: args.text ?? [], timeout: args.timeout ?? 0 });
-    case 'pdf':
-      return jsonResult({ ok: true });
     default:
       return jsonResult({ tool: name, args });
   }

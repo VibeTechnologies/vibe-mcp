@@ -156,7 +156,12 @@ function registerBrowserSubcommands(browser: Command): void {
       await runBrowserCommand(this, 'tab new', true, async (ctx) => ctx.open(url));
     });
 
-  // NOTE: tab select removed — no select_page/focus_tab tool in the extension.
+  tab
+    .command('select <id>')
+    .description('Switch to a tab/page by its ID')
+    .action(async function (this: Command, id: string) {
+      await runBrowserCommand(this, 'tab select', true, async (ctx) => ctx.focus(id));
+    });
 
   tab
     .command('close <id>')
@@ -179,7 +184,12 @@ function registerBrowserSubcommands(browser: Command): void {
       await runBrowserCommand(this, 'navigate', true, async (ctx) => ctx.navigate(url));
     });
 
-  // NOTE: focus command removed — no select_page/focus_tab tool in the extension.
+  browser
+    .command('focus <id>')
+    .description('Switch focus to a tab/page by its ID')
+    .action(async function (this: Command, id: string) {
+      await runBrowserCommand(this, 'focus', true, async (ctx) => ctx.focus(id));
+    });
 
   browser
     .command('close <id>')
@@ -552,6 +562,20 @@ class BrowserCliContext {
       {}
     );
     return this.outputFromInvocation('close', invocation);
+  }
+
+  async focus(id: string): Promise<CommandOutput> {
+    const invocation = await this.callTool(
+      'focus',
+      [
+        {
+          names: ['switch_to_page', 'switch_to_tab', 'select_page', 'focus_tab'],
+          buildArgs: (tool) => withPageArgs(tool, id),
+        },
+      ],
+      {}
+    );
+    return this.outputFromInvocation('focus', invocation);
   }
 
   async snapshot(options: {
@@ -1134,7 +1158,7 @@ function extractPages(result: ToolResult & Record<string, unknown>): PageSummary
 }
 
 // Matches ListPagesTool output: 'Page <id>[ [ACTIVE]]: "title" - url'
-const PAGE_LINE_RE = /^Page\s+(\d+)\s*(\[ACTIVE\])?\s*:\s*"(.*)"\s*-\s*(.*)$/i;
+const PAGE_LINE_RE = /^Page\s+(\d+)\s*(\[ACTIVE\])?\s*:\s*"(.*)"\s*-\s*(.+)$/i;
 
 function parsePlainTextPages(text: string): PageSummary[] {
   const pages: PageSummary[] = [];

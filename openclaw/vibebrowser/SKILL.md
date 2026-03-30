@@ -1,5 +1,5 @@
 ---
-name: vibe-local-browser
+name: vibebrowser
 description: Control the user's local browser through the Vibe Browser CLI bridge. Use this when the task must run against the user's real Vibe-connected browser session, tabs, cookies, or installed extensions.
 metadata:
   {

@@ -144,7 +144,7 @@ For OpenClaw agents running locally (not in the cloud) that need access to your 
 
 ### Install the skill
 
-Copy `openclaw/vibe-local-browser/SKILL.md` from this package to your OpenClaw skills directory. The skill provides OpenClaw-compatible CLI commands that target your Vibe-connected browser.
+Copy `openclaw/vibebrowser/SKILL.md` from this package to your OpenClaw skills directory. The skill provides OpenClaw-compatible CLI commands that target your Vibe-connected browser.
 
 ### Configure environment
 
@@ -173,7 +173,7 @@ npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json type 23 "hello"
 ```
 
-See [`openclaw/vibe-local-browser/SKILL.md`](../openclaw/vibe-local-browser/SKILL.md) for the full command reference.
+See [`openclaw/vibebrowser/SKILL.md`](../openclaw/vibebrowser/SKILL.md) for the full command reference.
 
 ## When to use this setup
 

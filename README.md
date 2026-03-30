@@ -314,7 +314,7 @@ For OpenClaw agents that need your real browser context (logged-in sessions, exi
 2. Set `VIBE_EXTENSION_UUID` environment variable
 3. Use `vibebrowser-cli` commands in your agent prompts
 
-The skill is located at [`openclaw/vibe-local-browser/SKILL.md`](openclaw/vibe-local-browser/SKILL.md) and provides:
+The skill is located at [`openclaw/vibebrowser/SKILL.md`](openclaw/vibebrowser/SKILL.md) and provides:
 - Full OpenClaw-compatible CLI commands (`status`, `tabs`, `snapshot`, `click`, `type`, etc.)
 - `--json` output for machine parsing
 - Environment-based configuration

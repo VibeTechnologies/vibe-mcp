@@ -45,18 +45,35 @@ interface ExtensionMessage {
   requestId?: string;
   data?: unknown;
   error?: string;
+  sessionId?: string;
 }
 
 /**
  * Message to extension
  */
 interface ServerMessage {
-  type: 'list_tools' | 'call_tool' | 'ping';
+  type: 'list_tools' | 'call_tool' | 'ping' | 'list_sessions';
   requestId: string;
   data?: {
     name?: string;
     arguments?: Record<string, unknown>;
+    sessionId?: string;
   };
+}
+
+interface RelaySessionSummary {
+  sessionId: string;
+  connected: boolean;
+  connectedAt: number;
+  toolCount: number;
+}
+
+interface ExtensionSession {
+  ws: WebSocket;
+  sessionId: string;
+  connectedAt: number;
+  tools: unknown[];
+  toolsSyncTimer: NodeJS.Timeout | null;
 }
 
 /**
@@ -76,6 +93,7 @@ interface PendingRequest {
   originalRequestId: string;
   lastSentAt: number;
   forwardMessage: ServerMessage;
+  sessionId: string;
 }
 
 /**
@@ -84,13 +102,13 @@ interface PendingRequest {
 export class RelayServer extends EventEmitter {
   private extensionWss: WebSocketServer | null = null;
   private agentWss: WebSocketServer | null = null;
-  private extensionWs: WebSocket | null = null;
+  private extensionSessions: Map<string, ExtensionSession> = new Map();
+  private socketToSessionId: Map<WebSocket, string> = new Map();
   private agents: Map<string, AgentConnection> = new Map();
   private pendingRequests: Map<string, PendingRequest> = new Map();
-  private tools: unknown[] = [];
   private requestIdCounter = 0;
+  private anonymousSessionCounter = 0;
   private debug: boolean;
-  private toolsSyncTimer: NodeJS.Timeout | null = null;
 
   constructor(debug: boolean = false) {
     super();
@@ -171,19 +189,9 @@ export class RelayServer extends EventEmitter {
    * Handle extension connection
    */
   private handleExtensionConnection(ws: WebSocket): void {
-    const previousWs = this.extensionWs;
-    const replacedConnection = previousWs !== null && previousWs !== ws;
-
-    // Replace prior extension connection (background/service worker can reconnect).
-    if (previousWs && previousWs !== ws) {
-      previousWs.close();
-    }
-
-    this.log('Extension connected');
-    this.extensionWs = ws;
+    this.log('Extension socket connected; waiting for session handshake');
 
     ws.on('message', (data) => {
-      if (this.extensionWs !== ws) return;
       try {
         const message: ExtensionMessage = JSON.parse(data.toString());
         this.handleExtensionMessage(ws, message);
@@ -194,30 +202,32 @@ export class RelayServer extends EventEmitter {
 
     ws.on('close', (code, reasonBuffer) => {
       const reason = reasonBuffer?.toString() || '';
-      this.log(`Extension disconnected (code=${code}${reason ? `, reason=${reason}` : ''})`);
-      // Ignore stale close events from replaced sockets.
-      if (this.extensionWs !== ws) {
+      const sessionId = this.socketToSessionId.get(ws);
+      this.log(`Extension disconnected${sessionId ? ` (${sessionId})` : ''} (code=${code}${reason ? `, reason=${reason}` : ''})`);
+      if (!sessionId) {
         return;
       }
 
-      this.extensionWs = null;
-      this.tools = [];
-      this.stopToolsSyncLoop();
+      const session = this.extensionSessions.get(sessionId);
+      if (!session || session.ws !== ws) {
+        this.socketToSessionId.delete(ws);
+        return;
+      }
 
-      // Notify all agents
-      this.broadcastToAgents({ type: 'extension_disconnected' });
+      this.socketToSessionId.delete(ws);
+      this.extensionSessions.delete(sessionId);
+      this.stopToolsSyncLoop(session);
+      this.rejectPendingRequestsForSession(sessionId, `Extension session disconnected: ${sessionId}`);
+      this.broadcastSessionState();
+      if (this.extensionSessions.size === 0) {
+        this.broadcastToAgents({ type: 'extension_disconnected' });
+      }
     });
 
     ws.on('error', (error) => {
       this.log(`Extension WebSocket error: ${error.message}`);
     });
 
-    // Request tools list, with retries in case the extension wasn't ready yet.
-    this.startToolsSyncLoop();
-
-    if (replacedConnection) {
-      this.replayPendingRequests(ws);
-    }
   }
 
   /**
@@ -235,16 +245,12 @@ export class RelayServer extends EventEmitter {
     this.agents.set(agentId, agent);
     this.log(`Agent connected: ${agentId} (total: ${this.agents.size})`);
 
-    // Send current tools list
-    if (this.tools.length > 0) {
-      ws.send(JSON.stringify({ type: 'tools_list', data: this.tools }));
-    }
+    this.sendSessionStateToAgent(ws);
 
-    // Send extension status
-    ws.send(JSON.stringify({ 
-      type: 'extension_status', 
-      connected: this.extensionWs !== null 
-    }));
+    const defaultSession = this.getDefaultSession();
+    if (defaultSession && defaultSession.tools.length > 0) {
+      ws.send(JSON.stringify({ type: 'tools_list', data: defaultSession.tools, sessionId: defaultSession.sessionId }));
+    }
 
     ws.on('message', (data) => {
       try {
@@ -276,17 +282,15 @@ export class RelayServer extends EventEmitter {
    * Handle message from extension
    */
   private handleExtensionMessage(sourceWs: WebSocket, message: ExtensionMessage): void {
-    if (this.extensionWs !== sourceWs) {
-      this.log(`Ignoring stale extension message: ${message.type}`);
+    const session = this.ensureSessionForSocket(sourceWs, message);
+    if (!session) {
+      this.log(`Ignoring extension message before handshake: ${message.type}`);
       return;
     }
 
-    this.log(`Extension message: ${message.type}`);
+    this.log(`Extension message (${session.sessionId}): ${message.type}`);
 
     if (message.type === 'connected') {
-      // Local extension clients announce their websocket handshake with a
-      // standalone `connected` message. That is not itself a failure signal,
-      // and rejecting pending requests here breaks otherwise healthy reconnects.
       return;
     }
 
@@ -303,6 +307,7 @@ export class RelayServer extends EventEmitter {
         if (agent) {
           agent.ws.send(JSON.stringify({
             ...message,
+            sessionId: session.sessionId,
             requestId: pending.originalRequestId,
           }));
         }
@@ -310,9 +315,10 @@ export class RelayServer extends EventEmitter {
         // For tools_list we still want to cache + broadcast to *other* agents
         // so they stay in sync, but the requesting agent already got its copy.
         if (message.type === 'tools_list') {
-          this.tools = message.data as unknown[];
-          this.stopToolsSyncLoop();
-          this.broadcastToAgents({ type: 'tools_list', data: this.tools }, pending.agentId);
+          session.tools = message.data as unknown[];
+          this.stopToolsSyncLoop(session);
+          this.broadcastToAgents({ type: 'tools_list', data: session.tools, sessionId: session.sessionId }, pending.agentId);
+          this.broadcastSessionState();
         }
         return;
       }
@@ -320,14 +326,15 @@ export class RelayServer extends EventEmitter {
 
     // Handle unsolicited tools list (e.g. extension announces on connect)
     if (message.type === 'tools_list') {
-      this.tools = message.data as unknown[];
-      this.stopToolsSyncLoop();
-      this.broadcastToAgents({ type: 'tools_list', data: this.tools });
+      session.tools = message.data as unknown[];
+      this.stopToolsSyncLoop(session);
+      this.broadcastToAgents({ type: 'tools_list', data: session.tools, sessionId: session.sessionId });
+      this.broadcastSessionState();
       return;
     }
 
     // Broadcast other messages to all agents
-    this.broadcastToAgents(message);
+    this.broadcastToAgents({ ...message, sessionId: session.sessionId });
   }
 
   /**
@@ -336,14 +343,31 @@ export class RelayServer extends EventEmitter {
   private handleAgentMessage(agentId: string, message: ServerMessage): void {
     this.log(`Agent ${agentId} message: ${message.type}`);
 
-    if (!this.extensionWs) {
+    if (message.type === 'list_sessions') {
+      const agent = this.agents.get(agentId);
+      if (agent && message.requestId) {
+        agent.ws.send(JSON.stringify({
+          type: 'sessions_list',
+          requestId: message.requestId,
+          sessions: this.buildSessionsList(),
+        }));
+      }
+      return;
+    }
+
+    const requestedSessionId = typeof message.data?.sessionId === 'string' ? message.data.sessionId : undefined;
+    const targetSession = this.resolveTargetSession(requestedSessionId);
+
+    if (!targetSession) {
       // No extension connected, send error back
       const agent = this.agents.get(agentId);
       if (agent && message.requestId) {
         agent.ws.send(JSON.stringify({
           type: 'error',
           requestId: message.requestId,
-          error: 'No extension connected',
+          error: requestedSessionId
+            ? `No browser session connected for sessionId=${requestedSessionId}`
+            : 'No extension connected',
         }));
       }
       return;
@@ -351,9 +375,14 @@ export class RelayServer extends EventEmitter {
 
     // Generate relay request ID
     const relayRequestId = `relay_${++this.requestIdCounter}`;
+    const cleanData = message.data ? { ...message.data } : undefined;
+    if (cleanData && 'sessionId' in cleanData) {
+      delete cleanData.sessionId;
+    }
     const forwardMessage: ServerMessage = {
       ...message,
       requestId: relayRequestId,
+      ...(cleanData ? { data: cleanData } : {}),
     };
 
     // Store pending request mapping so it can be replayed if the extension
@@ -363,20 +392,21 @@ export class RelayServer extends EventEmitter {
       originalRequestId: message.requestId,
       lastSentAt: Date.now(),
       forwardMessage,
+      sessionId: targetSession.sessionId,
     });
 
     // Forward to extension with relay request ID
-    this.extensionWs.send(JSON.stringify(forwardMessage));
+    targetSession.ws.send(JSON.stringify(forwardMessage));
   }
 
   /**
    * Request tools list from extension
    */
-  private requestToolsFromExtension(): void {
-    if (!this.extensionWs) return;
+  private requestToolsFromExtension(session: ExtensionSession): void {
+    if (session.ws.readyState !== WebSocket.OPEN) return;
 
     const requestId = `relay_${++this.requestIdCounter}`;
-    this.extensionWs.send(JSON.stringify({
+    session.ws.send(JSON.stringify({
       type: 'list_tools',
       requestId,
     }));
@@ -389,16 +419,19 @@ export class RelayServer extends EventEmitter {
    * same relay request ID lets us survive a transient socket swap without
    * dropping the original MCP call or double-running it under normal reconnects.
    */
-  private replayPendingRequests(targetWs: WebSocket): void {
+  private replayPendingRequests(session: ExtensionSession): void {
     if (this.pendingRequests.size === 0) return;
-    if (targetWs.readyState !== WebSocket.OPEN) return;
+    if (session.ws.readyState !== WebSocket.OPEN) return;
 
-    this.log(`Replaying ${this.pendingRequests.size} pending request(s) on replacement connection`);
+    const pendingForSession = [...this.pendingRequests.entries()].filter(([, pending]) => pending.sessionId === session.sessionId);
+    if (pendingForSession.length === 0) return;
 
-    for (const [relayRequestId, pending] of this.pendingRequests) {
+    this.log(`Replaying ${pendingForSession.length} pending request(s) on replacement connection for ${session.sessionId}`);
+
+    for (const [relayRequestId, pending] of pendingForSession) {
       pending.lastSentAt = Date.now();
       try {
-        targetWs.send(JSON.stringify(pending.forwardMessage));
+        session.ws.send(JSON.stringify(pending.forwardMessage));
       } catch (error) {
         this.log(`Failed to replay ${relayRequestId}: ${error}`);
       }
@@ -408,22 +441,22 @@ export class RelayServer extends EventEmitter {
   /**
    * Keep requesting tools until extension responds with tools_list.
    */
-  private startToolsSyncLoop(): void {
-    this.stopToolsSyncLoop();
-    this.requestToolsFromExtension();
-    this.toolsSyncTimer = setInterval(() => {
-      if (!this.extensionWs) {
-        this.stopToolsSyncLoop();
+  private startToolsSyncLoop(session: ExtensionSession): void {
+    this.stopToolsSyncLoop(session);
+    this.requestToolsFromExtension(session);
+    session.toolsSyncTimer = setInterval(() => {
+      if (session.ws.readyState !== WebSocket.OPEN) {
+        this.stopToolsSyncLoop(session);
         return;
       }
-      this.requestToolsFromExtension();
+      this.requestToolsFromExtension(session);
     }, 1_000);
   }
 
-  private stopToolsSyncLoop(): void {
-    if (this.toolsSyncTimer) {
-      clearInterval(this.toolsSyncTimer);
-      this.toolsSyncTimer = null;
+  private stopToolsSyncLoop(session: ExtensionSession): void {
+    if (session.toolsSyncTimer) {
+      clearInterval(session.toolsSyncTimer);
+      session.toolsSyncTimer = null;
     }
   }
 
@@ -467,12 +500,17 @@ export class RelayServer extends EventEmitter {
     }
     this.agents.clear();
 
-    // Close extension connection
-    if (this.extensionWs) {
-      this.extensionWs.close();
-      this.extensionWs = null;
+    // Close extension connections
+    for (const session of this.extensionSessions.values()) {
+      try {
+        session.ws.close();
+      } catch (error) {
+        // Ignore
+      }
+      this.stopToolsSyncLoop(session);
     }
-    this.stopToolsSyncLoop();
+    this.extensionSessions.clear();
+    this.socketToSessionId.clear();
 
     // Close servers
     if (this.agentWss) {
@@ -505,6 +543,145 @@ export class RelayServer extends EventEmitter {
       fs.appendFileSync(LOG_FILE, line + '\n');
     } catch (error) {
       // Ignore log errors
+    }
+  }
+
+  private ensureSessionForSocket(ws: WebSocket, message: ExtensionMessage): ExtensionSession | null {
+    const existingSessionId = this.socketToSessionId.get(ws);
+    if (existingSessionId) {
+      return this.extensionSessions.get(existingSessionId) || null;
+    }
+
+    const announcedSessionId = this.extractAnnouncedSessionId(message) || `session_${++this.anonymousSessionCounter}`;
+    const existing = this.extensionSessions.get(announcedSessionId);
+
+    if (existing) {
+      const previousWs = existing.ws;
+      if (previousWs !== ws) {
+        this.log(`Extension session ${announcedSessionId} reconnecting, replacing previous socket`);
+        this.socketToSessionId.delete(previousWs);
+        existing.ws = ws;
+        existing.connectedAt = Date.now();
+        this.socketToSessionId.set(ws, announcedSessionId);
+        this.broadcastSessionState();
+        this.startToolsSyncLoop(existing);
+        this.replayPendingRequests(existing);
+        try {
+          previousWs.close();
+        } catch (error) {
+          // ignore close errors on replaced sockets
+        }
+      }
+      return existing;
+    }
+
+    const session: ExtensionSession = {
+      ws,
+      sessionId: announcedSessionId,
+      connectedAt: Date.now(),
+      tools: [],
+      toolsSyncTimer: null,
+    };
+    this.extensionSessions.set(announcedSessionId, session);
+    this.socketToSessionId.set(ws, announcedSessionId);
+    this.broadcastSessionState();
+    this.startToolsSyncLoop(session);
+    return session;
+  }
+
+  private extractAnnouncedSessionId(message: ExtensionMessage): string | undefined {
+    if (typeof message.sessionId === 'string' && message.sessionId.trim().length > 0) {
+      return message.sessionId.trim();
+    }
+    if (message.data && typeof message.data === 'object') {
+      const candidate = (message.data as Record<string, unknown>).sessionId;
+      if (typeof candidate === 'string' && candidate.trim().length > 0) {
+        return candidate.trim();
+      }
+    }
+    return undefined;
+  }
+
+  private buildSessionsList(): RelaySessionSummary[] {
+    return [...this.extensionSessions.values()].map((session) => ({
+      sessionId: session.sessionId,
+      connected: session.ws.readyState === WebSocket.OPEN,
+      connectedAt: session.connectedAt,
+      toolCount: session.tools.length,
+    }));
+  }
+
+  private getDefaultSession(): ExtensionSession | null {
+    for (const session of this.extensionSessions.values()) {
+      if (session.ws.readyState === WebSocket.OPEN) {
+        return session;
+      }
+    }
+    return null;
+  }
+
+  private resolveTargetSession(requestedSessionId?: string): ExtensionSession | null {
+    if (requestedSessionId) {
+      const session = this.extensionSessions.get(requestedSessionId);
+      if (session && session.ws.readyState === WebSocket.OPEN) {
+        return session;
+      }
+      return null;
+    }
+    return this.getDefaultSession();
+  }
+
+  private sendSessionStateToAgent(ws: WebSocket): void {
+    const sessions = this.buildSessionsList();
+    const defaultSession = this.getDefaultSession();
+    ws.send(JSON.stringify({
+      type: 'sessions_list',
+      sessions,
+      sessionIds: sessions.map((session) => session.sessionId),
+      connected: sessions.some((session) => session.connected),
+      sessionId: defaultSession?.sessionId,
+    }));
+    ws.send(JSON.stringify({
+      type: 'extension_status',
+      connected: sessions.some((session) => session.connected),
+      sessionIds: sessions.map((session) => session.sessionId),
+      sessionId: defaultSession?.sessionId,
+    }));
+  }
+
+  private broadcastSessionState(): void {
+    const sessions = this.buildSessionsList();
+    const defaultSession = this.getDefaultSession();
+    this.broadcastToAgents({
+      type: 'sessions_list',
+      sessions,
+      sessionIds: sessions.map((session) => session.sessionId),
+      connected: sessions.some((session) => session.connected),
+      sessionId: defaultSession?.sessionId,
+    });
+    this.broadcastToAgents({
+      type: 'extension_status',
+      connected: sessions.some((session) => session.connected),
+      sessionIds: sessions.map((session) => session.sessionId),
+      sessionId: defaultSession?.sessionId,
+    });
+  }
+
+  private rejectPendingRequestsForSession(sessionId: string, errorMessage: string): void {
+    for (const [relayId, pending] of this.pendingRequests) {
+      if (pending.sessionId !== sessionId) {
+        continue;
+      }
+      this.pendingRequests.delete(relayId);
+      const agent = this.agents.get(pending.agentId);
+      if (agent && agent.ws.readyState === WebSocket.OPEN) {
+        agent.ws.send(JSON.stringify({
+          type: 'error',
+          requestId: pending.originalRequestId,
+          error: errorMessage,
+          sessionId,
+        }));
+      }
     }
   }
 }

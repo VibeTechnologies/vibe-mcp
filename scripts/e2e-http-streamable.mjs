@@ -19,6 +19,7 @@ RESERVED_PORTS.add(MCP_HTTP_PORT);
 const RELAY_PORT = configuredRelayPort ?? await findFreePort(RESERVED_PORTS);
 const RELAY_URL = `ws://${RELAY_HOST}:${RELAY_PORT}`;
 const REMOTE_UUID = 'test-http-relay-uuid';
+const SESSION_ID = REMOTE_UUID;
 const MCP_URL = `http://${RELAY_HOST}:${MCP_HTTP_PORT}/mcp`;
 
 function getConfiguredPort(...names) {
@@ -126,6 +127,7 @@ async function main() {
           return;
         }
         ws.send(JSON.stringify({ type: 'extension_status', connected: true }));
+        ws.send(JSON.stringify({ type: 'connected', sessionId: SESSION_ID }));
         resolve(ws);
       });
     });

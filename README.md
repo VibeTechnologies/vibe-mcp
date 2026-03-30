@@ -279,6 +279,7 @@ For the full walkthrough, see `docs/openclaw-local-browser.md`.
 `vibebrowser-cli` mirrors the OpenClaw browser CLI shape for the real local-browser path:
 
 ```bash
+npx -y --package @vibebrowser/mcp vibebrowser-cli sessions
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> status
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> tabs
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> open https://example.com
@@ -293,6 +294,13 @@ The package now exposes two executables:
 - `vibebrowser-cli` for OpenClaw-inspired browser control against the real Vibe-connected session
 
 `vibebrowser-cli` accepts the OpenClaw-style `--browser-profile` flag for compatibility and supports `--json` for machine-readable output. Unlike OpenClaw's managed `openclaw` browser profile, this CLI always targets the real Vibe-connected browser session.
+
+Local-session selection:
+
+- `vibebrowser-cli sessions` lists connected local browser sessions.
+- `vibebrowser-cli --session <id> ...` targets a specific local session.
+- If `--session` is omitted in local mode, the CLI uses the first connected session.
+- In remote mode, `--remote <extension-uuid>` remains the explicit browser selector.
 
 Snapshot behavior is tool-only (no legacy snapshot RPC shortcut):
 

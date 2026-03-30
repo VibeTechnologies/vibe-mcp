@@ -60,6 +60,7 @@ const TOOLS = [
   tool('take_a11y_snapshot', { pageId: { type: 'number' }, selector: { type: 'string' }, frameSelector: { type: 'string' } }),
 ];
 
+
 let wss;
 
 try {
@@ -71,6 +72,12 @@ try {
     }
 
     ws.send(JSON.stringify({ type: 'extension_status', connected: true }));
+    ws.send(JSON.stringify({
+      type: 'sessions_list',
+      connected: true,
+      sessionId: REMOTE_UUID,
+      sessions: [{ sessionId: REMOTE_UUID, connected: true, connectedAt: Date.now(), toolCount: TOOLS.length }],
+    }));
 
     ws.on('message', (raw) => {
       const message = JSON.parse(raw.toString());
@@ -79,6 +86,17 @@ try {
           type: 'tools_list',
           requestId: message.requestId,
           data: TOOLS,
+        }));
+        return;
+      }
+
+      if (message.type === 'list_sessions') {
+        ws.send(JSON.stringify({
+          type: 'sessions_list',
+          requestId: message.requestId,
+          connected: true,
+          sessionId: REMOTE_UUID,
+          sessions: [{ sessionId: REMOTE_UUID, connected: true, connectedAt: Date.now(), toolCount: TOOLS.length }],
         }));
         return;
       }
@@ -116,6 +134,11 @@ try {
   assert(status.ok === true, `status failed: ${JSON.stringify(status)}`);
   assert(status.extensionConnected === true, `expected extension connected: ${JSON.stringify(status)}`);
   assert(Number(status.toolCount) >= 10, `expected toolCount >= 10: ${JSON.stringify(status)}`);
+  assert(status.sessionId === REMOTE_UUID, `expected status sessionId=${REMOTE_UUID}: ${JSON.stringify(status)}`);
+
+  const sessions = await runCli(['sessions']);
+  assert(Array.isArray(sessions.sessions) && sessions.sessions.length === 1, `sessions missing session list: ${JSON.stringify(sessions)}`);
+  assert(sessions.sessions[0].sessionId === REMOTE_UUID, `wrong remote session id: ${JSON.stringify(sessions)}`);
 
   const tabs = await runCli(['tabs']);
   assert(Array.isArray(tabs.pages) && tabs.pages.length === 2, `tabs missing pages: ${JSON.stringify(tabs)}`);

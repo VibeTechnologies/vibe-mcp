@@ -34,26 +34,37 @@ export type ServerTransportMode = 'stdio' | 'http';
  */
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
+export interface RelaySessionSummary {
+  sessionId: string;
+  connected: boolean;
+  connectedAt?: number;
+  toolCount?: number;
+}
+
 /**
  * Message from extension to MCP server
  */
 export interface ExtensionMessage {
-  type: 'connected' | 'disconnected' | 'tool_result' | 'tools_list' | 'error' | 'extension_status' | 'extension_disconnected';
+  type: 'connected' | 'disconnected' | 'tool_result' | 'tools_list' | 'error' | 'extension_status' | 'extension_disconnected' | 'sessions_list';
   requestId?: string;
   data?: unknown;
   error?: string;
   connected?: boolean;
+  sessionId?: string;
+  sessionIds?: string[];
+  sessions?: RelaySessionSummary[];
 }
 
 /**
  * Message from MCP server to extension
  */
 export interface ServerMessage {
-  type: 'list_tools' | 'call_tool' | 'ping';
+  type: 'list_tools' | 'call_tool' | 'ping' | 'list_sessions';
   requestId: string;
   data?: {
     name?: string;
     arguments?: Record<string, unknown>;
+    sessionId?: string;
   };
 }
 
@@ -112,6 +123,8 @@ export interface ServerConfig {
   allowedHosts?: string[];
   /** Remote relay UUID — when set, connects to public relay instead of local */
   remoteUuid?: string;
+  /** Local relay session ID — when set, targets a specific connected browser session */
+  sessionId?: string;
   /** Remote relay URL — defaults to wss://relay.api.vibebrowser.app */
   remoteRelayUrl?: string;
 }

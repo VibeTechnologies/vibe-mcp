@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
 import { ExtensionConnection } from './connection.js';
-import { DEFAULT_WS_PORT, type ToolDefinition, type ToolResult } from './types.js';
+import { DEFAULT_WS_PORT, type RelaySessionSummary, type ToolDefinition, type ToolResult } from './types.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** Short timeout for the `status` command — it should never block for 30 s. */
@@ -21,6 +21,7 @@ interface BrowserCommandOptions {
   port: string;
   debug: boolean;
   remote?: string;
+  session?: string;
   relayUrl?: string;
   json: boolean;
   timeout: string;
@@ -48,6 +49,9 @@ interface CommandOutput {
   command: string;
   profile: string;
   mode: 'local' | 'remote';
+  sessionId?: string;
+  requestedSessionId?: string;
+  sessions?: RelaySessionSummary[];
   ignoredCompatibilityOptions?: string[];
   [key: string]: unknown;
 }
@@ -62,6 +66,7 @@ interface CommandContextInit {
   port: number;
   debug: boolean;
   remoteUuid?: string;
+  sessionId?: string;
   relayUrl?: string;
   profile: string;
   json: boolean;
@@ -95,6 +100,7 @@ function buildBrowserCommand(command: Command): Command {
     .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
     .option('-d, --debug', 'Enable debug logging', false)
     .option('-r, --remote <uuid>', 'Connect to a remote extension via public relay (provide the extension UUID)', DEFAULT_REMOTE_UUID)
+    .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
     .option('--relay-url <url>', 'Custom relay server URL', DEFAULT_REMOTE_RELAY_URL)
     .option('--json', 'Emit machine-readable JSON output', false)
     .option('--timeout <ms>', 'Command timeout in milliseconds', String(DEFAULT_TIMEOUT_MS))
@@ -138,6 +144,13 @@ function registerBrowserSubcommands(browser: Command): void {
         managedLifecycle: false,
         note: 'The Vibe browser bridge does not own the browser process, so stop only disconnects this CLI session',
       }));
+    });
+
+  browser
+    .command('sessions')
+    .description('List connected browser sessions')
+    .action(async function (this: Command) {
+      await runBrowserCommand(this, 'sessions', false, async (ctx) => ctx.listSessions());
     });
 
   browser
@@ -398,6 +411,7 @@ async function runBrowserCommand(
     port: parsePositiveInteger(globalOptions.port, '--port'),
     debug: Boolean(globalOptions.debug),
     remoteUuid: globalOptions.remote,
+    sessionId: globalOptions.session,
     relayUrl: globalOptions.relayUrl,
     profile: globalOptions.browserProfile || DEFAULT_BROWSER_PROFILE,
     json: Boolean(globalOptions.json),
@@ -428,10 +442,12 @@ class BrowserCliContext {
   private readonly json: boolean;
   private readonly timeoutMs: number;
   private readonly remoteUuid?: string;
+  private readonly requestedSessionId?: string;
   private readonly target?: string;
   private readonly pageId?: number;
   private toolsLoaded = false;
   private tools: ToolDefinition[] = [];
+  private sessions: RelaySessionSummary[] = [];
   private readonly ignoredCompatibilityOptions: string[];
 
   constructor(init: CommandContextInit) {
@@ -439,11 +455,13 @@ class BrowserCliContext {
       init.port,
       init.debug,
       init.remoteUuid ? { uuid: init.remoteUuid, relayUrl: init.relayUrl } : undefined,
+      init.remoteUuid ? undefined : { sessionId: init.sessionId },
     );
     this.profile = init.profile;
     this.json = init.json;
     this.timeoutMs = init.timeoutMs;
     this.remoteUuid = init.remoteUuid;
+    this.requestedSessionId = init.sessionId;
     this.target = init.target;
     this.pageId = init.pageId;
     this.ignoredCompatibilityOptions = [];
@@ -455,6 +473,7 @@ class BrowserCliContext {
   async connect(): Promise<void> {
     await this.connection.start();
     await delay(100);
+    this.sessions = await this.connection.listSessions(1_500).catch(() => this.connection.getSessions());
     await this.connection.waitForToolsUpdate(500);
   }
 
@@ -466,13 +485,29 @@ class BrowserCliContext {
     if (this.connection.isExtensionConnected()) {
       return;
     }
+    this.sessions = await this.connection.listSessions(1_500).catch(() => this.connection.getSessions());
     await this.ensureToolsLoaded();
     if (!this.connection.isExtensionConnected()) {
       throw new Error('No browser extension is connected to the Vibe relay');
     }
   }
 
+  async listSessions(): Promise<CommandOutput> {
+    this.sessions = await this.connection.listSessions(this.timeoutMs);
+    return {
+      ok: true,
+      command: 'sessions',
+      profile: this.profile,
+      mode: this.mode(),
+      ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
+      sessionId: this.currentSessionId(),
+      requestedSessionId: this.requestedSessionId,
+      sessions: this.sessions,
+    };
+  }
+
   async status(): Promise<CommandOutput> {
+    this.sessions = await this.connection.listSessions(STATUS_TOOLS_TIMEOUT_MS).catch(() => this.connection.getSessions());
     if (this.connection.isExtensionConnected()) {
       // Use a short timeout for status — this is a diagnostic command that
       // should return quickly.  Fall back to cached tools if the extension
@@ -485,6 +520,9 @@ class BrowserCliContext {
       command: 'status',
       profile: this.profile,
       mode: this.remoteUuid ? 'remote' : 'local',
+      sessionId: this.currentSessionId(),
+      requestedSessionId: this.requestedSessionId,
+      sessions: this.sessions,
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       relayConnected: this.connection.getStatus() === 'connected',
       extensionConnected: this.connection.isExtensionConnected(),
@@ -509,6 +547,8 @@ class BrowserCliContext {
       command: 'tabs',
       profile: this.profile,
       mode: this.mode(),
+      sessionId: this.currentSessionId(),
+      requestedSessionId: this.requestedSessionId,
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       tool: invocation.tool,
       pages,
@@ -988,6 +1028,8 @@ class BrowserCliContext {
       command: commandName,
       profile: this.profile,
       mode: this.mode(),
+      sessionId: this.currentSessionId(),
+      requestedSessionId: this.requestedSessionId,
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       tool: invocation.tool,
       ...(looksLikePageContentText(pageContent) ? { pageContent } : {}),
@@ -1066,6 +1108,8 @@ class BrowserCliContext {
       command: commandName,
       profile: this.profile,
       mode: this.mode(),
+      sessionId: this.currentSessionId(),
+      requestedSessionId: this.requestedSessionId,
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       tool: 'take_md_snapshot',
       recoveredFromTimeout: true,
@@ -1161,6 +1205,16 @@ class BrowserCliContext {
 
   private mode(): 'local' | 'remote' {
     return this.remoteUuid ? 'remote' : 'local';
+  }
+
+  private currentSessionId(): string | undefined {
+    if (this.remoteUuid) {
+      return this.remoteUuid;
+    }
+    if (this.requestedSessionId) {
+      return this.requestedSessionId;
+    }
+    return this.sessions.find((session) => session.connected)?.sessionId;
   }
 }
 
@@ -1363,21 +1417,38 @@ function formatHumanOutput(commandName: string, output: CommandOutput): string {
       return [
         `Profile: ${String(output.profile)}`,
         `Mode: ${String(output.mode)}`,
+        output.sessionId ? `Session: ${String(output.sessionId)}` : null,
+        output.requestedSessionId && output.requestedSessionId !== output.sessionId ? `Requested session: ${String(output.requestedSessionId)}` : null,
         `Relay connected: ${boolText(output.relayConnected)}`,
         `Extension connected: ${boolText(output.extensionConnected)}`,
         `Managed lifecycle: ${boolText(output.managedLifecycle)}`,
         output.toolCount !== undefined ? `Tools: ${String(output.toolCount)}` : null,
         output.note ? String(output.note) : null,
       ].filter(Boolean).join('\n');
+    case 'sessions': {
+      const sessions = Array.isArray(output.sessions) ? output.sessions as RelaySessionSummary[] : [];
+      if (sessions.length === 0) {
+        return 'No browser sessions connected';
+      }
+      return sessions.map((session, index) => {
+        const selected = output.sessionId === session.sessionId ? ' [selected]' : '';
+        const connected = session.connected ? 'connected' : 'disconnected';
+        const tools = session.toolCount !== undefined ? ` tools=${session.toolCount}` : '';
+        return `${index + 1}. ${session.sessionId}${selected} - ${connected}${tools}`;
+      }).join('\n');
+    }
     case 'tabs':
     case 'tab': {
       const pages = Array.isArray(output.pages) ? output.pages as PageSummary[] : [];
       if (pages.length === 0) {
         return firstDefinedText(output.raw, 'No tabs reported by browser');
       }
-      return pages.map((page, index) =>
+      return [
+        output.sessionId ? `Session: ${String(output.sessionId)}` : null,
+        ...pages.map((page, index) =>
         `${index + 1}. ${page.active ? '[active] ' : ''}${page.title || '(untitled)'}${page.url ? ` — ${page.url}` : ''}${page.id !== undefined ? ` [id=${page.id}]` : ''}`
-      ).join('\n');
+      ),
+      ].filter(Boolean).join('\n');
     }
     case 'snapshot':
       return [

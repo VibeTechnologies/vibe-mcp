@@ -64,6 +64,7 @@ export class VibeMcpServer {
       httpPath: normalizeHttpPath(config.httpPath ?? DEFAULT_HTTP_PATH),
       allowedHosts: config.allowedHosts,
       remoteUuid: config.remoteUuid,
+      sessionId: config.sessionId,
       remoteRelayUrl: config.remoteRelayUrl,
     };
 
@@ -71,7 +72,12 @@ export class VibeMcpServer {
       ? { uuid: this.config.remoteUuid, relayUrl: this.config.remoteRelayUrl }
       : undefined;
 
-    this.connection = new ExtensionConnection(this.config.port, this.config.debug, remoteConfig);
+    this.connection = new ExtensionConnection(
+      this.config.port,
+      this.config.debug,
+      remoteConfig,
+      this.config.remoteUuid ? undefined : { sessionId: this.config.sessionId },
+    );
     this.setupConnectionEvents();
   }
 

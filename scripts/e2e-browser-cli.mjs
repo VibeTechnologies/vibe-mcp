@@ -23,6 +23,9 @@ const TEST_DIR = mkdtempSync(join(tmpdir(), 'vibe-mcp-browser-cli-'));
 const SCREENSHOT_PATH = join(TEST_DIR, 'shot.png');
 let packedPackageDir = null;
 let cliInvocation = null;
+let forceSnapshotTimeout = false;
+let delayToolResultMs = 0;
+let missingPageIdMode = false;
 
 const ONE_PIXEL_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W6n8AAAAASUVORK5CYII=';
@@ -82,6 +85,10 @@ try {
       }
 
       if (message.type === 'get_snapshot') {
+        if (forceSnapshotTimeout) {
+          // Intentionally do not respond to exercise client timeout/fallback.
+          return;
+        }
         ws.send(JSON.stringify({
           type: 'snapshot',
           requestId: message.requestId,
@@ -95,11 +102,30 @@ try {
       }
 
       if (message.type === 'call_tool') {
-        ws.send(JSON.stringify({
-          type: 'tool_result',
-          requestId: message.requestId,
-          data: handleToolCall(message.data?.name, message.data?.arguments ?? {}),
-        }));
+        if (
+          missingPageIdMode
+          && message.data?.name === 'navigate_page'
+          && message.data?.arguments?.pageId === undefined
+        ) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            requestId: message.requestId,
+            error: 'Missing required pageId',
+          }));
+          return;
+        }
+        const send = () => {
+          ws.send(JSON.stringify({
+            type: 'tool_result',
+            requestId: message.requestId,
+            data: handleToolCall(message.data?.name, message.data?.arguments ?? {}),
+          }));
+        };
+        if (delayToolResultMs > 0) {
+          setTimeout(send, delayToolResultMs);
+        } else {
+          send();
+        }
       }
     });
   });
@@ -149,6 +175,11 @@ try {
   assert(clickedWithPage.ok === true && clickedWithPage.tool === 'click', `click with --page-id failed: ${JSON.stringify(clickedWithPage)}`);
   assert(clickedWithPage.raw?.pageId === 2, `--page-id 2 should inject pageId=2: ${JSON.stringify(clickedWithPage.raw)}`);
 
+  // --pageId alias should behave the same as --page-id
+  const clickedWithPageAlias = await runCli(['--pageId', '4', 'click', '12']);
+  assert(clickedWithPageAlias.ok === true && clickedWithPageAlias.tool === 'click', `click with --pageId failed: ${JSON.stringify(clickedWithPageAlias)}`);
+  assert(clickedWithPageAlias.raw?.pageId === 4, `--pageId 4 should inject pageId=4: ${JSON.stringify(clickedWithPageAlias.raw)}`);
+
   const typed = await runCli(['type', '23', 'hello world', '--submit']);
   assert(typed.ok === true && typed.tool === 'fill', `type failed: ${JSON.stringify(typed)}`);
 
@@ -197,6 +228,25 @@ try {
     `snapshot without --page-id should use get_snapshot (no tool field), got tool: ${snapshotNoPage.tool}`);
   assert(String(snapshotNoPage.snapshot).includes('More information'),
     `snapshot without --page-id content mismatch: ${JSON.stringify(snapshotNoPage)}`);
+
+  // #907: if get_snapshot path times out, snapshot should gracefully fall
+  // back to tool-call extraction instead of failing immediately.
+  forceSnapshotTimeout = true;
+  const snapshotFallback = await runCli(['--timeout', '200', 'snapshot']);
+  forceSnapshotTimeout = false;
+  assert(snapshotFallback.ok === true, `snapshot fallback failed: ${JSON.stringify(snapshotFallback)}`);
+  assert(snapshotFallback.tool === 'take_md_snapshot',
+    `snapshot timeout fallback should use take_md_snapshot, got: ${snapshotFallback.tool}`);
+
+  // #907: --timeout should control actual tool-call timeout budget.
+  delayToolResultMs = 800;
+  await expectCliFailure(['--timeout', '200', 'snapshot', '--format', 'aria'], /Request timed out after 200ms/);
+  delayToolResultMs = 0;
+
+  // Missing required pageId should include actionable hint.
+  missingPageIdMode = true;
+  await expectCliFailure(['navigate', 'https://example.com'], /Hint: use `tabs` to list pages, then pass --page-id <id> to target a specific tab\./);
+  missingPageIdMode = false;
 
   console.log('browser cli e2e ok');
 } finally {
@@ -363,6 +413,16 @@ async function runCli(args) {
     return JSON.parse(stdout);
   } catch (error) {
     throw new Error(`CLI did not emit JSON for ${args.join(' ')}: ${stdout}\nstderr=${stderr}\n${error}`);
+  }
+}
+
+async function expectCliFailure(args, pattern) {
+  try {
+    await runCli(args);
+    throw new Error(`Expected command to fail but it succeeded: ${args.join(' ')}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    assert(pattern.test(message), `Expected failure matching ${pattern}, got:\n${message}`);
   }
 }
 

@@ -98,7 +98,8 @@ function buildBrowserCommand(command: Command): Command {
     .option('--relay-url <url>', 'Custom relay server URL', DEFAULT_REMOTE_RELAY_URL)
     .option('--json', 'Emit machine-readable JSON output', false)
     .option('--timeout <ms>', 'Command timeout in milliseconds', String(DEFAULT_TIMEOUT_MS))
-    .option('--page-id <id>', 'Target a specific page/tab by its numeric ID (avoids switching the user\'s active tab)');
+    .option('--page-id <id>', 'Target a specific page/tab by its numeric ID (avoids switching the user\'s active tab)')
+    .option('--pageId <id>', 'Alias for --page-id');
 }
 
 function registerBrowserSubcommands(browser: Command): void {
@@ -599,18 +600,27 @@ class BrowserCliContext {
     // The get_snapshot protocol message does not accept pageId, so when
     // --page-id is set we must use the tool-call path instead.
     if (!wantsAria && this.pageId === undefined) {
-      const result = await this.connection.getSnapshot(this.timeoutMs);
-      return {
-        ok: true,
-        command: 'snapshot',
-        profile: this.profile,
-        mode: this.mode(),
-        ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
-        format: options.format,
-        url: result.url,
-        title: result.title,
-        snapshot: limitText(result.snapshot, options.limit),
-      };
+      try {
+        const result = await this.connection.getSnapshot(this.timeoutMs);
+        return {
+          ok: true,
+          command: 'snapshot',
+          profile: this.profile,
+          mode: this.mode(),
+          ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
+          format: options.format,
+          url: result.url,
+          title: result.title,
+          snapshot: limitText(result.snapshot, options.limit),
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // If get_snapshot times out (common on heavy pages), fall through to
+        // the tool-call path which can use take_md_snapshot / take_a11y_snapshot.
+        if (!/(timed out|timeout)/i.test(message)) {
+          throw error;
+        }
+      }
     }
 
     const invocation = await this.callTool(

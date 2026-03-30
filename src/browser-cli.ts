@@ -521,40 +521,58 @@ class BrowserCliContext {
       return this.callGenericCommand('open', [{ names: ['new_page', 'create_new_tab'] }], {});
     }
 
-    const invocation = await this.callTool(
-      'open',
-      [
-        {
-          names: ['new_page', 'create_new_tab'],
-          buildArgs: (tool) => withUrlArgs(tool, url),
-        },
-        {
-          names: ['navigate_page', 'navigate_to_url'],
-          buildArgs: (tool) => withNavigateArgs(tool, url),
-        },
-      ],
-      {}
-    );
+    try {
+      const invocation = await this.callTool(
+        'open',
+        [
+          {
+            names: ['new_page', 'create_new_tab'],
+            buildArgs: (tool) => withUrlArgs(tool, url),
+          },
+          {
+            names: ['navigate_page', 'navigate_to_url'],
+            buildArgs: (tool) => withNavigateArgs(tool, url),
+          },
+        ],
+        {}
+      );
 
-    return this.outputFromInvocation('open', invocation);
+      const output = this.outputFromInvocation('open', invocation);
+      return this.ensurePageContentInOutput('open', invocation, output);
+    } catch (error) {
+      const recovered = await this.recoverPageContentAfterTimeout('open', url, error);
+      if (recovered) {
+        return recovered;
+      }
+      throw error;
+    }
   }
 
   async navigate(url: string): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'navigate',
-      [
-        {
-          names: ['navigate_page', 'navigate_to_url'],
-          buildArgs: (tool) => withNavigateArgs(tool, url),
-        },
-        {
-          names: ['new_page', 'create_new_tab'],
-          buildArgs: (tool) => withUrlArgs(tool, url),
-        },
-      ],
-      {}
-    );
-    return this.outputFromInvocation('navigate', invocation);
+    try {
+      const invocation = await this.callTool(
+        'navigate',
+        [
+          {
+            names: ['navigate_page', 'navigate_to_url'],
+            buildArgs: (tool) => withNavigateArgs(tool, url),
+          },
+          {
+            names: ['new_page', 'create_new_tab'],
+            buildArgs: (tool) => withUrlArgs(tool, url),
+          },
+        ],
+        {}
+      );
+      const output = this.outputFromInvocation('navigate', invocation);
+      return this.ensurePageContentInOutput('navigate', invocation, output);
+    } catch (error) {
+      const recovered = await this.recoverPageContentAfterTimeout('navigate', url, error);
+      if (recovered) {
+        return recovered;
+      }
+      throw error;
+    }
   }
 
   async close(id: string): Promise<CommandOutput> {
@@ -924,6 +942,12 @@ class BrowserCliContext {
             args[pageKey] = this.pageId;
           }
         }
+        if (shouldRequestPageStateForCommand(commandName)) {
+          const pageStateKey = hasProperty(tool, 'pageStateFormat', 'page_state_format');
+          if (pageStateKey && !('pageStateFormat' in args) && !('page_state_format' in args)) {
+            args[pageStateKey] = 'markdown';
+          }
+        }
         const result = await this.connection.callTool(tool.name, args, this.timeoutMs);
         return { tool: tool.name, args, result: result as ToolResult & Record<string, unknown> };
       }
@@ -958,6 +982,7 @@ class BrowserCliContext {
   }
 
   private outputFromInvocation(commandName: string, invocation: InvocationResult): CommandOutput {
+    const pageContent = firstText(invocation.result);
     return {
       ok: !invocation.result.isError,
       command: commandName,
@@ -965,8 +990,135 @@ class BrowserCliContext {
       mode: this.mode(),
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       tool: invocation.tool,
+      ...(looksLikePageContentText(pageContent) ? { pageContent } : {}),
       raw: normalizeToolResult(invocation.result),
     };
+  }
+
+  private async ensurePageContentInOutput(
+    commandName: 'open' | 'navigate',
+    invocation: InvocationResult,
+    output: CommandOutput,
+  ): Promise<CommandOutput> {
+    if (!output.ok) {
+      return output;
+    }
+
+    const currentText = firstText(invocation.result);
+    if (looksLikePageContentText(currentText)) {
+      return output;
+    }
+
+    const targetPageId = extractPageIdFromResult(invocation.result) ?? this.pageId;
+    if (targetPageId === undefined) {
+      return output;
+    }
+
+    const fallbackContent = await this.takeMarkdownSnapshotForPage(targetPageId);
+    if (!fallbackContent) {
+      return output;
+    }
+
+    return {
+      ...output,
+      pageContent: fallbackContent,
+      pageContentSource: 'take_md_snapshot',
+    };
+  }
+
+  private async recoverPageContentAfterTimeout(
+    commandName: 'open' | 'navigate',
+    url: string,
+    error: unknown,
+  ): Promise<CommandOutput | undefined> {
+    if (!isTimeoutError(error)) {
+      return undefined;
+    }
+
+    const recoveryTimeoutMs = Math.max(this.timeoutMs, 10_000);
+
+    let targetPageId = this.pageId;
+    if (targetPageId === undefined) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const pages = await this.listPagesForRecovery(recoveryTimeoutMs);
+        const matched = findBestPageMatchByUrl(pages, url);
+        if (matched) {
+          targetPageId = matched.id;
+          break;
+        }
+        await delay(750);
+      }
+    }
+
+    if (targetPageId === undefined) {
+      return undefined;
+    }
+
+    const fallbackContent = await this.takeMarkdownSnapshotForPage(targetPageId, recoveryTimeoutMs);
+    if (!fallbackContent) {
+      return undefined;
+    }
+
+    return {
+      ok: true,
+      command: commandName,
+      profile: this.profile,
+      mode: this.mode(),
+      ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
+      tool: 'take_md_snapshot',
+      recoveredFromTimeout: true,
+      pageId: targetPageId,
+      url,
+      pageContent: fallbackContent,
+      raw: {
+        recovery: 'timeout',
+        timeoutError: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+
+  private async listPagesForRecovery(timeoutMs: number): Promise<PageSummary[]> {
+    try {
+      await this.ensureToolsLoaded(timeoutMs);
+      const listTool = this.tools.find((tool) => {
+        const normalized = normalizeName(tool.name);
+        return normalized === 'list_pages' || normalized === 'get_tabs';
+      });
+      if (!listTool) {
+        return [];
+      }
+
+      const result = await this.connection.callTool(listTool.name, {}, timeoutMs);
+      return extractPages(result as ToolResult & Record<string, unknown>);
+    } catch {
+      return [];
+    }
+  }
+
+  private async takeMarkdownSnapshotForPage(pageId: number, timeoutMs: number = this.timeoutMs): Promise<string | undefined> {
+    await this.ensureToolsLoaded();
+    const snapshotTool = this.tools.find((tool) => normalizeName(tool.name) === 'take_md_snapshot');
+    if (!snapshotTool) {
+      return undefined;
+    }
+
+    const args: Record<string, unknown> = {};
+    const pageKey = hasProperty(snapshotTool, 'pageId', 'tabId');
+    if (pageKey) {
+      args[pageKey] = pageId;
+    }
+    const pageStateKey = hasProperty(snapshotTool, 'pageStateFormat', 'page_state_format');
+    if (pageStateKey) {
+      args[pageStateKey] = 'markdown';
+    }
+
+    try {
+      const result = await this.connection.callTool(snapshotTool.name, args, timeoutMs);
+      const text = firstText(result as ToolResult & Record<string, unknown>);
+      return text || undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private mode(): 'local' | 'remote' {
@@ -977,6 +1129,122 @@ class BrowserCliContext {
 interface ToolCandidate {
   names: string[];
   buildArgs?: (tool: ToolDefinition) => Record<string, unknown>;
+}
+
+function shouldRequestPageStateForCommand(commandName: string): boolean {
+  return new Set([
+    'open',
+    'navigate',
+    'click',
+    'type',
+    'press',
+    'hover',
+    'drag',
+    'select',
+    'fill',
+  ]).has(commandName);
+}
+
+function looksLikePageContentText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (/Error retrieving page content/i.test(trimmed) || /page content extraction failed/i.test(trimmed)) {
+    return false;
+  }
+  return /```(?:markdown|text|html)/i.test(trimmed) || /Page State Format:/i.test(trimmed);
+}
+
+function extractPageIdFromResult(result: ToolResult & Record<string, unknown>): number | undefined {
+  const direct = firstDefined(result, ['pageId', 'tabId', 'id']);
+  if (typeof direct === 'number' && Number.isFinite(direct)) {
+    return direct;
+  }
+
+  const parsed = parseResultText(result);
+  if (parsed && typeof parsed === 'object') {
+    const parsedId = firstDefined(parsed as Record<string, unknown>, ['pageId', 'tabId', 'id']);
+    if (typeof parsedId === 'number' && Number.isFinite(parsedId)) {
+      return parsedId;
+    }
+  }
+
+  const text = firstText(result);
+  const createdMatch = /new background page \(ID:\s*(\d+)\)/i.exec(text);
+  if (createdMatch) {
+    return Number.parseInt(createdMatch[1], 10);
+  }
+  const tabMatch = /\bTab ID:\s*(\d+)\b/i.exec(text);
+  if (tabMatch) {
+    return Number.parseInt(tabMatch[1], 10);
+  }
+  const pageMatch = /\bPage ID:\s*(\d+)\b/i.exec(text);
+  if (pageMatch) {
+    return Number.parseInt(pageMatch[1], 10);
+  }
+  return undefined;
+}
+
+function isTimeoutError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /timed out|timeout/i.test(message);
+}
+
+function findBestPageMatchByUrl(pages: PageSummary[], targetUrl: string): { id: number; url?: string } | undefined {
+  const normalizedTarget = normalizeUrlForMatch(targetUrl);
+  let fallback: { id: number; url?: string } | undefined;
+
+  for (const page of pages) {
+    const id = toFinitePageId(page.id);
+    if (id === undefined || typeof page.url !== 'string') {
+      continue;
+    }
+    const normalizedPage = normalizeUrlForMatch(page.url);
+    if (normalizedPage === normalizedTarget) {
+      return { id, url: page.url };
+    }
+    if (!fallback && (normalizedPage.includes(normalizedTarget) || normalizedTarget.includes(normalizedPage))) {
+      fallback = { id, url: page.url };
+    }
+  }
+
+  return fallback;
+}
+
+function toFinitePageId(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function normalizeUrlForMatch(value: string): string {
+  const trimmed = value.trim().replace(/\/$/, '');
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    return safeDecode(`${parsed.origin}${parsed.pathname}${parsed.search}`.replace(/\/$/, ''));
+  } catch {
+    return safeDecode(trimmed);
+  }
+}
+
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 function emitOutput(asJson: boolean, data: CommandOutput, humanOutput: string): void {

@@ -23,6 +23,7 @@ import {
   type ServerConfig,
   type ServerTransportMode,
   type ToolDefinition,
+  type ToolResult,
 } from './types.js';
 import { getPackageVersion } from './version.js';
 
@@ -229,11 +230,13 @@ export class VibeMcpServer {
       const { name, arguments: args } = request.params;
 
       try {
-        const result = await this.connection.callTool(name, args ?? {});
+        const preparedArgs = this.withDefaultPageStateFormat(name, toRecord(args));
+        const result = await this.connection.callTool(name, preparedArgs);
+        const enriched = await this.withFallbackPageContent(name, preparedArgs, result);
 
         return {
-          content: result.content,
-          isError: result.isError,
+          content: enriched.content,
+          isError: enriched.isError,
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -245,6 +248,103 @@ export class VibeMcpServer {
     });
 
     return server;
+  }
+
+  private withDefaultPageStateFormat(name: string, args: Record<string, unknown>): Record<string, unknown> {
+    const tool = this.findToolByName(name);
+    if (!tool) {
+      return args;
+    }
+
+    if (args.pageStateFormat !== undefined || args.page_state_format !== undefined) {
+      return args;
+    }
+
+    const properties = tool.inputSchema.properties ?? {};
+    if (Object.prototype.hasOwnProperty.call(properties, 'pageStateFormat')) {
+      return { ...args, pageStateFormat: 'markdown' };
+    }
+    if (Object.prototype.hasOwnProperty.call(properties, 'page_state_format')) {
+      return { ...args, page_state_format: 'markdown' };
+    }
+    return args;
+  }
+
+  private async withFallbackPageContent(
+    name: string,
+    args: Record<string, unknown>,
+    result: ToolResult,
+  ): Promise<ToolResult> {
+    if (result.isError) {
+      return result;
+    }
+
+    if (!shouldFallbackToSnapshot(name)) {
+      return result;
+    }
+
+    const primaryText = firstToolText(result);
+    if (looksLikePageContentText(primaryText)) {
+      return result;
+    }
+
+    const snapshotText = await this.takeMarkdownSnapshot(extractPageId(args, result));
+    if (!snapshotText) {
+      return result;
+    }
+
+    return {
+      ...result,
+      content: [
+        { type: 'text', text: snapshotText },
+        ...result.content,
+      ],
+    };
+  }
+
+  private async takeMarkdownSnapshot(pageId?: number): Promise<string | undefined> {
+    if (this.connection.getTools().length === 0 && this.connection.isExtensionConnected()) {
+      try {
+        await this.connection.refreshTools(STARTUP_TOOLS_REFRESH_TIMEOUT_MS);
+      } catch {
+        // ignore and continue with cached tools
+      }
+    }
+
+    const snapshotTool = this.findToolByName('take_md_snapshot');
+    if (!snapshotTool) {
+      return undefined;
+    }
+
+    const callArgs: Record<string, unknown> = {};
+    const properties = snapshotTool.inputSchema.properties ?? {};
+
+    if (typeof pageId === 'number' && Number.isFinite(pageId)) {
+      if (Object.prototype.hasOwnProperty.call(properties, 'pageId')) {
+        callArgs.pageId = pageId;
+      } else if (Object.prototype.hasOwnProperty.call(properties, 'tabId')) {
+        callArgs.tabId = pageId;
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(properties, 'pageStateFormat')) {
+      callArgs.pageStateFormat = 'markdown';
+    } else if (Object.prototype.hasOwnProperty.call(properties, 'page_state_format')) {
+      callArgs.page_state_format = 'markdown';
+    }
+
+    try {
+      const snapshot = await this.connection.callTool(snapshotTool.name, callArgs, STARTUP_TOOLS_REFRESH_TIMEOUT_MS);
+      const text = firstToolText(snapshot);
+      return text || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private findToolByName(name: string): ToolDefinition | undefined {
+    const needle = normalizeToolName(name);
+    return this.connection.getTools().find((tool) => normalizeToolName(tool.name) === needle);
   }
 
   /**
@@ -466,6 +566,111 @@ export async function createServer(config?: Partial<ServerConfig>): Promise<Vibe
   const server = new VibeMcpServer(config);
   await server.start();
   return server;
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return { ...(value as Record<string, unknown>) };
+}
+
+function normalizeToolName(value: string): string {
+  return value.replace(/[-\s]/g, '_').toLowerCase();
+}
+
+function shouldFallbackToSnapshot(name: string): boolean {
+  const normalized = normalizeToolName(name);
+  return new Set([
+    'open',
+    'navigate',
+    'new_page',
+    'create_new_tab',
+    'navigate_page',
+    'navigate_to_url',
+    'click',
+    'fill',
+    'fill_form',
+    'type_text',
+    'press_key',
+    'hover',
+    'drag',
+    'scroll_page',
+    'media_control',
+  ]).has(normalized);
+}
+
+function firstToolText(result: ToolResult): string {
+  const textItem = result.content.find((entry) => entry.type === 'text');
+  if (!textItem || !('text' in textItem)) {
+    return '';
+  }
+  return typeof textItem.text === 'string' ? textItem.text : '';
+}
+
+function looksLikePageContentText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (/Error retrieving page content/i.test(trimmed) || /page content extraction failed/i.test(trimmed)) {
+    return false;
+  }
+  return /Page State Format:/i.test(trimmed)
+    || /#\s*(?:Markdown Snapshot|Accessibility Snapshot|HTML Snapshot):/i.test(trimmed)
+    || /```(?:markdown|text|html)/i.test(trimmed);
+}
+
+function extractPageId(args: Record<string, unknown>, result: ToolResult): number | undefined {
+  const direct = firstNumber(args, ['pageId', 'tabId']);
+  if (direct !== undefined) {
+    return direct;
+  }
+
+  const text = firstToolText(result);
+  const parsedJson = parseMaybeJsonText(text);
+  if (parsedJson && typeof parsedJson === 'object') {
+    const parsedId = firstNumber(parsedJson as Record<string, unknown>, ['pageId', 'tabId', 'id']);
+    if (parsedId !== undefined) {
+      return parsedId;
+    }
+  }
+
+  const createdMatch = /new background page \(ID:\s*(\d+)\)/i.exec(text);
+  if (createdMatch) {
+    return Number.parseInt(createdMatch[1], 10);
+  }
+  const tabMatch = /\bTab ID:\s*(\d+)\b/i.exec(text);
+  if (tabMatch) {
+    return Number.parseInt(tabMatch[1], 10);
+  }
+  const pageMatch = /\bPage ID:\s*(\d+)\b/i.exec(text);
+  if (pageMatch) {
+    return Number.parseInt(pageMatch[1], 10);
+  }
+  return undefined;
+}
+
+function parseMaybeJsonText(text: string): unknown {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+}
+
+function firstNumber(record: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function normalizeHttpPath(path: string): string {

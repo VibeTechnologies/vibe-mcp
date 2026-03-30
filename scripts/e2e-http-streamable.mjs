@@ -224,6 +224,94 @@ async function main() {
       throw new Error(`Unexpected tool result: ${JSON.stringify(callResult)}`);
     }
 
+    // Update tools and verify MCP call responses include page content fallback
+    // for navigation-style tools that return only structured metadata.
+    extensionWs.send(JSON.stringify({
+      type: 'tools_list',
+      data: [
+        {
+          name: 'echo',
+          description: 'Echo a string',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              text: { type: 'string' },
+            },
+            required: ['text'],
+          },
+        },
+        {
+          name: 'new_page',
+          description: 'Open a new page',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              url: { type: 'string' },
+            },
+            required: ['url'],
+          },
+        },
+        {
+          name: 'take_md_snapshot',
+          description: 'Take markdown snapshot',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              pageId: { type: 'number' },
+            },
+          },
+        },
+      ],
+    }));
+    await delay(50);
+
+    const openToolCallPromise = waitForWebSocketMessage(
+      extensionWs,
+      (message) => message.type === 'call_tool' && message.data?.name === 'new_page',
+    );
+    const openResultPromise = client.callTool({
+      name: 'new_page',
+      arguments: { url: 'https://example.com' },
+    });
+    const openToolCall = await openToolCallPromise;
+
+    const snapshotCallPromise = waitForWebSocketMessage(
+      extensionWs,
+      (message) => message.type === 'call_tool' && message.data?.name === 'take_md_snapshot',
+    );
+
+    extensionWs.send(JSON.stringify({
+      type: 'tool_result',
+      requestId: openToolCall.requestId,
+      data: {
+        success: true,
+        content: [{ type: 'text', text: JSON.stringify({ pageId: 77, url: 'https://example.com' }) }],
+      },
+    }));
+
+    const snapshotCall = await snapshotCallPromise;
+    if (snapshotCall.data?.arguments?.pageId !== 77) {
+      throw new Error(`Expected take_md_snapshot pageId=77, got: ${JSON.stringify(snapshotCall)}`);
+    }
+
+    extensionWs.send(JSON.stringify({
+      type: 'tool_result',
+      requestId: snapshotCall.requestId,
+      data: {
+        success: true,
+        content: [{
+          type: 'text',
+          text: '# Markdown Snapshot: Example\nURL: https://example.com\n\n```markdown\nExample page\n```',
+        }],
+      },
+    }));
+
+    const openResult = await openResultPromise;
+    const openText = openResult.content.find((item) => item.type === 'text');
+    if (!openText || !openText.text.includes('# Markdown Snapshot: Example')) {
+      throw new Error(`Expected page content fallback in MCP response: ${JSON.stringify(openResult)}`);
+    }
+
     await client.close();
     console.log('http e2e ok');
   } finally {

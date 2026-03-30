@@ -127,6 +127,8 @@ npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> snap
 
 Use `--page-id <id>` (or `--pageId <id>`) to target a specific tab without switching user focus.
 
+`open` and `navigate` responses include extracted page content in JSON output (`pageContent`) when page state is modified, so agents can continue without an immediate extra snapshot call.
+
 That CLI accepts the same style of verbs and flags OpenClaw operators expect, but it still targets the Vibe real-browser path rather than an isolated OpenClaw-managed browser profile.
 
 ## Step 3: add the MCP server to OpenClaw

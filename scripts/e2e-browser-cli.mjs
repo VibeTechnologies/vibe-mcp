@@ -131,6 +131,17 @@ try {
   listPagesPlainText = false;
   const opened = await runCli(['open', 'https://example.com/docs']);
   assert(opened.ok === true && opened.tool === 'new_page', `open failed: ${JSON.stringify(opened)}`);
+  assert(
+    typeof opened.pageContent === 'string' && opened.pageContent.includes('# Example Domain'),
+    `open should include pageContent: ${JSON.stringify(opened)}`,
+  );
+
+  const navigated = await runCli(['--page-id', '3', 'navigate', 'https://example.com/docs']);
+  assert(navigated.ok === true && navigated.tool === 'navigate_page', `navigate failed: ${JSON.stringify(navigated)}`);
+  assert(
+    typeof navigated.pageContent === 'string' && navigated.pageContent.includes('# Example Domain'),
+    `navigate should include pageContent: ${JSON.stringify(navigated)}`,
+  );
 
   const closed = await runCli(['close', '2']);
   assert(closed.ok === true && closed.tool === 'close_page', `close failed: ${JSON.stringify(closed)}`);

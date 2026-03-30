@@ -301,6 +301,11 @@ Snapshot behavior is tool-only (no legacy snapshot RPC shortcut):
 
 This keeps CLI behavior aligned with extension-supported tools and ensures page targeting works consistently with `--page-id`/`--pageId`.
 
+For navigation-style operations, responses now include page content when page state changes:
+
+- CLI `open` / `navigate` include `pageContent` in JSON output.
+- MCP tool calls for navigation-style tools return text content that includes current page state (with snapshot fallback when needed).
+
 ### OpenClaw Integration
 
 There are two ways to use Vibe with OpenClaw:

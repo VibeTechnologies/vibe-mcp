@@ -54,6 +54,8 @@ const TOOLS = [
   tool('evaluate_script', { function: { type: 'string' }, args: { type: 'array' }, pageId: { type: 'number' } }),
 
   tool('wait_for', { text: { type: 'array' }, timeout: { type: 'number' } }),
+  tool('take_md_snapshot', { pageId: { type: 'number' } }),
+  tool('take_a11y_snapshot', { pageId: { type: 'number' }, selector: { type: 'string' }, frameSelector: { type: 'string' } }),
 ];
 
 let wss;
@@ -162,6 +164,40 @@ try {
   const evaluated = await runCli(['evaluate', '--fn', '() => document.title']);
   assert(evaluated.ok === true && evaluated.tool === 'evaluate_script', `evaluate failed: ${JSON.stringify(evaluated)}`);
 
+  // ── Regression tests (issues #905, #906, #907) ──────────────────────────
+  // These tests exercise behaviour that was broken on main:
+  //   - snapshot with --page-id must use tool-call path (not get_snapshot)
+  //   - take_md_snapshot must be tried for non-aria snapshots
+  //   - snapshot --format aria with --page-id must inject pageId
+
+  // #907 / #906: snapshot --format ai (default) with --page-id should use
+  // the tool-call path (take_md_snapshot) instead of get_snapshot protocol,
+  // and the pageId must be injected into the tool call.
+  const snapshotWithPage = await runCli(['--page-id', '3', 'snapshot']);
+  assert(snapshotWithPage.ok === true, `snapshot --page-id failed: ${JSON.stringify(snapshotWithPage)}`);
+  assert(snapshotWithPage.tool === 'take_md_snapshot',
+    `snapshot --page-id should use take_md_snapshot tool, got: ${snapshotWithPage.tool}`);
+  assert(snapshotWithPage.raw?.pageId === 3,
+    `snapshot --page-id 3 should inject pageId=3: ${JSON.stringify(snapshotWithPage.raw)}`);
+
+  // #907: snapshot --format aria with --page-id should inject pageId into
+  // the take_a11y_snapshot tool call.
+  const ariaWithPage = await runCli(['--page-id', '5', 'snapshot', '--format', 'aria']);
+  assert(ariaWithPage.ok === true, `aria snapshot --page-id failed: ${JSON.stringify(ariaWithPage)}`);
+  assert(ariaWithPage.tool === 'take_a11y_snapshot',
+    `aria snapshot should use take_a11y_snapshot, got: ${ariaWithPage.tool}`);
+  assert(ariaWithPage.raw?.pageId === 5,
+    `aria snapshot --page-id 5 should inject pageId=5: ${JSON.stringify(ariaWithPage.raw)}`);
+
+  // #907: snapshot without --page-id should still use get_snapshot protocol
+  // (fast path) and NOT include a tool field in the response.
+  const snapshotNoPage = await runCli(['snapshot']);
+  assert(snapshotNoPage.ok === true, `snapshot (no page-id) failed: ${JSON.stringify(snapshotNoPage)}`);
+  assert(snapshotNoPage.tool === undefined,
+    `snapshot without --page-id should use get_snapshot (no tool field), got tool: ${snapshotNoPage.tool}`);
+  assert(String(snapshotNoPage.snapshot).includes('More information'),
+    `snapshot without --page-id content mismatch: ${JSON.stringify(snapshotNoPage)}`);
+
   console.log('browser cli e2e ok');
 } finally {
   if (wss) {
@@ -241,6 +277,18 @@ function handleToolCall(name, args) {
       return jsonResult({ result: 'Example Domain', args: args.args ?? [] });
     case 'wait_for':
       return jsonResult({ text: args.text ?? [], timeout: args.timeout ?? 0 });
+    case 'take_md_snapshot':
+      return {
+        success: true,
+        content: [{ type: 'text', text: '# Example Domain\n\nThis domain is for use in illustrative examples.' }],
+        ...(args.pageId !== undefined ? { pageId: args.pageId } : {}),
+      };
+    case 'take_a11y_snapshot':
+      return {
+        success: true,
+        content: [{ type: 'text', text: '[12] More information (a11y)\n[23] Search input' }],
+        ...(args.pageId !== undefined ? { pageId: args.pageId } : {}),
+      };
     default:
       return jsonResult({ tool: name, args });
   }

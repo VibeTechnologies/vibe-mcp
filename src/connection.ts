@@ -429,15 +429,15 @@ export class ExtensionConnection extends EventEmitter {
   /**
    * Call a tool on the extension
    */
-  async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
-    return this.sendRequest<ToolResult>('call_tool', { name, arguments: args });
+  async callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<ToolResult> {
+    return this.sendRequest<ToolResult>('call_tool', { name, arguments: args }, timeoutMs);
   }
 
   /**
    * Get accessibility snapshot of current page
    */
-  async getSnapshot(): Promise<SnapshotResult> {
-    return this.sendRequest<SnapshotResult>('get_snapshot');
+  async getSnapshot(timeoutMs?: number): Promise<SnapshotResult> {
+    return this.sendRequest<SnapshotResult>('get_snapshot', undefined, timeoutMs);
   }
 
   /**

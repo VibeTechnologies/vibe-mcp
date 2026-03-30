@@ -596,8 +596,10 @@ class BrowserCliContext {
     labels: boolean;
   }): Promise<CommandOutput> {
     const wantsAria = options.format === 'aria' || options.interactive || Boolean(options.selector) || Boolean(options.frame);
-    if (!wantsAria) {
-      const result = await this.connection.getSnapshot();
+    // The get_snapshot protocol message does not accept pageId, so when
+    // --page-id is set we must use the tool-call path instead.
+    if (!wantsAria && this.pageId === undefined) {
+      const result = await this.connection.getSnapshot(this.timeoutMs);
       return {
         ok: true,
         command: 'snapshot',
@@ -614,13 +616,19 @@ class BrowserCliContext {
     const invocation = await this.callTool(
       'snapshot',
       [
+        ...(wantsAria
+          ? []
+          : [{
+              names: ['take_md_snapshot'],
+              buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
+            }]),
         {
           names: ['take_a11y_snapshot'],
-          buildArgs: (tool) => withSnapshotArgs(tool, options),
+          buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
         },
         {
           names: ['take_snapshot', 'get_page_content'],
-          buildArgs: (tool) => withSnapshotArgs(tool, options),
+          buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
         },
       ],
       {}
@@ -942,7 +950,7 @@ class BrowserCliContext {
             args[pageKey] = this.pageId;
           }
         }
-        const result = await this.connection.callTool(tool.name, args);
+        const result = await this.connection.callTool(tool.name, args, this.timeoutMs);
         return { tool: tool.name, args, result: result as ToolResult & Record<string, unknown> };
       }
     }
@@ -1011,7 +1019,11 @@ function emitError(
   ctx: BrowserCliContext,
   error: unknown,
 ): void {
-  const message = error instanceof Error ? error.message : String(error);
+  let message = error instanceof Error ? error.message : String(error);
+  // Improve guidance when the extension requires a pageId that wasn't provided
+  if (/\bpageId\b/i.test(message) && /\bmissing\b|\brequired\b/i.test(message)) {
+    message += '\nHint: use `tabs` to list pages, then pass --page-id <id> to target a specific tab.';
+  }
   if (asJson) {
     console.log(JSON.stringify({
       ok: false,

@@ -24,6 +24,7 @@ interface BrowserCommandOptions {
   relayUrl?: string;
   json: boolean;
   timeout: string;
+  pageId?: string;
 }
 
 interface PageSummary {
@@ -66,6 +67,7 @@ interface CommandContextInit {
   json: boolean;
   timeoutMs: number;
   target?: string;
+  pageId?: number;
 }
 
 interface RefTarget {
@@ -95,7 +97,8 @@ function buildBrowserCommand(command: Command): Command {
     .option('-r, --remote <uuid>', 'Connect to a remote extension via public relay (provide the extension UUID)', DEFAULT_REMOTE_UUID)
     .option('--relay-url <url>', 'Custom relay server URL', DEFAULT_REMOTE_RELAY_URL)
     .option('--json', 'Emit machine-readable JSON output', false)
-    .option('--timeout <ms>', 'Command timeout in milliseconds', String(DEFAULT_TIMEOUT_MS));
+    .option('--timeout <ms>', 'Command timeout in milliseconds', String(DEFAULT_TIMEOUT_MS))
+    .option('--page-id <id>', 'Target a specific page/tab by its numeric ID (avoids switching the user\'s active tab)');
 }
 
 function registerBrowserSubcommands(browser: Command): void {
@@ -399,6 +402,7 @@ async function runBrowserCommand(
     json: Boolean(globalOptions.json),
     timeoutMs: parsePositiveInteger(globalOptions.timeout, '--timeout'),
     target: globalOptions.target,
+    pageId: globalOptions.pageId ? parsePositiveInteger(globalOptions.pageId, '--page-id') : undefined,
   });
 
   try {
@@ -424,6 +428,7 @@ class BrowserCliContext {
   private readonly timeoutMs: number;
   private readonly remoteUuid?: string;
   private readonly target?: string;
+  private readonly pageId?: number;
   private toolsLoaded = false;
   private tools: ToolDefinition[] = [];
   private readonly ignoredCompatibilityOptions: string[];
@@ -439,6 +444,7 @@ class BrowserCliContext {
     this.timeoutMs = init.timeoutMs;
     this.remoteUuid = init.remoteUuid;
     this.target = init.target;
+    this.pageId = init.pageId;
     this.ignoredCompatibilityOptions = [];
     if (this.target) {
       this.ignoredCompatibilityOptions.push(`target=${this.target}`);
@@ -927,6 +933,15 @@ class BrowserCliContext {
         const args = candidate.buildArgs
           ? candidate.buildArgs(tool)
           : withCanonicalArgs(tool, canonicalArgs);
+        // Inject --page-id into every tool call that accepts pageId/tabId,
+        // so the agent doesn't need to use focus/tab select (which disrupts
+        // the user's active browser tab).
+        if (this.pageId !== undefined) {
+          const pageKey = hasProperty(tool, 'pageId', 'tabId');
+          if (pageKey && !(pageKey in args)) {
+            args[pageKey] = this.pageId;
+          }
+        }
         const result = await this.connection.callTool(tool.name, args);
         return { tool: tool.name, args, result: result as ToolResult & Record<string, unknown> };
       }

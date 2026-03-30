@@ -42,15 +42,16 @@ const TOOLS = [
     ref: { type: 'string' },
     detail: { type: 'string' },
     grayscale: { type: 'boolean' },
+    pageId: { type: 'number' },
   }),
-  tool('click', { ref: { type: 'string' }, dblClick: { type: 'boolean' } }),
-  tool('fill', { ref: { type: 'string' }, value: { type: 'string' } }),
-  tool('press_key', { keys: { type: 'string' } }),
-  tool('hover', { ref: { type: 'string' } }),
-  tool('drag', { source: { type: 'string' }, target: { type: 'string' } }),
-  tool('list_network_requests', { limit: { type: 'number' } }),
-  tool('get_network_request', { requestId: { type: 'string' } }),
-  tool('evaluate_script', { function: { type: 'string' }, args: { type: 'array' } }),
+  tool('click', { ref: { type: 'string' }, dblClick: { type: 'boolean' }, pageId: { type: 'number' } }),
+  tool('fill', { ref: { type: 'string' }, value: { type: 'string' }, pageId: { type: 'number' } }),
+  tool('press_key', { keys: { type: 'string' }, pageId: { type: 'number' } }),
+  tool('hover', { ref: { type: 'string' }, pageId: { type: 'number' } }),
+  tool('drag', { source: { type: 'string' }, target: { type: 'string' }, pageId: { type: 'number' } }),
+  tool('list_network_requests', { limit: { type: 'number' }, pageId: { type: 'number' } }),
+  tool('get_network_request', { requestId: { type: 'string' }, pageId: { type: 'number' } }),
+  tool('evaluate_script', { function: { type: 'string' }, args: { type: 'array' }, pageId: { type: 'number' } }),
 
   tool('wait_for', { text: { type: 'array' }, timeout: { type: 'number' } }),
 ];
@@ -139,6 +140,12 @@ try {
 
   const clicked = await runCli(['click', '12', '--double']);
   assert(clicked.ok === true && clicked.tool === 'click', `click failed: ${JSON.stringify(clicked)}`);
+  assert(clicked.raw?.pageId === undefined, `click without --page-id should not inject pageId: ${JSON.stringify(clicked.raw)}`);
+
+  // --page-id should inject pageId into tool calls that accept it
+  const clickedWithPage = await runCli(['--page-id', '2', 'click', '12']);
+  assert(clickedWithPage.ok === true && clickedWithPage.tool === 'click', `click with --page-id failed: ${JSON.stringify(clickedWithPage)}`);
+  assert(clickedWithPage.raw?.pageId === 2, `--page-id 2 should inject pageId=2: ${JSON.stringify(clickedWithPage.raw)}`);
 
   const typed = await runCli(['type', '23', 'hello world', '--submit']);
   assert(typed.ok === true && typed.tool === 'fill', `type failed: ${JSON.stringify(typed)}`);
@@ -212,7 +219,7 @@ function handleToolCall(name, args) {
         ],
       };
     case 'click':
-      return jsonResult({ clicked: args.ref ?? null, double: Boolean(args.dblClick) });
+      return jsonResult({ clicked: args.ref ?? null, double: Boolean(args.dblClick), ...(args.pageId !== undefined ? { pageId: args.pageId } : {}) });
     case 'fill':
       return jsonResult({ ref: args.ref ?? null, value: args.value ?? '' });
     case 'press_key':

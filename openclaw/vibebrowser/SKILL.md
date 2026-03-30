@@ -1,5 +1,5 @@
 ---
-name: vibe-local-browser
+name: vibebrowser
 description: Control the user's local browser through the Vibe Browser CLI bridge. Use this when the task must run against the user's real Vibe-connected browser session, tabs, cookies, or installed extensions.
 metadata:
   {
@@ -16,6 +16,21 @@ metadata:
 ---
 
 # Vibe Local Browser
+
+## Installation
+
+1. **Get the Extension UUID**:
+   - Install the Vibe extension in Chrome
+   - Open extension Settings → MCP External
+   - Enable Remote mode and copy the Extension UUID
+
+2. **Set environment variable**:
+   ```bash
+   export VIBE_EXTENSION_UUID="<your-extension-uuid>"
+   ```
+
+3. **Install the skill**:
+   Copy this file to your OpenClaw skills directory (typically `~/.openclaw/skills/` or your project's `openclaw/skills/` folder).
 
 Use the `vibebrowser-cli` command when the user wants OpenClaw to drive their real local browser through the Vibe extension.
 

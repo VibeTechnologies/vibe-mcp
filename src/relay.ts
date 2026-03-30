@@ -290,21 +290,14 @@ export class RelayServer extends EventEmitter {
       return;
     }
 
-    // Handle tools list
-    if (message.type === 'tools_list') {
-      this.tools = message.data as unknown[];
-      this.stopToolsSyncLoop();
-      // Broadcast to all agents
-      this.broadcastToAgents({ type: 'tools_list', data: this.tools });
-      return;
-    }
-
-    // Handle response to a request
+    // Handle response to a pending request first — this must run before the
+    // tools_list broadcast so that `refreshTools()` resolves promptly instead
+    // of waiting for its 30 s timeout.
     if (message.requestId) {
       const pending = this.pendingRequests.get(message.requestId);
       if (pending) {
         this.pendingRequests.delete(message.requestId);
-        
+
         // Forward response to the requesting agent
         const agent = this.agents.get(pending.agentId);
         if (agent) {
@@ -313,8 +306,24 @@ export class RelayServer extends EventEmitter {
             requestId: pending.originalRequestId,
           }));
         }
+
+        // For tools_list we still want to cache + broadcast to *other* agents
+        // so they stay in sync, but the requesting agent already got its copy.
+        if (message.type === 'tools_list') {
+          this.tools = message.data as unknown[];
+          this.stopToolsSyncLoop();
+          this.broadcastToAgents({ type: 'tools_list', data: this.tools }, pending.agentId);
+        }
         return;
       }
+    }
+
+    // Handle unsolicited tools list (e.g. extension announces on connect)
+    if (message.type === 'tools_list') {
+      this.tools = message.data as unknown[];
+      this.stopToolsSyncLoop();
+      this.broadcastToAgents({ type: 'tools_list', data: this.tools });
+      return;
     }
 
     // Broadcast other messages to all agents
@@ -421,9 +430,10 @@ export class RelayServer extends EventEmitter {
   /**
    * Broadcast message to all connected agents
    */
-  private broadcastToAgents(message: unknown): void {
+  private broadcastToAgents(message: unknown, excludeAgentId?: string): void {
     const payload = JSON.stringify(message);
     for (const agent of this.agents.values()) {
+      if (agent.id === excludeAgentId) continue;
       try {
         agent.ws.send(payload);
       } catch (error) {

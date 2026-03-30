@@ -294,6 +294,33 @@ The package now exposes two executables:
 
 `vibebrowser-cli` accepts the OpenClaw-style `--browser-profile` flag for compatibility and supports `--json` for machine-readable output. Unlike OpenClaw's managed `openclaw` browser profile, this CLI always targets the real Vibe-connected browser session.
 
+### OpenClaw Integration
+
+There are two ways to use Vibe with OpenClaw:
+
+**Option A: Cloud OpenClaw controlling local browser**
+
+If OpenClaw runs in the cloud but you want it to control your local browser:
+
+1. Install the Vibe extension and enable **Remote** mode (see [docs/openclaw-local-browser.md](docs/openclaw-local-browser.md))
+2. Start the local HTTP bridge: `vibebrowser-mcp openclaw --remote <extension-uuid>`
+3. Register the MCP URL in OpenClaw
+
+**Option B: OpenClaw skill for local agents**
+
+For OpenClaw agents that need your real browser context (logged-in sessions, existing tabs):
+
+1. Copy the Vibe skill from this package to your OpenClaw skills folder
+2. Set `VIBE_EXTENSION_UUID` environment variable
+3. Use `vibebrowser-cli` commands in your agent prompts
+
+The skill is located at [`openclaw/vibebrowser/SKILL.md`](openclaw/vibebrowser/SKILL.md) and provides:
+- Full OpenClaw-compatible CLI commands (`status`, `tabs`, `snapshot`, `click`, `type`, etc.)
+- `--json` output for machine parsing
+- Environment-based configuration
+
+See [docs/openclaw-local-browser.md](docs/openclaw-local-browser.md) for the complete walkthrough.
+
 ## Local LLM: `serve` Command
 
 Run a local LLM with one command — no cloud API keys required. Automatically installs [Ollama](https://ollama.com), downloads the model, and starts serving an OpenAI-compatible API.

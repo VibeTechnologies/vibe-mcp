@@ -14,10 +14,10 @@ import { dirname, join } from 'path';
 import {
   ConnectionStatus,
   ExtensionMessage,
+  RelaySessionSummary,
   ServerMessage,
   ToolDefinition,
   ToolResult,
-  SnapshotResult,
 } from './types.js';
 import { isRelayRunning, AGENT_PORT, EXTENSION_PORT } from './relay.js';
 
@@ -45,6 +45,10 @@ export interface RemoteConfig {
   relayUrl?: string; // defaults to DEFAULT_RELAY_URL
 }
 
+export interface LocalSessionConfig {
+  sessionId?: string;
+}
+
 /**
  * Pending request waiting for response
  */
@@ -67,16 +71,19 @@ export class ExtensionConnection extends EventEmitter {
   private port: number;
   private debug: boolean;
   private tools: ToolDefinition[] = [];
+  private sessions: RelaySessionSummary[] = [];
   private reconnectTimer: NodeJS.Timeout | null = null;
   private extensionConnected: boolean = false;
   private remoteConfig: RemoteConfig | null = null;
+  private localSessionConfig: LocalSessionConfig;
   private stopping = false;
 
-  constructor(port: number = AGENT_PORT, debug: boolean = false, remote?: RemoteConfig) {
+  constructor(port: number = AGENT_PORT, debug: boolean = false, remote?: RemoteConfig, localSessionConfig?: LocalSessionConfig) {
     super();
     this.port = port;
     this.debug = debug;
     this.remoteConfig = remote || null;
+    this.localSessionConfig = localSessionConfig || {};
   }
 
   /**
@@ -302,6 +309,7 @@ export class ExtensionConnection extends EventEmitter {
     if (message.type === 'extension_disconnected') {
       this.extensionConnected = false;
       this.tools = [];
+      this.sessions = [];
       this.emit('extension_disconnected');
       return;
     }
@@ -316,22 +324,47 @@ export class ExtensionConnection extends EventEmitter {
         if (message.type === 'error') {
           pending.reject(new Error(message.error || 'Unknown error'));
         } else {
-          pending.resolve(message.data);
+          let payload: unknown = message.data;
+          if (message.type === 'sessions_list') {
+            payload = Array.isArray(message.sessions) ? message.sessions : message.data;
+            this.sessions = Array.isArray(payload) ? payload as RelaySessionSummary[] : [];
+            if (!this.remoteConfig) {
+              const selected = this.resolveRequestedSessionId(this.sessions);
+              this.extensionConnected = this.sessions.some((session) => session.sessionId === selected && session.connected);
+            }
+            this.emit('sessions_updated', this.sessions);
+          }
+          pending.resolve(payload);
         }
         return;
       }
+    }
+
+    if (message.type === 'sessions_list') {
+      this.sessions = Array.isArray(message.sessions)
+        ? message.sessions
+        : Array.isArray(message.data)
+          ? message.data as RelaySessionSummary[]
+          : [];
+
+      if (!this.remoteConfig) {
+        const selected = this.resolveRequestedSessionId(this.sessions);
+        this.extensionConnected = this.sessions.some((session) => session.sessionId === selected && session.connected);
+      }
+      this.emit('sessions_updated', this.sessions);
+      return;
     }
 
     // Handle unsolicited messages
     switch (message.type) {
       case 'tools_list':
         this.tools = message.data as ToolDefinition[];
-        this.extensionConnected = true;
+        if (this.remoteConfig) {
+          this.extensionConnected = true;
+        } else if (this.sessions.length === 0) {
+          this.extensionConnected = true;
+        }
         this.emit('tools_updated', this.tools);
-        break;
-
-      case 'snapshot':
-        this.emit('snapshot', message.data);
         break;
 
       case 'error':
@@ -352,8 +385,8 @@ export class ExtensionConnection extends EventEmitter {
       throw new Error('Not connected to relay');
     }
 
-    if (!this.extensionConnected) {
-      throw new Error(this.remoteConfig ? NO_CONNECTION_REMOTE_MESSAGE : NO_CONNECTION_MESSAGE);
+    if (type !== 'list_sessions' && !this.extensionConnected) {
+      throw new Error(this.getConnectionErrorMessage());
     }
 
     const requestId = `req_${++this.requestIdCounter}`;
@@ -370,10 +403,58 @@ export class ExtensionConnection extends EventEmitter {
         timeout,
       });
 
-      const message: ServerMessage = { type, requestId, data };
+      const enrichedData = this.withSessionSelection(data);
+      const message: ServerMessage = { type, requestId, data: enrichedData };
       this.ws!.send(JSON.stringify(message));
       this.log(`Sent: ${type} (${requestId})`);
     });
+  }
+
+  private withSessionSelection(data?: ServerMessage['data']): ServerMessage['data'] | undefined {
+    if (this.remoteConfig) {
+      return data;
+    }
+
+    const sessionId = this.resolveRequestedSessionId(this.sessions);
+    if (!sessionId) {
+      return data;
+    }
+
+    return {
+      ...(data || {}),
+      sessionId,
+    };
+  }
+
+  private resolveRequestedSessionId(sessions: RelaySessionSummary[]): string | undefined {
+    if (this.localSessionConfig.sessionId) {
+      return this.localSessionConfig.sessionId;
+    }
+
+    const firstConnected = sessions.find((session) => session.connected);
+    return firstConnected?.sessionId;
+  }
+
+  private getRequestedSessionConnectionError(sessions: RelaySessionSummary[] = this.sessions): string | undefined {
+    if (this.remoteConfig || !this.localSessionConfig.sessionId || sessions.length === 0) {
+      return undefined;
+    }
+
+    const requested = this.localSessionConfig.sessionId;
+    const matched = sessions.find((session) => session.sessionId === requested);
+    if (!matched || !matched.connected) {
+      return `No browser session connected for sessionId=${requested}`;
+    }
+
+    return undefined;
+  }
+
+  getConnectionErrorMessage(): string {
+    if (this.remoteConfig) {
+      return NO_CONNECTION_REMOTE_MESSAGE;
+    }
+
+    return this.getRequestedSessionConnectionError() || NO_CONNECTION_MESSAGE;
   }
 
   /**
@@ -383,6 +464,24 @@ export class ExtensionConnection extends EventEmitter {
     const tools = await this.sendRequest<ToolDefinition[]>('list_tools', undefined, timeoutMs);
     this.tools = tools;
     return tools;
+  }
+
+  async listSessions(timeoutMs: number = 5_000): Promise<RelaySessionSummary[]> {
+    if (this.remoteConfig) {
+      const session: RelaySessionSummary = {
+        sessionId: this.remoteConfig.uuid,
+        connected: this.extensionConnected,
+        toolCount: this.tools.length,
+      };
+      this.sessions = [session];
+      return this.sessions;
+    }
+
+    const sessions = await this.sendRequest<RelaySessionSummary[]>('list_sessions', undefined, timeoutMs);
+    this.sessions = Array.isArray(sessions) ? sessions : [];
+    const selected = this.resolveRequestedSessionId(this.sessions);
+    this.extensionConnected = this.sessions.some((session) => session.sessionId === selected && session.connected);
+    return this.sessions;
   }
 
   /**
@@ -426,18 +525,15 @@ export class ExtensionConnection extends EventEmitter {
     return this.tools;
   }
 
-  /**
-   * Call a tool on the extension
-   */
-  async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
-    return this.sendRequest<ToolResult>('call_tool', { name, arguments: args });
+  getSessions(): RelaySessionSummary[] {
+    return this.sessions;
   }
 
   /**
-   * Get accessibility snapshot of current page
+   * Call a tool on the extension
    */
-  async getSnapshot(): Promise<SnapshotResult> {
-    return this.sendRequest<SnapshotResult>('get_snapshot');
+  async callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<ToolResult> {
+    return this.sendRequest<ToolResult>('call_tool', { name, arguments: args }, timeoutMs);
   }
 
   /**

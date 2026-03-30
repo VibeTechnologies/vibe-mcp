@@ -115,10 +115,26 @@ Keep this terminal open - the bridge must stay running for OpenClaw to connect.
 For operator workflows and OpenClaw skills, you can also use the OpenClaw-compatible browser CLI surface directly:
 
 ```bash
+npx -y --package @vibebrowser/mcp vibebrowser-cli sessions
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> status
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> tabs
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> snapshot --json
 ```
+
+`snapshot` in `vibebrowser-cli` is tool-only and maps directly to extension snapshot tools:
+
+- default (`--format ai`) -> `take_md_snapshot`
+- ARIA (`--format aria`) -> `take_a11y_snapshot`
+
+Use `--page-id <id>` (or `--pageId <id>`) to target a specific tab without switching user focus.
+
+For local relay mode with multiple connected browsers/profiles:
+
+- run `vibebrowser-cli sessions` to list available local session IDs
+- pass `--session <id>` to target one explicitly
+- if omitted, the CLI uses the first connected local session
+
+`open` and `navigate` responses include extracted page content in JSON output (`pageContent`) when page state is modified, so agents can continue without an immediate extra snapshot call.
 
 That CLI accepts the same style of verbs and flags OpenClaw operators expect, but it still targets the Vibe real-browser path rather than an isolated OpenClaw-managed browser profile.
 

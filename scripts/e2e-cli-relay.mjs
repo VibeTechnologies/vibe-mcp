@@ -110,14 +110,25 @@ const FAKE_TOOLS = [
   tool('hover', { ref: { type: 'string' } }),
 ];
 
+const SESSION_A = 'browser-alpha';
+const SESSION_B = 'browser-beta';
+
 function tool(name, properties) {
   return { name, description: `Fake ${name}`, inputSchema: { type: 'object', properties } };
 }
 
-function handleToolCall(name, args) {
+function handleToolCall(name, args, sessionId) {
   switch (name) {
     case 'list_pages':
       // Return plain-text format matching real ListPagesTool output
+      if (sessionId === SESSION_B) {
+        return {
+          content: [{
+            type: 'text',
+            text: 'Found 2 page(s):\nPage 201 [ACTIVE]: "Beta Home" - https://beta.example.com\nPage 202: "Beta Docs" - https://beta.example.com/docs',
+          }],
+        };
+      }
       return {
         content: [{
           type: 'text',
@@ -180,13 +191,59 @@ function runCli(args, timeoutMs = MAX_CLI_MS) {
   });
 }
 
+function runCliExpectFailure(args, timeoutMs = MAX_CLI_MS) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        LOCAL_BROWSER_CLI,
+        '--port', String(AGENT_PORT),
+        '--json',
+        ...args,
+      ],
+      {
+        cwd: PACKAGE_ROOT,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`CLI timed out after ${timeoutMs}ms: vibebrowser-cli ${args.join(' ')}\nstdout=${stdout}\nstderr=${stderr}`));
+    }, timeoutMs);
+
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      const elapsed = Date.now() - t0;
+      if (code === 0) {
+        reject(new Error(`CLI unexpectedly succeeded: ${args.join(' ')}\nstdout=${stdout}\nstderr=${stderr}`));
+        return;
+      }
+      try {
+        resolve({ data: JSON.parse(stdout), stderr, elapsed });
+      } catch (error) {
+        reject(new Error(`CLI did not emit valid JSON for failed command ${args.join(' ')}: ${stdout}\nstderr=${stderr}\n${error}`));
+      }
+    });
+
+    const t0 = Date.now();
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Main test
 // ---------------------------------------------------------------------------
 
 async function main() {
   let relay = null;
-  let extension = null;
+  let extensionA = null;
+  let extensionB = null;
   const stateDir = mkdtempSync(join(tmpdir(), 'vibe-mcp-cli-relay-'));
 
   try {
@@ -205,52 +262,81 @@ async function main() {
 
     await Promise.all([waitForPort(AGENT_PORT), waitForPort(EXTENSION_PORT)]);
 
-    // ------ Connect fake extension ------
-    extension = await connectWebSocket(`ws://${HOST}:${EXTENSION_PORT}`);
+    // ------ Connect fake extensions (two local browser sessions) ------
+    const attachFakeExtension = async (sessionId) => {
+      const extension = await connectWebSocket(`ws://${HOST}:${EXTENSION_PORT}`);
+      extension.send(JSON.stringify({ type: 'connected', sessionId }));
+      extension.send(JSON.stringify({
+        type: 'sessions_list',
+        connected: true,
+        sessionId,
+        sessions: [{ sessionId, connected: true, connectedAt: Date.now(), toolCount: FAKE_TOOLS.length }],
+      }));
 
-    // Extension auto-responds to ALL relay messages
-    extension.on('message', (raw) => {
-      let msg;
-      try { msg = JSON.parse(raw.toString()); } catch { return; }
+      extension.on('message', (raw) => {
+        let msg;
+        try { msg = JSON.parse(raw.toString()); } catch { return; }
 
-      if (msg.type === 'list_tools' && msg.requestId) {
-        extension.send(JSON.stringify({
-          type: 'tools_list',
-          requestId: msg.requestId,
-          data: FAKE_TOOLS,
-        }));
-      }
+        if (msg.type === 'list_tools' && msg.requestId) {
+          extension.send(JSON.stringify({
+            type: 'tools_list',
+            requestId: msg.requestId,
+            sessionId,
+            data: FAKE_TOOLS,
+          }));
+        }
 
-      if (msg.type === 'call_tool' && msg.requestId) {
-        extension.send(JSON.stringify({
-          type: 'tool_result',
-          requestId: msg.requestId,
-          data: handleToolCall(msg.data?.name, msg.data?.arguments ?? {}),
-        }));
-      }
-    });
+        if (msg.type === 'call_tool' && msg.requestId) {
+          extension.send(JSON.stringify({
+            type: 'tool_result',
+            requestId: msg.requestId,
+            sessionId,
+            data: handleToolCall(msg.data?.name, msg.data?.arguments ?? {}, sessionId),
+          }));
+        }
+      });
 
-    // Give relay a moment to finish tool sync with the extension
+      return extension;
+    };
+
+    extensionA = await attachFakeExtension(SESSION_A);
+    extensionB = await attachFakeExtension(SESSION_B);
+
+    // Give relay a moment to finish tool sync with the extensions
     await delay(500);
 
     // =================================================================
-    // TEST 1: `vibebrowser-cli status` completes quickly
+    // TEST 1: `vibebrowser-cli sessions` lists all connected sessions and
+    // defaults to the first connected session when --session is omitted.
+    // =================================================================
+    {
+      const { data, elapsed } = await runCli(['sessions']);
+      assert(Array.isArray(data.sessions), `sessions missing array: ${JSON.stringify(data)}`);
+      assert(data.sessions.length === 2, `expected 2 sessions, got ${data.sessions.length}: ${JSON.stringify(data)}`);
+      assert(data.sessionId === SESSION_A, `default selected session should be ${SESSION_A}: ${JSON.stringify(data)}`);
+      console.log(`  sessions:${elapsed}ms (budget: ${MAX_CLI_MS}ms) — ${data.sessions.length} sessions ✓`);
+    }
+
+    // =================================================================
+    // TEST 2: `vibebrowser-cli status` completes quickly
     // =================================================================
     {
       const { data, elapsed } = await runCli(['status']);
       assert(data.ok === true, `status not ok: ${JSON.stringify(data)}`);
       assert(data.extensionConnected === true, `extension not connected: ${JSON.stringify(data)}`);
       assert(Number(data.toolCount) >= 10, `toolCount too low (${data.toolCount}): ${JSON.stringify(data)}`);
+      assert(data.sessionId === SESSION_A, `status should select ${SESSION_A} by default: ${JSON.stringify(data)}`);
       console.log(`  status:  ${elapsed}ms (budget: ${MAX_CLI_MS}ms) — ${data.toolCount} tools ✓`);
     }
 
     // =================================================================
-    // TEST 2: `vibebrowser-cli tabs` returns parsed tab data quickly
+    // TEST 3: `vibebrowser-cli tabs` returns parsed tab data quickly
     // =================================================================
     {
       const { data, elapsed } = await runCli(['tabs']);
       assert(Array.isArray(data.pages), `tabs missing pages array: ${JSON.stringify(data)}`);
       assert(data.pages.length === 3, `expected 3 pages, got ${data.pages.length}: ${JSON.stringify(data)}`);
+      assert(data.sessionId === SESSION_A, `tabs should select ${SESSION_A} by default: ${JSON.stringify(data)}`);
 
       // Verify parsed fields
       const active = data.pages.find((p) => p.active === true);
@@ -265,7 +351,32 @@ async function main() {
     }
 
     // =================================================================
-    // TEST 3: `vibebrowser-cli open <url>` calls new_page through relay
+    // TEST 4: `vibebrowser-cli --session <id> tabs` routes to that session
+    // =================================================================
+    {
+      const { data, elapsed } = await runCli(['--session', SESSION_B, 'tabs']);
+      assert(Array.isArray(data.pages), `session tabs missing pages array: ${JSON.stringify(data)}`);
+      assert(data.sessionId === SESSION_B, `tabs should use requested session ${SESSION_B}: ${JSON.stringify(data)}`);
+      const active = data.pages.find((p) => p.active === true);
+      assert(active?.title === 'Beta Home', `wrong session selected for tabs: ${JSON.stringify(data.pages)}`);
+      console.log(`  tabs+s:  ${elapsed}ms (budget: ${MAX_CLI_MS}ms) — session override ✓`);
+    }
+
+    // =================================================================
+    // TEST 5: invalid requested session should fail with precise error
+    // =================================================================
+    {
+      const missingSession = 'browser-missing';
+      const { data, elapsed } = await runCliExpectFailure(['--session', missingSession, 'tabs']);
+      assert(data.ok === false, `invalid session should not be ok: ${JSON.stringify(data)}`);
+      assert(typeof data.error === 'string', `missing error message: ${JSON.stringify(data)}`);
+      assert(data.error.includes(`No browser session connected for sessionId=${missingSession}`), `wrong invalid-session error: ${JSON.stringify(data)}`);
+      assert(data.sessionId !== missingSession, `should not report missing session as active: ${JSON.stringify(data)}`);
+      console.log(`  tabs!s:  ${elapsed}ms (budget: ${MAX_CLI_MS}ms) — invalid session error ✓`);
+    }
+
+    // =================================================================
+    // TEST 6: `vibebrowser-cli open <url>` calls new_page through relay
     // =================================================================
     {
       const { data, elapsed } = await runCli(['open', 'https://example.com']);
@@ -275,7 +386,7 @@ async function main() {
     }
 
     // =================================================================
-    // TEST 4: `vibebrowser-cli click <ref>` calls click through relay
+    // TEST 7: `vibebrowser-cli click <ref>` calls click through relay
     // =================================================================
     {
       const { data, elapsed } = await runCli(['click', '42']);
@@ -286,7 +397,8 @@ async function main() {
 
     console.log('cli relay e2e ok');
   } finally {
-    if (extension && extension.readyState === WebSocket.OPEN) extension.close();
+    if (extensionA && extensionA.readyState === WebSocket.OPEN) extensionA.close();
+    if (extensionB && extensionB.readyState === WebSocket.OPEN) extensionB.close();
     if (relay) relay.kill('SIGTERM');
     rmSync(stateDir, { recursive: true, force: true });
   }

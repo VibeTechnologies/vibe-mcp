@@ -39,12 +39,13 @@ export class VibeMcpServer {
             httpPath: normalizeHttpPath(config.httpPath ?? DEFAULT_HTTP_PATH),
             allowedHosts: config.allowedHosts,
             remoteUuid: config.remoteUuid,
+            sessionId: config.sessionId,
             remoteRelayUrl: config.remoteRelayUrl,
         };
         const remoteConfig = this.config.remoteUuid
             ? { uuid: this.config.remoteUuid, relayUrl: this.config.remoteRelayUrl }
             : undefined;
-        this.connection = new ExtensionConnection(this.config.port, this.config.debug, remoteConfig);
+        this.connection = new ExtensionConnection(this.config.port, this.config.debug, remoteConfig, this.config.remoteUuid ? undefined : { sessionId: this.config.sessionId });
         this.setupConnectionEvents();
     }
     /**
@@ -185,10 +186,12 @@ export class VibeMcpServer {
         server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const { name, arguments: args } = request.params;
             try {
-                const result = await this.connection.callTool(name, args ?? {});
+                const preparedArgs = this.withDefaultPageStateFormat(name, toRecord(args));
+                const result = await this.connection.callTool(name, preparedArgs);
+                const enriched = await this.withFallbackPageContent(name, preparedArgs, result);
                 return {
-                    content: result.content,
-                    isError: result.isError,
+                    content: enriched.content,
+                    isError: enriched.isError,
                 };
             }
             catch (error) {
@@ -200,6 +203,88 @@ export class VibeMcpServer {
             }
         });
         return server;
+    }
+    withDefaultPageStateFormat(name, args) {
+        const tool = this.findToolByName(name);
+        if (!tool) {
+            return args;
+        }
+        if (args.pageStateFormat !== undefined || args.page_state_format !== undefined) {
+            return args;
+        }
+        const properties = tool.inputSchema.properties ?? {};
+        if (Object.prototype.hasOwnProperty.call(properties, 'pageStateFormat')) {
+            return { ...args, pageStateFormat: 'markdown' };
+        }
+        if (Object.prototype.hasOwnProperty.call(properties, 'page_state_format')) {
+            return { ...args, page_state_format: 'markdown' };
+        }
+        return args;
+    }
+    async withFallbackPageContent(name, args, result) {
+        if (result.isError) {
+            return result;
+        }
+        if (!shouldFallbackToSnapshot(name)) {
+            return result;
+        }
+        const primaryText = firstToolText(result);
+        if (looksLikePageContentText(primaryText)) {
+            return result;
+        }
+        const snapshotText = await this.takeMarkdownSnapshot(extractPageId(args, result));
+        if (!snapshotText) {
+            return result;
+        }
+        return {
+            ...result,
+            content: [
+                { type: 'text', text: snapshotText },
+                ...result.content,
+            ],
+        };
+    }
+    async takeMarkdownSnapshot(pageId) {
+        if (this.connection.getTools().length === 0 && this.connection.isExtensionConnected()) {
+            try {
+                await this.connection.refreshTools(STARTUP_TOOLS_REFRESH_TIMEOUT_MS);
+            }
+            catch {
+                // ignore and continue with cached tools
+            }
+        }
+        const snapshotTool = this.findToolByName('take_md_snapshot');
+        if (!snapshotTool) {
+            return undefined;
+        }
+        const callArgs = {};
+        const properties = snapshotTool.inputSchema.properties ?? {};
+        if (typeof pageId === 'number' && Number.isFinite(pageId)) {
+            if (Object.prototype.hasOwnProperty.call(properties, 'pageId')) {
+                callArgs.pageId = pageId;
+            }
+            else if (Object.prototype.hasOwnProperty.call(properties, 'tabId')) {
+                callArgs.tabId = pageId;
+            }
+        }
+        if (Object.prototype.hasOwnProperty.call(properties, 'pageStateFormat')) {
+            callArgs.pageStateFormat = 'markdown';
+        }
+        else if (Object.prototype.hasOwnProperty.call(properties, 'page_state_format')) {
+            callArgs.page_state_format = 'markdown';
+        }
+        try {
+            const snapshot = await this.connection.callTool(snapshotTool.name, callArgs, STARTUP_TOOLS_REFRESH_TIMEOUT_MS);
+            const text = firstToolText(snapshot);
+            return text || undefined;
+        }
+        catch {
+            return undefined;
+        }
+    }
+    findToolByName(name) {
+        const needle = normalizeToolName(name);
+        return this.connection.getTools().find((tool) => normalizeToolName(tool.name) === needle);
     }
     /**
      * Start stdio MCP transport.
@@ -387,6 +472,102 @@ export async function createServer(config) {
     const server = new VibeMcpServer(config);
     await server.start();
     return server;
+}
+function toRecord(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return {};
+    }
+    return { ...value };
+}
+function normalizeToolName(value) {
+    return value.replace(/[-\s]/g, '_').toLowerCase();
+}
+function shouldFallbackToSnapshot(name) {
+    const normalized = normalizeToolName(name);
+    return new Set([
+        'open',
+        'navigate',
+        'new_page',
+        'create_new_tab',
+        'navigate_page',
+        'navigate_to_url',
+        'click',
+        'fill',
+        'fill_form',
+        'type_text',
+        'press_key',
+        'hover',
+        'drag',
+        'scroll_page',
+        'media_control',
+    ]).has(normalized);
+}
+function firstToolText(result) {
+    const textItem = result.content.find((entry) => entry.type === 'text');
+    if (!textItem || !('text' in textItem)) {
+        return '';
+    }
+    return typeof textItem.text === 'string' ? textItem.text : '';
+}
+function looksLikePageContentText(text) {
+    const trimmed = text.trim();
+    if (!trimmed) {
+        return false;
+    }
+    if (/Error retrieving page content/i.test(trimmed) || /page content extraction failed/i.test(trimmed)) {
+        return false;
+    }
+    return /Page State Format:/i.test(trimmed)
+        || /#\s*(?:Markdown Snapshot|Accessibility Snapshot|HTML Snapshot):/i.test(trimmed)
+        || /```(?:markdown|text|html)/i.test(trimmed);
+}
+function extractPageId(args, result) {
+    const direct = firstNumber(args, ['pageId', 'tabId']);
+    if (direct !== undefined) {
+        return direct;
+    }
+    const text = firstToolText(result);
+    const parsedJson = parseMaybeJsonText(text);
+    if (parsedJson && typeof parsedJson === 'object') {
+        const parsedId = firstNumber(parsedJson, ['pageId', 'tabId', 'id']);
+        if (parsedId !== undefined) {
+            return parsedId;
+        }
+    }
+    const createdMatch = /new background page \(ID:\s*(\d+)\)/i.exec(text);
+    if (createdMatch) {
+        return Number.parseInt(createdMatch[1], 10);
+    }
+    const tabMatch = /\bTab ID:\s*(\d+)\b/i.exec(text);
+    if (tabMatch) {
+        return Number.parseInt(tabMatch[1], 10);
+    }
+    const pageMatch = /\bPage ID:\s*(\d+)\b/i.exec(text);
+    if (pageMatch) {
+        return Number.parseInt(pageMatch[1], 10);
+    }
+    return undefined;
+}
+function parseMaybeJsonText(text) {
+    const trimmed = text.trim();
+    if (!trimmed) {
+        return undefined;
+    }
+    try {
+        return JSON.parse(trimmed);
+    }
+    catch {
+        return undefined;
+    }
+}
+function firstNumber(record, keys) {
+    for (const key of keys) {
+        const value = record[key];
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return value;
+        }
+    }
+    return undefined;
 }
 function normalizeHttpPath(path) {
     if (!path || path === '/') {

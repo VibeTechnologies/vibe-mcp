@@ -107,6 +107,7 @@ const FAKE_TOOLS = [
   { name: 'list_pages', inputSchema: { type: 'object', properties: {} } },
   { name: 'click', inputSchema: { type: 'object', properties: { ref: { type: 'string' } } } },
 ];
+const SESSION_ID = 'roundtrip-session';
 
 async function main() {
   let relay = null;
@@ -133,6 +134,7 @@ async function main() {
     // ------ Connect fake extension ------
     extension = await connectWebSocket(`ws://${HOST}:${EXTENSION_PORT}`);
     const extMessages = captureMessages(extension);
+    extension.send(JSON.stringify({ type: 'connected', sessionId: SESSION_ID }));
 
     // Extension receives initial list_tools from relay — respond immediately.
     const initialListTools = await waitForMessage(
@@ -188,7 +190,17 @@ async function main() {
         extension.send(JSON.stringify({
           type: 'tools_list',
           requestId: msg.requestId,
+          sessionId: SESSION_ID,
           data: FAKE_TOOLS,
+        }));
+      }
+
+      if (msg.type === 'list_sessions' && msg.requestId) {
+        extension.send(JSON.stringify({
+          type: 'sessions_list',
+          requestId: msg.requestId,
+          sessionId: SESSION_ID,
+          sessions: [{ sessionId: SESSION_ID, connected: true, connectedAt: Date.now(), toolCount: FAKE_TOOLS.length }],
         }));
       }
 
@@ -196,6 +208,7 @@ async function main() {
         extension.send(JSON.stringify({
           type: 'tool_result',
           requestId: msg.requestId,
+          sessionId: SESSION_ID,
           data: {
             content: [{ type: 'text', text: JSON.stringify({ ok: true, tool: msg.data?.name }) }],
           },

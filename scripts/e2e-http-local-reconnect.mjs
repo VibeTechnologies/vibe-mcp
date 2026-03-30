@@ -18,6 +18,7 @@ const AGENT_PORT = await findFreePort(RESERVED_PORTS);
 RESERVED_PORTS.add(AGENT_PORT);
 const EXTENSION_PORT = await findFreePort(RESERVED_PORTS);
 RESERVED_PORTS.add(EXTENSION_PORT);
+const SESSION_ID = 'http-local-reconnect-session';
 const MCP_URL = `http://${HOST}:${MCP_HTTP_PORT}/mcp`;
 
 function findFreePort(exclude) {
@@ -190,6 +191,7 @@ async function main() {
 
     extension1 = await connectWebSocket(`ws://${HOST}:${EXTENSION_PORT}`);
     const extension1Messages = captureMessages(extension1);
+    extension1.send(JSON.stringify({ type: 'connected', sessionId: SESSION_ID }));
 
     client = new Client({ name: 'vibe-mcp-http-local-reconnect', version: '1.0.0' });
     const transport = new StreamableHTTPClientTransport(new URL(MCP_URL));
@@ -236,6 +238,7 @@ async function main() {
 
     extension2 = await connectWebSocket(`ws://${HOST}:${EXTENSION_PORT}`);
     const extension2Messages = captureMessages(extension2);
+    extension2.send(JSON.stringify({ type: 'connected', sessionId: SESSION_ID }));
 
     const listToolsToExtension2 = await waitForMessage(
       extension2Messages,
@@ -259,9 +262,6 @@ async function main() {
         },
       ],
     }));
-
-    extension2.send(JSON.stringify({ type: 'connected' }));
-
     const replayedToExtension2 = await waitForMessage(
       extension2Messages,
       (msg) => msg.type === 'call_tool' && msg.requestId === forwardedToExtension1.requestId,

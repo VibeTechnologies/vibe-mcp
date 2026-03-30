@@ -16,6 +16,7 @@ const AGENT_PORT = configuredAgentPort ?? await findFreePort(RESERVED_PORTS);
 RESERVED_PORTS.add(AGENT_PORT);
 const EXTENSION_PORT = configuredExtensionPort ?? await findFreePort(RESERVED_PORTS);
 RESERVED_PORTS.add(EXTENSION_PORT);
+const SESSION_ID = 'race-session';
 
 function getConfiguredPort(...names) {
   for (const name of names) {
@@ -87,7 +88,7 @@ async function waitForPort(port, timeoutMs = 15_000) {
   throw new Error(`Timed out waiting for port ${port}`);
 }
 
-function captureMessages(ws) {
+function attachMessageCapture(ws) {
   const messages = [];
   ws.on('message', (raw) => {
     try {
@@ -115,6 +116,7 @@ async function waitForMessage(queue, predicate, label, timeoutMs = 10_000) {
 function connectWebSocket(url, timeoutMs = 10_000) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
+    const messages = attachMessageCapture(ws);
     const timer = setTimeout(() => {
       ws.terminate();
       reject(new Error(`Timed out connecting to ${url}`));
@@ -122,7 +124,7 @@ function connectWebSocket(url, timeoutMs = 10_000) {
 
     ws.once('open', () => {
       clearTimeout(timer);
-      resolve(ws);
+      resolve({ ws, messages });
     });
     ws.once('error', (error) => {
       clearTimeout(timer);
@@ -136,6 +138,9 @@ async function main() {
   let agent = null;
   let extension1 = null;
   let extension2 = null;
+  let agentMessages = null;
+  let extension1Messages = null;
+  let extension2Messages = null;
   const stateDir = mkdtempSync(join(tmpdir(), 'vibe-mcp-relay-race-'));
 
   try {
@@ -155,11 +160,10 @@ async function main() {
 
     await Promise.all([waitForPort(AGENT_PORT), waitForPort(EXTENSION_PORT)]);
 
-    extension1 = await connectWebSocket(`ws://${HOST}:${EXTENSION_PORT}`);
-    const extension1Messages = captureMessages(extension1);
+    ({ ws: extension1, messages: extension1Messages } = await connectWebSocket(`ws://${HOST}:${EXTENSION_PORT}`));
+    extension1.send(JSON.stringify({ type: 'connected', sessionId: SESSION_ID }));
 
-    agent = await connectWebSocket(`ws://${HOST}:${AGENT_PORT}`);
-    const agentMessages = captureMessages(agent);
+    ({ ws: agent, messages: agentMessages } = await connectWebSocket(`ws://${HOST}:${AGENT_PORT}`));
 
     const extensionStatus = await waitForMessage(
       agentMessages,
@@ -206,8 +210,8 @@ async function main() {
       'initial call_tool forwarded to extension #1'
     );
 
-    extension2 = await connectWebSocket(`ws://${HOST}:${EXTENSION_PORT}`);
-    const extension2Messages = captureMessages(extension2);
+    ({ ws: extension2, messages: extension2Messages } = await connectWebSocket(`ws://${HOST}:${EXTENSION_PORT}`));
+    extension2.send(JSON.stringify({ type: 'connected', sessionId: SESSION_ID }));
 
     await waitForMessage(
       extension2Messages,
@@ -223,10 +227,6 @@ async function main() {
         },
       ],
     }));
-
-    // Simulate the extension's normal websocket handshake on the replacement socket.
-    extension2.send(JSON.stringify({ type: 'connected' }));
-
     const replayedToExtension2 = await waitForMessage(
       extension2Messages,
       (msg) => msg.type === 'call_tool' && msg.requestId === forwardedToExtension1.requestId,

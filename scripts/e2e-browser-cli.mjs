@@ -23,6 +23,8 @@ const TEST_DIR = mkdtempSync(join(tmpdir(), 'vibe-mcp-browser-cli-'));
 const SCREENSHOT_PATH = join(TEST_DIR, 'shot.png');
 let packedPackageDir = null;
 let cliInvocation = null;
+let delayToolResultMs = 0;
+let missingPageIdMode = false;
 
 const ONE_PIXEL_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W6n8AAAAASUVORK5CYII=';
@@ -32,8 +34,8 @@ let listPagesPlainText = false;
 
 const TOOLS = [
   tool('list_pages', {}),
-  tool('new_page', { url: { type: 'string' } }),
-  tool('navigate_page', { pageId: { type: 'number' }, url: { type: 'string' }, type: { type: 'string' } }),
+  tool('new_page', { url: { type: 'string' }, waitForReady: { type: 'boolean' } }),
+  tool('navigate_page', { pageId: { type: 'number' }, url: { type: 'string' }, type: { type: 'string' }, timeoutMs: { type: 'number' } }),
   tool('switch_to_page', { pageId: { type: 'number' } }),
   tool('select_page', { pageId: { type: 'number' } }),
   tool('close_page', { pageId: { type: 'number' } }),
@@ -42,18 +44,22 @@ const TOOLS = [
     ref: { type: 'string' },
     detail: { type: 'string' },
     grayscale: { type: 'boolean' },
+    pageId: { type: 'number' },
   }),
-  tool('click', { ref: { type: 'string' }, dblClick: { type: 'boolean' } }),
-  tool('fill', { ref: { type: 'string' }, value: { type: 'string' } }),
-  tool('press_key', { keys: { type: 'string' } }),
-  tool('hover', { ref: { type: 'string' } }),
-  tool('drag', { source: { type: 'string' }, target: { type: 'string' } }),
-  tool('list_network_requests', { limit: { type: 'number' } }),
-  tool('get_network_request', { requestId: { type: 'string' } }),
-  tool('evaluate_script', { function: { type: 'string' }, args: { type: 'array' } }),
+  tool('click', { ref: { type: 'string' }, dblClick: { type: 'boolean' }, pageId: { type: 'number' } }),
+  tool('fill', { ref: { type: 'string' }, value: { type: 'string' }, pageId: { type: 'number' } }),
+  tool('press_key', { keys: { type: 'string' }, pageId: { type: 'number' } }),
+  tool('hover', { ref: { type: 'string' }, pageId: { type: 'number' } }),
+  tool('drag', { source: { type: 'string' }, target: { type: 'string' }, pageId: { type: 'number' } }),
+  tool('list_network_requests', { limit: { type: 'number' }, pageId: { type: 'number' } }),
+  tool('get_network_request', { requestId: { type: 'string' }, pageId: { type: 'number' } }),
+  tool('evaluate_script', { function: { type: 'string' }, args: { type: 'array' }, pageId: { type: 'number' } }),
 
   tool('wait_for', { text: { type: 'array' }, timeout: { type: 'number' } }),
+  tool('take_md_snapshot', { pageId: { type: 'number' } }),
+  tool('take_a11y_snapshot', { pageId: { type: 'number' }, selector: { type: 'string' }, frameSelector: { type: 'string' } }),
 ];
+
 
 let wss;
 
@@ -66,6 +72,12 @@ try {
     }
 
     ws.send(JSON.stringify({ type: 'extension_status', connected: true }));
+    ws.send(JSON.stringify({
+      type: 'sessions_list',
+      connected: true,
+      sessionId: REMOTE_UUID,
+      sessions: [{ sessionId: REMOTE_UUID, connected: true, connectedAt: Date.now(), toolCount: TOOLS.length }],
+    }));
 
     ws.on('message', (raw) => {
       const message = JSON.parse(raw.toString());
@@ -78,25 +90,42 @@ try {
         return;
       }
 
-      if (message.type === 'get_snapshot') {
+      if (message.type === 'list_sessions') {
         ws.send(JSON.stringify({
-          type: 'snapshot',
+          type: 'sessions_list',
           requestId: message.requestId,
-          data: {
-            url: 'https://example.com',
-            title: 'Example Domain',
-            snapshot: '[12] More information\n[23] Search input',
-          },
+          connected: true,
+          sessionId: REMOTE_UUID,
+          sessions: [{ sessionId: REMOTE_UUID, connected: true, connectedAt: Date.now(), toolCount: TOOLS.length }],
         }));
         return;
       }
 
       if (message.type === 'call_tool') {
-        ws.send(JSON.stringify({
-          type: 'tool_result',
-          requestId: message.requestId,
-          data: handleToolCall(message.data?.name, message.data?.arguments ?? {}),
-        }));
+        if (
+          missingPageIdMode
+          && message.data?.name === 'navigate_page'
+          && message.data?.arguments?.pageId === undefined
+        ) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            requestId: message.requestId,
+            error: 'Missing required pageId',
+          }));
+          return;
+        }
+        const send = () => {
+          ws.send(JSON.stringify({
+            type: 'tool_result',
+            requestId: message.requestId,
+            data: handleToolCall(message.data?.name, message.data?.arguments ?? {}),
+          }));
+        };
+        if (delayToolResultMs > 0) {
+          setTimeout(send, delayToolResultMs);
+        } else {
+          send();
+        }
       }
     });
   });
@@ -105,6 +134,11 @@ try {
   assert(status.ok === true, `status failed: ${JSON.stringify(status)}`);
   assert(status.extensionConnected === true, `expected extension connected: ${JSON.stringify(status)}`);
   assert(Number(status.toolCount) >= 10, `expected toolCount >= 10: ${JSON.stringify(status)}`);
+  assert(status.sessionId === REMOTE_UUID, `expected status sessionId=${REMOTE_UUID}: ${JSON.stringify(status)}`);
+
+  const sessions = await runCli(['sessions']);
+  assert(Array.isArray(sessions.sessions) && sessions.sessions.length === 1, `sessions missing session list: ${JSON.stringify(sessions)}`);
+  assert(sessions.sessions[0].sessionId === REMOTE_UUID, `wrong remote session id: ${JSON.stringify(sessions)}`);
 
   const tabs = await runCli(['tabs']);
   assert(Array.isArray(tabs.pages) && tabs.pages.length === 2, `tabs missing pages: ${JSON.stringify(tabs)}`);
@@ -120,6 +154,22 @@ try {
   listPagesPlainText = false;
   const opened = await runCli(['open', 'https://example.com/docs']);
   assert(opened.ok === true && opened.tool === 'new_page', `open failed: ${JSON.stringify(opened)}`);
+  assert(opened.raw?.waitForReady === false, `open should set waitForReady=false: ${JSON.stringify(opened.raw)}`);
+  assert(
+    typeof opened.pageContent === 'string' && opened.pageContent.includes('# Example Domain'),
+    `open should include pageContent: ${JSON.stringify(opened)}`,
+  );
+
+  const navigated = await runCli(['--page-id', '3', 'navigate', 'https://example.com/docs']);
+  assert(navigated.ok === true && navigated.tool === 'navigate_page', `navigate failed: ${JSON.stringify(navigated)}`);
+  assert(
+    typeof navigated.pageContent === 'string' && navigated.pageContent.includes('# Example Domain'),
+    `navigate should include pageContent: ${JSON.stringify(navigated)}`,
+  );
+
+  const navigatedTimeout = await runCli(['--timeout', '12345', '--page-id', '3', 'navigate', 'https://example.com/docs']);
+  assert(navigatedTimeout.ok === true && navigatedTimeout.tool === 'navigate_page', `navigate with timeout failed: ${JSON.stringify(navigatedTimeout)}`);
+  assert(navigatedTimeout.raw?.timeoutMs === 12345, `navigate should pass timeoutMs=12345: ${JSON.stringify(navigatedTimeout.raw)}`);
 
   const closed = await runCli(['close', '2']);
   assert(closed.ok === true && closed.tool === 'close_page', `close failed: ${JSON.stringify(closed)}`);
@@ -131,7 +181,8 @@ try {
   assert(tabSelected.ok === true && tabSelected.tool === 'switch_to_page', `tab select failed: ${JSON.stringify(tabSelected)}`);
 
   const snapshot = await runCli(['snapshot']);
-  assert(snapshot.snapshot && String(snapshot.snapshot).includes('More information'), `snapshot missing content: ${JSON.stringify(snapshot)}`);
+  assert(snapshot.ok === true && snapshot.tool === 'take_md_snapshot', `snapshot failed: ${JSON.stringify(snapshot)}`);
+  assert(snapshot.snapshot && String(snapshot.snapshot).includes('Example Domain'), `snapshot missing content: ${JSON.stringify(snapshot)}`);
 
   const screenshot = await runCli(['screenshot', '--ref', '12', '--output', SCREENSHOT_PATH]);
   assert(screenshot.ok === true, `screenshot failed: ${JSON.stringify(screenshot)}`);
@@ -139,6 +190,17 @@ try {
 
   const clicked = await runCli(['click', '12', '--double']);
   assert(clicked.ok === true && clicked.tool === 'click', `click failed: ${JSON.stringify(clicked)}`);
+  assert(clicked.raw?.pageId === undefined, `click without --page-id should not inject pageId: ${JSON.stringify(clicked.raw)}`);
+
+  // --page-id should inject pageId into tool calls that accept it
+  const clickedWithPage = await runCli(['--page-id', '2', 'click', '12']);
+  assert(clickedWithPage.ok === true && clickedWithPage.tool === 'click', `click with --page-id failed: ${JSON.stringify(clickedWithPage)}`);
+  assert(clickedWithPage.raw?.pageId === 2, `--page-id 2 should inject pageId=2: ${JSON.stringify(clickedWithPage.raw)}`);
+
+  // --pageId alias should behave the same as --page-id
+  const clickedWithPageAlias = await runCli(['--pageId', '4', 'click', '12']);
+  assert(clickedWithPageAlias.ok === true && clickedWithPageAlias.tool === 'click', `click with --pageId failed: ${JSON.stringify(clickedWithPageAlias)}`);
+  assert(clickedWithPageAlias.raw?.pageId === 4, `--pageId 4 should inject pageId=4: ${JSON.stringify(clickedWithPageAlias.raw)}`);
 
   const typed = await runCli(['type', '23', 'hello world', '--submit']);
   assert(typed.ok === true && typed.tool === 'fill', `type failed: ${JSON.stringify(typed)}`);
@@ -154,6 +216,48 @@ try {
 
   const evaluated = await runCli(['evaluate', '--fn', '() => document.title']);
   assert(evaluated.ok === true && evaluated.tool === 'evaluate_script', `evaluate failed: ${JSON.stringify(evaluated)}`);
+
+  // ── Regression tests (issues #905, #906, #907) ──────────────────────────
+  // These tests exercise behaviour that was broken on main:
+  //   - snapshot with --page-id must inject pageId
+  //   - tool-only snapshot path must be used consistently
+  //   - snapshot --format aria with --page-id must inject pageId
+
+  // #907 / #906: snapshot --format ai (default) with --page-id should use
+  // take_md_snapshot and inject pageId into the tool call.
+  const snapshotWithPage = await runCli(['--page-id', '3', 'snapshot']);
+  assert(snapshotWithPage.ok === true, `snapshot --page-id failed: ${JSON.stringify(snapshotWithPage)}`);
+  assert(snapshotWithPage.tool === 'take_md_snapshot',
+    `snapshot --page-id should use take_md_snapshot tool, got: ${snapshotWithPage.tool}`);
+  assert(snapshotWithPage.raw?.pageId === 3,
+    `snapshot --page-id 3 should inject pageId=3: ${JSON.stringify(snapshotWithPage.raw)}`);
+
+  // #907: snapshot --format aria with --page-id should inject pageId into
+  // the take_a11y_snapshot tool call.
+  const ariaWithPage = await runCli(['--page-id', '5', 'snapshot', '--format', 'aria']);
+  assert(ariaWithPage.ok === true, `aria snapshot --page-id failed: ${JSON.stringify(ariaWithPage)}`);
+  assert(ariaWithPage.tool === 'take_a11y_snapshot',
+    `aria snapshot should use take_a11y_snapshot, got: ${ariaWithPage.tool}`);
+  assert(ariaWithPage.raw?.pageId === 5,
+    `aria snapshot --page-id 5 should inject pageId=5: ${JSON.stringify(ariaWithPage.raw)}`);
+
+  // snapshot without --page-id should still use tool-only snapshot path.
+  const snapshotNoPage = await runCli(['snapshot']);
+  assert(snapshotNoPage.ok === true, `snapshot (no page-id) failed: ${JSON.stringify(snapshotNoPage)}`);
+  assert(snapshotNoPage.tool === 'take_md_snapshot',
+    `snapshot without --page-id should use take_md_snapshot, got tool: ${snapshotNoPage.tool}`);
+  assert(String(snapshotNoPage.snapshot).includes('Example Domain'),
+    `snapshot without --page-id content mismatch: ${JSON.stringify(snapshotNoPage)}`);
+
+  // #907: --timeout should control actual tool-call timeout budget.
+  delayToolResultMs = 800;
+  await expectCliFailure(['--timeout', '200', 'snapshot', '--format', 'aria'], /Request timed out after 200ms/);
+  delayToolResultMs = 0;
+
+  // Missing required pageId should include actionable hint.
+  missingPageIdMode = true;
+  await expectCliFailure(['navigate', 'https://example.com'], /Hint: use `tabs` to list pages, then pass --page-id <id> to target a specific tab\./);
+  missingPageIdMode = false;
 
   console.log('browser cli e2e ok');
 } finally {
@@ -194,9 +298,9 @@ function handleToolCall(name, args) {
         ],
       });
     case 'new_page':
-      return jsonResult({ pageId: 3, url: args.url ?? 'about:blank' });
+      return jsonResult({ pageId: 3, url: args.url ?? 'about:blank', waitForReady: args.waitForReady ?? null });
     case 'navigate_page':
-      return jsonResult({ pageId: args.pageId ?? 1, url: args.url, type: args.type ?? 'url' });
+      return jsonResult({ pageId: args.pageId ?? 1, url: args.url, type: args.type ?? 'url', timeoutMs: args.timeoutMs ?? null });
     case 'switch_to_page':
       return jsonResult({ pageId: args.pageId, switched: true });
     case 'select_page':
@@ -212,7 +316,7 @@ function handleToolCall(name, args) {
         ],
       };
     case 'click':
-      return jsonResult({ clicked: args.ref ?? null, double: Boolean(args.dblClick) });
+      return jsonResult({ clicked: args.ref ?? null, double: Boolean(args.dblClick), ...(args.pageId !== undefined ? { pageId: args.pageId } : {}) });
     case 'fill':
       return jsonResult({ ref: args.ref ?? null, value: args.value ?? '' });
     case 'press_key':
@@ -234,6 +338,18 @@ function handleToolCall(name, args) {
       return jsonResult({ result: 'Example Domain', args: args.args ?? [] });
     case 'wait_for':
       return jsonResult({ text: args.text ?? [], timeout: args.timeout ?? 0 });
+    case 'take_md_snapshot':
+      return {
+        success: true,
+        content: [{ type: 'text', text: '# Example Domain\n\nThis domain is for use in illustrative examples.' }],
+        ...(args.pageId !== undefined ? { pageId: args.pageId } : {}),
+      };
+    case 'take_a11y_snapshot':
+      return {
+        success: true,
+        content: [{ type: 'text', text: '[12] More information (a11y)\n[23] Search input' }],
+        ...(args.pageId !== undefined ? { pageId: args.pageId } : {}),
+      };
     default:
       return jsonResult({ tool: name, args });
   }
@@ -308,6 +424,16 @@ async function runCli(args) {
     return JSON.parse(stdout);
   } catch (error) {
     throw new Error(`CLI did not emit JSON for ${args.join(' ')}: ${stdout}\nstderr=${stderr}\n${error}`);
+  }
+}
+
+async function expectCliFailure(args, pattern) {
+  try {
+    await runCli(args);
+    throw new Error(`Expected command to fail but it succeeded: ${args.join(' ')}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    assert(pattern.test(message), `Expected failure matching ${pattern}, got:\n${message}`);
   }
 }
 

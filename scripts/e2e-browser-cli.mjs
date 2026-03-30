@@ -114,6 +114,7 @@ try {
 
   const opened = await runCli(['open', 'https://example.com/docs']);
   assert(opened.ok === true && opened.tool === 'new_page', `open failed: ${JSON.stringify(opened)}`);
+  assert(!JSON.stringify(opened.raw || {}).includes('Current browser state'), `open should not include browser state: ${JSON.stringify(opened)}`);
 
   const selected = await runCli(['tab', 'select', '2']);
   assert(selected.ok === true && selected.tool === 'select_page', `tab select failed: ${JSON.stringify(selected)}`);
@@ -130,9 +131,11 @@ try {
 
   const clicked = await runCli(['click', '12', '--double']);
   assert(clicked.ok === true && clicked.tool === 'click', `click failed: ${JSON.stringify(clicked)}`);
+  assert(!JSON.stringify(clicked.raw || {}).includes('Current browser state'), `click should not include browser state: ${JSON.stringify(clicked)}`);
 
   const typed = await runCli(['type', '23', 'hello world', '--submit']);
   assert(typed.ok === true && typed.tool === 'fill', `type failed: ${JSON.stringify(typed)}`);
+  assert(!JSON.stringify(typed.raw || {}).includes('Current browser state'), `type should not include browser state: ${JSON.stringify(typed)}`);
 
   const pressed = await runCli(['press', 'Enter']);
   assert(pressed.ok === true && pressed.tool === 'press_key', `press failed: ${JSON.stringify(pressed)}`);
@@ -175,6 +178,19 @@ try {
 }
 
 function handleToolCall(name, args) {
+  if (name === 'new_page' && args.__skipPageContent !== true) {
+    throw new Error(`Expected __skipPageContent=true for ${name} without explicit page context: ${JSON.stringify(args)}`);
+  }
+  if (name === 'click' && args.__skipPageContent !== true) {
+    throw new Error(`Expected __skipPageContent=true for ${name} without explicit page context: ${JSON.stringify(args)}`);
+  }
+  if (name === 'fill' && args.__skipPageContent !== true) {
+    throw new Error(`Expected __skipPageContent=true for ${name} without explicit page context: ${JSON.stringify(args)}`);
+  }
+  if ((name === 'select_page' || name === 'close_page') && args.__skipPageContent === true) {
+    throw new Error(`Did not expect __skipPageContent for explicit page-context tool ${name}: ${JSON.stringify(args)}`);
+  }
+
   switch (name) {
     case 'list_pages':
       return jsonResult({

@@ -133,13 +133,15 @@ export class ExtensionConnection extends EventEmitter {
         await new Promise<void>((resolve, reject) => {
           const ws = new WebSocket(`ws://127.0.0.1:${this.port}`);
           const timeout = setTimeout(() => {
-            ws.close();
+            ws.removeAllListeners();
+            ws.terminate();
             reject(new Error('Timeout'));
           }, 1000);
           
           ws.on('open', () => {
             clearTimeout(timeout);
-            ws.close();
+            ws.removeAllListeners();
+            ws.terminate();
             resolve();
           });
           
@@ -271,7 +273,13 @@ export class ExtensionConnection extends EventEmitter {
     this.pendingRequests.clear();
 
     if (this.ws) {
-      this.ws.close();
+      // Remove all listeners to prevent stray callbacks (e.g. the 'close'
+      // handler scheduling a reconnect or keeping the EventEmitter alive).
+      this.ws.removeAllListeners();
+      // terminate() destroys the underlying socket immediately instead of
+      // waiting for the TCP close handshake, which lets the Node.js event
+      // loop exit promptly.
+      this.ws.terminate();
       this.ws = null;
     }
 

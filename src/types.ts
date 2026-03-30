@@ -38,7 +38,7 @@ export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
  * Message from extension to MCP server
  */
 export interface ExtensionMessage {
-  type: 'connected' | 'disconnected' | 'tool_result' | 'tools_list' | 'error' | 'snapshot' | 'extension_status' | 'extension_disconnected';
+  type: 'connected' | 'disconnected' | 'tool_result' | 'tools_list' | 'error' | 'extension_status' | 'extension_disconnected';
   requestId?: string;
   data?: unknown;
   error?: string;
@@ -49,7 +49,7 @@ export interface ExtensionMessage {
  * Message from MCP server to extension
  */
 export interface ServerMessage {
-  type: 'list_tools' | 'call_tool' | 'get_snapshot' | 'ping';
+  type: 'list_tools' | 'call_tool' | 'ping';
   requestId: string;
   data?: {
     name?: string;
@@ -98,15 +98,6 @@ export interface ToolResult {
 export type ToolResultContent =
   | { type: 'text'; text: string }
   | { type: 'image'; data: string; mimeType: string };
-
-/**
- * Accessibility snapshot result
- */
-export interface SnapshotResult {
-  url: string;
-  title: string;
-  snapshot: string;
-}
 
 /**
  * Server configuration

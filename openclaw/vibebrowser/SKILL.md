@@ -79,12 +79,13 @@ If you set `VIBE_RELAY_URL`, append:
 
 ## Safe operating rules
 
-- **Never use `focus` or `tab select` unless explicitly asked.** The user may be actively working in the browser — switching their active tab is disruptive. Instead, pass `--page-id <id>` to target a specific tab without switching focus. Get the page ID from `tabs` output, then use it on any command:
+- **Never use `focus` or `tab select` unless explicitly asked.** The user may be actively working in the browser — switching their active tab is disruptive. Instead, pass `--page-id <id>` (or `--pageId <id>`) to target a specific tab without switching focus. Get the page ID from `tabs` output, then use it on any command:
   ```bash
   vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id 2 snapshot
   vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id 2 click 7
   ```
 - Prefer `browser tabs` or `browser snapshot` before acting.
+- `snapshot` is tool-only and maps to extension snapshot tools (`take_md_snapshot` by default, `take_a11y_snapshot` for `--format aria`).
 - Use `browser open <url>` to create a fresh page when possible.
 - Use `browser evaluate --fn ...` only for simple compatibility-safe expressions such as:
   - `() => 21 + 21`

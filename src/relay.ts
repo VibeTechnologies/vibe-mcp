@@ -41,7 +41,7 @@ const LOG_FILE = join(VIBE_DIR, 'relay.log');
  * Message from extension
  */
 interface ExtensionMessage {
-  type: 'connected' | 'disconnected' | 'tool_result' | 'tools_list' | 'error' | 'snapshot';
+  type: 'connected' | 'disconnected' | 'tool_result' | 'tools_list' | 'error';
   requestId?: string;
   data?: unknown;
   error?: string;
@@ -51,7 +51,7 @@ interface ExtensionMessage {
  * Message to extension
  */
 interface ServerMessage {
-  type: 'list_tools' | 'call_tool' | 'get_snapshot' | 'ping';
+  type: 'list_tools' | 'call_tool' | 'ping';
   requestId: string;
   data?: {
     name?: string;

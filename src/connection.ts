@@ -17,7 +17,6 @@ import {
   ServerMessage,
   ToolDefinition,
   ToolResult,
-  SnapshotResult,
 } from './types.js';
 import { isRelayRunning, AGENT_PORT, EXTENSION_PORT } from './relay.js';
 
@@ -330,10 +329,6 @@ export class ExtensionConnection extends EventEmitter {
         this.emit('tools_updated', this.tools);
         break;
 
-      case 'snapshot':
-        this.emit('snapshot', message.data);
-        break;
-
       case 'error':
         this.log(`Error: ${message.error}`);
         break;
@@ -431,13 +426,6 @@ export class ExtensionConnection extends EventEmitter {
    */
   async callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<ToolResult> {
     return this.sendRequest<ToolResult>('call_tool', { name, arguments: args }, timeoutMs);
-  }
-
-  /**
-   * Get accessibility snapshot of current page
-   */
-  async getSnapshot(timeoutMs?: number): Promise<SnapshotResult> {
-    return this.sendRequest<SnapshotResult>('get_snapshot', undefined, timeoutMs);
   }
 
   /**

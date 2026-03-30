@@ -294,6 +294,13 @@ The package now exposes two executables:
 
 `vibebrowser-cli` accepts the OpenClaw-style `--browser-profile` flag for compatibility and supports `--json` for machine-readable output. Unlike OpenClaw's managed `openclaw` browser profile, this CLI always targets the real Vibe-connected browser session.
 
+Snapshot behavior is tool-only (no legacy snapshot RPC shortcut):
+
+- `snapshot` (default) resolves via `take_md_snapshot`
+- `snapshot --format aria` resolves via `take_a11y_snapshot`
+
+This keeps CLI behavior aligned with extension-supported tools and ensures page targeting works consistently with `--page-id`/`--pageId`.
+
 ### OpenClaw Integration
 
 There are two ways to use Vibe with OpenClaw:

@@ -597,47 +597,11 @@ class BrowserCliContext {
     labels: boolean;
   }): Promise<CommandOutput> {
     const wantsAria = options.format === 'aria' || options.interactive || Boolean(options.selector) || Boolean(options.frame);
-    // The get_snapshot protocol message does not accept pageId, so when
-    // --page-id is set we must use the tool-call path instead.
-    if (!wantsAria && this.pageId === undefined) {
-      try {
-        const result = await this.connection.getSnapshot(this.timeoutMs);
-        return {
-          ok: true,
-          command: 'snapshot',
-          profile: this.profile,
-          mode: this.mode(),
-          ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
-          format: options.format,
-          url: result.url,
-          title: result.title,
-          snapshot: limitText(result.snapshot, options.limit),
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        // If get_snapshot times out (common on heavy pages), fall through to
-        // the tool-call path which can use take_md_snapshot / take_a11y_snapshot.
-        if (!/(timed out|timeout)/i.test(message)) {
-          throw error;
-        }
-      }
-    }
-
     const invocation = await this.callTool(
       'snapshot',
       [
-        ...(wantsAria
-          ? []
-          : [{
-              names: ['take_md_snapshot'],
-              buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
-            }]),
         {
-          names: ['take_a11y_snapshot'],
-          buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
-        },
-        {
-          names: ['take_snapshot', 'get_page_content'],
+          names: [wantsAria ? 'take_a11y_snapshot' : 'take_md_snapshot'],
           buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
         },
       ],

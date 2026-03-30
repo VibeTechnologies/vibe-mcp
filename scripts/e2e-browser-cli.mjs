@@ -23,7 +23,6 @@ const TEST_DIR = mkdtempSync(join(tmpdir(), 'vibe-mcp-browser-cli-'));
 const SCREENSHOT_PATH = join(TEST_DIR, 'shot.png');
 let packedPackageDir = null;
 let cliInvocation = null;
-let forceSnapshotTimeout = false;
 let delayToolResultMs = 0;
 let missingPageIdMode = false;
 
@@ -80,23 +79,6 @@ try {
           type: 'tools_list',
           requestId: message.requestId,
           data: TOOLS,
-        }));
-        return;
-      }
-
-      if (message.type === 'get_snapshot') {
-        if (forceSnapshotTimeout) {
-          // Intentionally do not respond to exercise client timeout/fallback.
-          return;
-        }
-        ws.send(JSON.stringify({
-          type: 'snapshot',
-          requestId: message.requestId,
-          data: {
-            url: 'https://example.com',
-            title: 'Example Domain',
-            snapshot: '[12] More information\n[23] Search input',
-          },
         }));
         return;
       }
@@ -160,7 +142,8 @@ try {
   assert(tabSelected.ok === true && tabSelected.tool === 'switch_to_page', `tab select failed: ${JSON.stringify(tabSelected)}`);
 
   const snapshot = await runCli(['snapshot']);
-  assert(snapshot.snapshot && String(snapshot.snapshot).includes('More information'), `snapshot missing content: ${JSON.stringify(snapshot)}`);
+  assert(snapshot.ok === true && snapshot.tool === 'take_md_snapshot', `snapshot failed: ${JSON.stringify(snapshot)}`);
+  assert(snapshot.snapshot && String(snapshot.snapshot).includes('Example Domain'), `snapshot missing content: ${JSON.stringify(snapshot)}`);
 
   const screenshot = await runCli(['screenshot', '--ref', '12', '--output', SCREENSHOT_PATH]);
   assert(screenshot.ok === true, `screenshot failed: ${JSON.stringify(screenshot)}`);
@@ -197,13 +180,12 @@ try {
 
   // ── Regression tests (issues #905, #906, #907) ──────────────────────────
   // These tests exercise behaviour that was broken on main:
-  //   - snapshot with --page-id must use tool-call path (not get_snapshot)
-  //   - take_md_snapshot must be tried for non-aria snapshots
+  //   - snapshot with --page-id must inject pageId
+  //   - tool-only snapshot path must be used consistently
   //   - snapshot --format aria with --page-id must inject pageId
 
   // #907 / #906: snapshot --format ai (default) with --page-id should use
-  // the tool-call path (take_md_snapshot) instead of get_snapshot protocol,
-  // and the pageId must be injected into the tool call.
+  // take_md_snapshot and inject pageId into the tool call.
   const snapshotWithPage = await runCli(['--page-id', '3', 'snapshot']);
   assert(snapshotWithPage.ok === true, `snapshot --page-id failed: ${JSON.stringify(snapshotWithPage)}`);
   assert(snapshotWithPage.tool === 'take_md_snapshot',
@@ -220,23 +202,13 @@ try {
   assert(ariaWithPage.raw?.pageId === 5,
     `aria snapshot --page-id 5 should inject pageId=5: ${JSON.stringify(ariaWithPage.raw)}`);
 
-  // #907: snapshot without --page-id should still use get_snapshot protocol
-  // (fast path) and NOT include a tool field in the response.
+  // snapshot without --page-id should still use tool-only snapshot path.
   const snapshotNoPage = await runCli(['snapshot']);
   assert(snapshotNoPage.ok === true, `snapshot (no page-id) failed: ${JSON.stringify(snapshotNoPage)}`);
-  assert(snapshotNoPage.tool === undefined,
-    `snapshot without --page-id should use get_snapshot (no tool field), got tool: ${snapshotNoPage.tool}`);
-  assert(String(snapshotNoPage.snapshot).includes('More information'),
+  assert(snapshotNoPage.tool === 'take_md_snapshot',
+    `snapshot without --page-id should use take_md_snapshot, got tool: ${snapshotNoPage.tool}`);
+  assert(String(snapshotNoPage.snapshot).includes('Example Domain'),
     `snapshot without --page-id content mismatch: ${JSON.stringify(snapshotNoPage)}`);
-
-  // #907: if get_snapshot path times out, snapshot should gracefully fall
-  // back to tool-call extraction instead of failing immediately.
-  forceSnapshotTimeout = true;
-  const snapshotFallback = await runCli(['--timeout', '200', 'snapshot']);
-  forceSnapshotTimeout = false;
-  assert(snapshotFallback.ok === true, `snapshot fallback failed: ${JSON.stringify(snapshotFallback)}`);
-  assert(snapshotFallback.tool === 'take_md_snapshot',
-    `snapshot timeout fallback should use take_md_snapshot, got: ${snapshotFallback.tool}`);
 
   // #907: --timeout should control actual tool-call timeout budget.
   delayToolResultMs = 800;

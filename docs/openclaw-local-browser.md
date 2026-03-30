@@ -120,6 +120,13 @@ npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> tabs
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> snapshot --json
 ```
 
+`snapshot` in `vibebrowser-cli` is tool-only and maps directly to extension snapshot tools:
+
+- default (`--format ai`) -> `take_md_snapshot`
+- ARIA (`--format aria`) -> `take_a11y_snapshot`
+
+Use `--page-id <id>` (or `--pageId <id>`) to target a specific tab without switching user focus.
+
 That CLI accepts the same style of verbs and flags OpenClaw operators expect, but it still targets the Vibe real-browser path rather than an isolated OpenClaw-managed browser profile.
 
 ## Step 3: add the MCP server to OpenClaw

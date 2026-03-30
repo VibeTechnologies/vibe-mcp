@@ -488,7 +488,7 @@ class BrowserCliContext {
     this.sessions = await this.connection.listSessions(1_500).catch(() => this.connection.getSessions());
     await this.ensureToolsLoaded();
     if (!this.connection.isExtensionConnected()) {
-      throw new Error('No browser extension is connected to the Vibe relay');
+      throw new Error(this.connection.getConnectionErrorMessage());
     }
   }
 
@@ -1211,9 +1211,17 @@ class BrowserCliContext {
     if (this.remoteUuid) {
       return this.remoteUuid;
     }
-    if (this.requestedSessionId) {
+
+    const connectedSessionIds = new Set(
+      this.sessions
+        .filter((session) => session.connected)
+        .map((session) => session.sessionId)
+    );
+
+    if (this.requestedSessionId && connectedSessionIds.has(this.requestedSessionId)) {
       return this.requestedSessionId;
     }
+
     return this.sessions.find((session) => session.connected)?.sessionId;
   }
 }

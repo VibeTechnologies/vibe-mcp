@@ -386,7 +386,7 @@ export class ExtensionConnection extends EventEmitter {
     }
 
     if (type !== 'list_sessions' && !this.extensionConnected) {
-      throw new Error(this.remoteConfig ? NO_CONNECTION_REMOTE_MESSAGE : NO_CONNECTION_MESSAGE);
+      throw new Error(this.getConnectionErrorMessage());
     }
 
     const requestId = `req_${++this.requestIdCounter}`;
@@ -433,6 +433,28 @@ export class ExtensionConnection extends EventEmitter {
 
     const firstConnected = sessions.find((session) => session.connected);
     return firstConnected?.sessionId;
+  }
+
+  private getRequestedSessionConnectionError(sessions: RelaySessionSummary[] = this.sessions): string | undefined {
+    if (this.remoteConfig || !this.localSessionConfig.sessionId || sessions.length === 0) {
+      return undefined;
+    }
+
+    const requested = this.localSessionConfig.sessionId;
+    const matched = sessions.find((session) => session.sessionId === requested);
+    if (!matched || !matched.connected) {
+      return `No browser session connected for sessionId=${requested}`;
+    }
+
+    return undefined;
+  }
+
+  getConnectionErrorMessage(): string {
+    if (this.remoteConfig) {
+      return NO_CONNECTION_REMOTE_MESSAGE;
+    }
+
+    return this.getRequestedSessionConnectionError() || NO_CONNECTION_MESSAGE;
   }
 
   /**

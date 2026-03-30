@@ -191,6 +191,51 @@ function runCli(args, timeoutMs = MAX_CLI_MS) {
   });
 }
 
+function runCliExpectFailure(args, timeoutMs = MAX_CLI_MS) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        LOCAL_BROWSER_CLI,
+        '--port', String(AGENT_PORT),
+        '--json',
+        ...args,
+      ],
+      {
+        cwd: PACKAGE_ROOT,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`CLI timed out after ${timeoutMs}ms: vibebrowser-cli ${args.join(' ')}\nstdout=${stdout}\nstderr=${stderr}`));
+    }, timeoutMs);
+
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      const elapsed = Date.now() - t0;
+      if (code === 0) {
+        reject(new Error(`CLI unexpectedly succeeded: ${args.join(' ')}\nstdout=${stdout}\nstderr=${stderr}`));
+        return;
+      }
+      try {
+        resolve({ data: JSON.parse(stdout), stderr, elapsed });
+      } catch (error) {
+        reject(new Error(`CLI did not emit valid JSON for failed command ${args.join(' ')}: ${stdout}\nstderr=${stderr}\n${error}`));
+      }
+    });
+
+    const t0 = Date.now();
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Main test
 // ---------------------------------------------------------------------------
@@ -318,7 +363,20 @@ async function main() {
     }
 
     // =================================================================
-    // TEST 5: `vibebrowser-cli open <url>` calls new_page through relay
+    // TEST 5: invalid requested session should fail with precise error
+    // =================================================================
+    {
+      const missingSession = 'browser-missing';
+      const { data, elapsed } = await runCliExpectFailure(['--session', missingSession, 'tabs']);
+      assert(data.ok === false, `invalid session should not be ok: ${JSON.stringify(data)}`);
+      assert(typeof data.error === 'string', `missing error message: ${JSON.stringify(data)}`);
+      assert(data.error.includes(`No browser session connected for sessionId=${missingSession}`), `wrong invalid-session error: ${JSON.stringify(data)}`);
+      assert(data.sessionId !== missingSession, `should not report missing session as active: ${JSON.stringify(data)}`);
+      console.log(`  tabs!s:  ${elapsed}ms (budget: ${MAX_CLI_MS}ms) — invalid session error ✓`);
+    }
+
+    // =================================================================
+    // TEST 6: `vibebrowser-cli open <url>` calls new_page through relay
     // =================================================================
     {
       const { data, elapsed } = await runCli(['open', 'https://example.com']);
@@ -328,7 +386,7 @@ async function main() {
     }
 
     // =================================================================
-    // TEST 6: `vibebrowser-cli click <ref>` calls click through relay
+    // TEST 7: `vibebrowser-cli click <ref>` calls click through relay
     // =================================================================
     {
       const { data, elapsed } = await runCli(['click', '42']);

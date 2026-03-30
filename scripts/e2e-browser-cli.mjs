@@ -34,8 +34,8 @@ let listPagesPlainText = false;
 
 const TOOLS = [
   tool('list_pages', {}),
-  tool('new_page', { url: { type: 'string' } }),
-  tool('navigate_page', { pageId: { type: 'number' }, url: { type: 'string' }, type: { type: 'string' } }),
+  tool('new_page', { url: { type: 'string' }, waitForReady: { type: 'boolean' } }),
+  tool('navigate_page', { pageId: { type: 'number' }, url: { type: 'string' }, type: { type: 'string' }, timeoutMs: { type: 'number' } }),
   tool('switch_to_page', { pageId: { type: 'number' } }),
   tool('select_page', { pageId: { type: 'number' } }),
   tool('close_page', { pageId: { type: 'number' } }),
@@ -131,6 +131,7 @@ try {
   listPagesPlainText = false;
   const opened = await runCli(['open', 'https://example.com/docs']);
   assert(opened.ok === true && opened.tool === 'new_page', `open failed: ${JSON.stringify(opened)}`);
+  assert(opened.raw?.waitForReady === false, `open should set waitForReady=false: ${JSON.stringify(opened.raw)}`);
   assert(
     typeof opened.pageContent === 'string' && opened.pageContent.includes('# Example Domain'),
     `open should include pageContent: ${JSON.stringify(opened)}`,
@@ -142,6 +143,10 @@ try {
     typeof navigated.pageContent === 'string' && navigated.pageContent.includes('# Example Domain'),
     `navigate should include pageContent: ${JSON.stringify(navigated)}`,
   );
+
+  const navigatedTimeout = await runCli(['--timeout', '12345', '--page-id', '3', 'navigate', 'https://example.com/docs']);
+  assert(navigatedTimeout.ok === true && navigatedTimeout.tool === 'navigate_page', `navigate with timeout failed: ${JSON.stringify(navigatedTimeout)}`);
+  assert(navigatedTimeout.raw?.timeoutMs === 12345, `navigate should pass timeoutMs=12345: ${JSON.stringify(navigatedTimeout.raw)}`);
 
   const closed = await runCli(['close', '2']);
   assert(closed.ok === true && closed.tool === 'close_page', `close failed: ${JSON.stringify(closed)}`);
@@ -270,9 +275,9 @@ function handleToolCall(name, args) {
         ],
       });
     case 'new_page':
-      return jsonResult({ pageId: 3, url: args.url ?? 'about:blank' });
+      return jsonResult({ pageId: 3, url: args.url ?? 'about:blank', waitForReady: args.waitForReady ?? null });
     case 'navigate_page':
-      return jsonResult({ pageId: args.pageId ?? 1, url: args.url, type: args.type ?? 'url' });
+      return jsonResult({ pageId: args.pageId ?? 1, url: args.url, type: args.type ?? 'url', timeoutMs: args.timeoutMs ?? null });
     case 'switch_to_page':
       return jsonResult({ pageId: args.pageId, switched: true });
     case 'select_page':

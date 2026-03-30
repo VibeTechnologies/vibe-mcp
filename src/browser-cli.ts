@@ -527,18 +527,18 @@ class BrowserCliContext {
         [
           {
             names: ['new_page', 'create_new_tab'],
-            buildArgs: (tool) => withUrlArgs(tool, url),
+            buildArgs: (tool) => withOpenArgs(tool, url),
           },
           {
             names: ['navigate_page', 'navigate_to_url'],
-            buildArgs: (tool) => withNavigateArgs(tool, url),
+            buildArgs: (tool) => withNavigateArgs(tool, url, this.timeoutMs),
           },
         ],
         {}
       );
 
       const output = this.outputFromInvocation('open', invocation);
-      return this.ensurePageContentInOutput('open', invocation, output);
+      return this.ensurePageContentInOutput('open', invocation, output, url);
     } catch (error) {
       const recovered = await this.recoverPageContentAfterTimeout('open', url, error);
       if (recovered) {
@@ -555,17 +555,17 @@ class BrowserCliContext {
         [
           {
             names: ['navigate_page', 'navigate_to_url'],
-            buildArgs: (tool) => withNavigateArgs(tool, url),
+            buildArgs: (tool) => withNavigateArgs(tool, url, this.timeoutMs),
           },
           {
             names: ['new_page', 'create_new_tab'],
-            buildArgs: (tool) => withUrlArgs(tool, url),
+            buildArgs: (tool) => withOpenArgs(tool, url),
           },
         ],
         {}
       );
       const output = this.outputFromInvocation('navigate', invocation);
-      return this.ensurePageContentInOutput('navigate', invocation, output);
+      return this.ensurePageContentInOutput('navigate', invocation, output, url);
     } catch (error) {
       const recovered = await this.recoverPageContentAfterTimeout('navigate', url, error);
       if (recovered) {
@@ -999,13 +999,14 @@ class BrowserCliContext {
     commandName: 'open' | 'navigate',
     invocation: InvocationResult,
     output: CommandOutput,
+    targetUrl?: string,
   ): Promise<CommandOutput> {
     if (!output.ok) {
       return output;
     }
 
     const currentText = firstText(invocation.result);
-    if (looksLikePageContentText(currentText)) {
+    if (looksLikePageContentText(currentText) && !isLikelyIncompletePageContent(currentText, targetUrl)) {
       return output;
     }
 
@@ -1014,15 +1015,16 @@ class BrowserCliContext {
       return output;
     }
 
-    const fallbackContent = await this.takeMarkdownSnapshotForPage(targetPageId);
-    if (!fallbackContent) {
+    const fallback = await this.takeMarkdownSnapshotForTarget(targetPageId, targetUrl);
+    if (!fallback.content) {
       return output;
     }
 
     return {
       ...output,
-      pageContent: fallbackContent,
+      pageContent: fallback.content,
       pageContentSource: 'take_md_snapshot',
+      ...(fallback.pageId !== targetPageId ? { pageId: fallback.pageId } : {}),
     };
   }
 
@@ -1054,8 +1056,8 @@ class BrowserCliContext {
       return undefined;
     }
 
-    const fallbackContent = await this.takeMarkdownSnapshotForPage(targetPageId, recoveryTimeoutMs);
-    if (!fallbackContent) {
+    const fallback = await this.takeMarkdownSnapshotForTarget(targetPageId, url, recoveryTimeoutMs);
+    if (!fallback.content) {
       return undefined;
     }
 
@@ -1067,14 +1069,43 @@ class BrowserCliContext {
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       tool: 'take_md_snapshot',
       recoveredFromTimeout: true,
-      pageId: targetPageId,
+      pageId: fallback.pageId,
       url,
-      pageContent: fallbackContent,
+      pageContent: fallback.content,
       raw: {
-        recovery: 'timeout',
-        timeoutError: error instanceof Error ? error.message : String(error),
+        recovery: 'timeout_fallback',
       },
     };
+  }
+
+  private async takeMarkdownSnapshotForTarget(
+    initialPageId: number,
+    targetUrl?: string,
+    timeoutMs: number = this.timeoutMs,
+  ): Promise<{ content?: string; pageId: number }> {
+    let latest: string | undefined;
+    let pageId = initialPageId;
+    const recoveryTimeoutMs = Math.max(timeoutMs, 10_000);
+    const attempts = 8;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      latest = await this.takeMarkdownSnapshotForPage(pageId, recoveryTimeoutMs);
+      if (latest && !isLikelyIncompletePageContent(latest, targetUrl)) {
+        return { content: latest, pageId };
+      }
+
+      if (targetUrl) {
+        const pages = await this.listPagesForRecovery(recoveryTimeoutMs);
+        const matched = findBestPageMatchByUrl(pages, targetUrl);
+        if (matched) {
+          pageId = matched.id;
+        }
+      }
+
+      if (attempt < attempts - 1) {
+        await delay(750);
+      }
+    }
+    return { content: latest, pageId };
   }
 
   private async listPagesForRecovery(timeoutMs: number): Promise<PageSummary[]> {
@@ -1115,7 +1146,14 @@ class BrowserCliContext {
     try {
       const result = await this.connection.callTool(snapshotTool.name, args, timeoutMs);
       const text = firstText(result as ToolResult & Record<string, unknown>);
-      return text || undefined;
+      if (!text) {
+        return undefined;
+      }
+      const trimmed = text.trim();
+      if (/^Error:/i.test(trimmed) || /Failed to get valid tab/i.test(trimmed)) {
+        return undefined;
+      }
+      return text;
     } catch {
       return undefined;
     }
@@ -1156,6 +1194,39 @@ function looksLikePageContentText(text: string): boolean {
   return /```(?:markdown|text|html)/i.test(trimmed) || /Page State Format:/i.test(trimmed);
 }
 
+function isLikelyIncompletePageContent(text: string, targetUrl?: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return true;
+  }
+
+  const interactiveRefCount = (trimmed.match(/\[M\d+:/g) || []).length;
+
+  // Common in early snapshots right after new_page(waitForReady=false):
+  // tab exists but title/url are still empty.
+  if (/Tab ID:[^\n]*\nTitle:\s*\nURL:\s*(?:\n|$)/i.test(trimmed)) {
+    return true;
+  }
+
+  if (/#\s*Markdown Snapshot:\s*Untitled/i.test(trimmed) && interactiveRefCount < 5) {
+    return true;
+  }
+
+  if (targetUrl) {
+    const normalizedTarget = normalizeUrlForMatch(targetUrl);
+    const hasAnyUrl = /\bURL:\s*\S+/i.test(trimmed);
+    const textNormalized = normalizeUrlForMatch(trimmed);
+    if (!hasAnyUrl) {
+      return true;
+    }
+    if (normalizedTarget && !textNormalized.includes(normalizedTarget)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function extractPageIdFromResult(result: ToolResult & Record<string, unknown>): number | undefined {
   const direct = firstDefined(result, ['pageId', 'tabId', 'id']);
   if (typeof direct === 'number' && Number.isFinite(direct)) {
@@ -1193,7 +1264,8 @@ function isTimeoutError(error: unknown): boolean {
 
 function findBestPageMatchByUrl(pages: PageSummary[], targetUrl: string): { id: number; url?: string } | undefined {
   const normalizedTarget = normalizeUrlForMatch(targetUrl);
-  let fallback: { id: number; url?: string } | undefined;
+  let bestExact: { id: number; url?: string } | undefined;
+  let bestPartial: { id: number; url?: string } | undefined;
 
   for (const page of pages) {
     const id = toFinitePageId(page.id);
@@ -1202,14 +1274,18 @@ function findBestPageMatchByUrl(pages: PageSummary[], targetUrl: string): { id: 
     }
     const normalizedPage = normalizeUrlForMatch(page.url);
     if (normalizedPage === normalizedTarget) {
-      return { id, url: page.url };
+      if (!bestExact || id > bestExact.id) {
+        bestExact = { id, url: page.url };
+      }
     }
-    if (!fallback && (normalizedPage.includes(normalizedTarget) || normalizedTarget.includes(normalizedPage))) {
-      fallback = { id, url: page.url };
+    if (normalizedPage.includes(normalizedTarget) || normalizedTarget.includes(normalizedPage)) {
+      if (!bestPartial || id > bestPartial.id) {
+        bestPartial = { id, url: page.url };
+      }
     }
   }
 
-  return fallback;
+  return bestExact ?? bestPartial;
 }
 
 function toFinitePageId(value: unknown): number | undefined {
@@ -1636,11 +1712,24 @@ function withUrlArgs(tool: ToolDefinition, url: string): Record<string, unknown>
   return args;
 }
 
-function withNavigateArgs(tool: ToolDefinition, url: string): Record<string, unknown> {
+function withOpenArgs(tool: ToolDefinition, url: string): Record<string, unknown> {
+  const args = withUrlArgs(tool, url);
+  const waitForReadyKey = hasProperty(tool, 'waitForReady');
+  if (waitForReadyKey) {
+    args[waitForReadyKey] = false;
+  }
+  return stripUndefined(args);
+}
+
+function withNavigateArgs(tool: ToolDefinition, url: string, timeoutMs?: number): Record<string, unknown> {
   const args = withUrlArgs(tool, url);
   const pageIdKey = hasProperty(tool, 'pageId', 'tabId');
   if (pageIdKey && !(pageIdKey in args)) {
     args[pageIdKey] = undefined;
+  }
+  const timeoutKey = hasProperty(tool, 'timeoutMs', 'timeout');
+  if (timeoutKey && typeof timeoutMs === 'number' && Number.isFinite(timeoutMs)) {
+    args[timeoutKey] = timeoutMs;
   }
   return stripUndefined(args);
 }

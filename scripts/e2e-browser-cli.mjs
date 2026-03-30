@@ -34,6 +34,7 @@ const TOOLS = [
   tool('list_pages', {}),
   tool('new_page', { url: { type: 'string' } }),
   tool('navigate_page', { pageId: { type: 'number' }, url: { type: 'string' }, type: { type: 'string' } }),
+  tool('switch_to_page', { pageId: { type: 'number' } }),
   tool('select_page', { pageId: { type: 'number' } }),
   tool('close_page', { pageId: { type: 'number' } }),
   tool('take_screenshot', {
@@ -123,6 +124,12 @@ try {
   const closed = await runCli(['close', '2']);
   assert(closed.ok === true && closed.tool === 'close_page', `close failed: ${JSON.stringify(closed)}`);
 
+  const focused = await runCli(['focus', '2']);
+  assert(focused.ok === true && focused.tool === 'switch_to_page', `focus failed: ${JSON.stringify(focused)}`);
+
+  const tabSelected = await runCli(['tab', 'select', '1']);
+  assert(tabSelected.ok === true && tabSelected.tool === 'switch_to_page', `tab select failed: ${JSON.stringify(tabSelected)}`);
+
   const snapshot = await runCli(['snapshot']);
   assert(snapshot.snapshot && String(snapshot.snapshot).includes('More information'), `snapshot missing content: ${JSON.stringify(snapshot)}`);
 
@@ -190,6 +197,8 @@ function handleToolCall(name, args) {
       return jsonResult({ pageId: 3, url: args.url ?? 'about:blank' });
     case 'navigate_page':
       return jsonResult({ pageId: args.pageId ?? 1, url: args.url, type: args.type ?? 'url' });
+    case 'switch_to_page':
+      return jsonResult({ pageId: args.pageId, switched: true });
     case 'select_page':
       return jsonResult({ pageId: args.pageId, selected: true });
     case 'close_page':

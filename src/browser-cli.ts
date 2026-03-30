@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
 import { ExtensionConnection } from './connection.js';
-import { DEFAULT_WS_PORT, type ToolDefinition, type ToolResult } from './types.js';
+import { DEFAULT_WS_PORT, type RelaySessionSummary, type ToolDefinition, type ToolResult } from './types.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** Short timeout for the `status` command — it should never block for 30 s. */
@@ -21,9 +21,11 @@ interface BrowserCommandOptions {
   port: string;
   debug: boolean;
   remote?: string;
+  session?: string;
   relayUrl?: string;
   json: boolean;
   timeout: string;
+  pageId?: string;
 }
 
 interface PageSummary {
@@ -47,6 +49,9 @@ interface CommandOutput {
   command: string;
   profile: string;
   mode: 'local' | 'remote';
+  sessionId?: string;
+  requestedSessionId?: string;
+  sessions?: RelaySessionSummary[];
   ignoredCompatibilityOptions?: string[];
   [key: string]: unknown;
 }
@@ -61,11 +66,13 @@ interface CommandContextInit {
   port: number;
   debug: boolean;
   remoteUuid?: string;
+  sessionId?: string;
   relayUrl?: string;
   profile: string;
   json: boolean;
   timeoutMs: number;
   target?: string;
+  pageId?: number;
 }
 
 interface RefTarget {
@@ -93,9 +100,12 @@ function buildBrowserCommand(command: Command): Command {
     .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
     .option('-d, --debug', 'Enable debug logging', false)
     .option('-r, --remote <uuid>', 'Connect to a remote extension via public relay (provide the extension UUID)', DEFAULT_REMOTE_UUID)
+    .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
     .option('--relay-url <url>', 'Custom relay server URL', DEFAULT_REMOTE_RELAY_URL)
     .option('--json', 'Emit machine-readable JSON output', false)
-    .option('--timeout <ms>', 'Command timeout in milliseconds', String(DEFAULT_TIMEOUT_MS));
+    .option('--timeout <ms>', 'Command timeout in milliseconds', String(DEFAULT_TIMEOUT_MS))
+    .option('--page-id <id>', 'Target a specific page/tab by its numeric ID (avoids switching the user\'s active tab)')
+    .option('--pageId <id>', 'Alias for --page-id');
 }
 
 function registerBrowserSubcommands(browser: Command): void {
@@ -134,6 +144,13 @@ function registerBrowserSubcommands(browser: Command): void {
         managedLifecycle: false,
         note: 'The Vibe browser bridge does not own the browser process, so stop only disconnects this CLI session',
       }));
+    });
+
+  browser
+    .command('sessions')
+    .description('List connected browser sessions')
+    .action(async function (this: Command) {
+      await runBrowserCommand(this, 'sessions', false, async (ctx) => ctx.listSessions());
     });
 
   browser
@@ -394,11 +411,13 @@ async function runBrowserCommand(
     port: parsePositiveInteger(globalOptions.port, '--port'),
     debug: Boolean(globalOptions.debug),
     remoteUuid: globalOptions.remote,
+    sessionId: globalOptions.session,
     relayUrl: globalOptions.relayUrl,
     profile: globalOptions.browserProfile || DEFAULT_BROWSER_PROFILE,
     json: Boolean(globalOptions.json),
     timeoutMs: parsePositiveInteger(globalOptions.timeout, '--timeout'),
     target: globalOptions.target,
+    pageId: globalOptions.pageId ? parsePositiveInteger(globalOptions.pageId, '--page-id') : undefined,
   });
 
   try {
@@ -423,9 +442,12 @@ class BrowserCliContext {
   private readonly json: boolean;
   private readonly timeoutMs: number;
   private readonly remoteUuid?: string;
+  private readonly requestedSessionId?: string;
   private readonly target?: string;
+  private readonly pageId?: number;
   private toolsLoaded = false;
   private tools: ToolDefinition[] = [];
+  private sessions: RelaySessionSummary[] = [];
   private readonly ignoredCompatibilityOptions: string[];
 
   constructor(init: CommandContextInit) {
@@ -433,12 +455,15 @@ class BrowserCliContext {
       init.port,
       init.debug,
       init.remoteUuid ? { uuid: init.remoteUuid, relayUrl: init.relayUrl } : undefined,
+      init.remoteUuid ? undefined : { sessionId: init.sessionId },
     );
     this.profile = init.profile;
     this.json = init.json;
     this.timeoutMs = init.timeoutMs;
     this.remoteUuid = init.remoteUuid;
+    this.requestedSessionId = init.sessionId;
     this.target = init.target;
+    this.pageId = init.pageId;
     this.ignoredCompatibilityOptions = [];
     if (this.target) {
       this.ignoredCompatibilityOptions.push(`target=${this.target}`);
@@ -448,6 +473,7 @@ class BrowserCliContext {
   async connect(): Promise<void> {
     await this.connection.start();
     await delay(100);
+    this.sessions = await this.connection.listSessions(1_500).catch(() => this.connection.getSessions());
     await this.connection.waitForToolsUpdate(500);
   }
 
@@ -459,13 +485,29 @@ class BrowserCliContext {
     if (this.connection.isExtensionConnected()) {
       return;
     }
+    this.sessions = await this.connection.listSessions(1_500).catch(() => this.connection.getSessions());
     await this.ensureToolsLoaded();
     if (!this.connection.isExtensionConnected()) {
-      throw new Error('No browser extension is connected to the Vibe relay');
+      throw new Error(this.connection.getConnectionErrorMessage());
     }
   }
 
+  async listSessions(): Promise<CommandOutput> {
+    this.sessions = await this.connection.listSessions(this.timeoutMs);
+    return {
+      ok: true,
+      command: 'sessions',
+      profile: this.profile,
+      mode: this.mode(),
+      ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
+      sessionId: this.currentSessionId(),
+      requestedSessionId: this.requestedSessionId,
+      sessions: this.sessions,
+    };
+  }
+
   async status(): Promise<CommandOutput> {
+    this.sessions = await this.connection.listSessions(STATUS_TOOLS_TIMEOUT_MS).catch(() => this.connection.getSessions());
     if (this.connection.isExtensionConnected()) {
       // Use a short timeout for status — this is a diagnostic command that
       // should return quickly.  Fall back to cached tools if the extension
@@ -478,6 +520,9 @@ class BrowserCliContext {
       command: 'status',
       profile: this.profile,
       mode: this.remoteUuid ? 'remote' : 'local',
+      sessionId: this.currentSessionId(),
+      requestedSessionId: this.requestedSessionId,
+      sessions: this.sessions,
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       relayConnected: this.connection.getStatus() === 'connected',
       extensionConnected: this.connection.isExtensionConnected(),
@@ -502,6 +547,8 @@ class BrowserCliContext {
       command: 'tabs',
       profile: this.profile,
       mode: this.mode(),
+      sessionId: this.currentSessionId(),
+      requestedSessionId: this.requestedSessionId,
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       tool: invocation.tool,
       pages,
@@ -514,40 +561,58 @@ class BrowserCliContext {
       return this.callGenericCommand('open', [{ names: ['new_page', 'create_new_tab'] }], {});
     }
 
-    const invocation = await this.callTool(
-      'open',
-      [
-        {
-          names: ['new_page', 'create_new_tab'],
-          buildArgs: (tool) => withUrlArgs(tool, url),
-        },
-        {
-          names: ['navigate_page', 'navigate_to_url'],
-          buildArgs: (tool) => withNavigateArgs(tool, url),
-        },
-      ],
-      {}
-    );
+    try {
+      const invocation = await this.callTool(
+        'open',
+        [
+          {
+            names: ['new_page', 'create_new_tab'],
+            buildArgs: (tool) => withOpenArgs(tool, url),
+          },
+          {
+            names: ['navigate_page', 'navigate_to_url'],
+            buildArgs: (tool) => withNavigateArgs(tool, url, this.timeoutMs),
+          },
+        ],
+        {}
+      );
 
-    return this.outputFromInvocation('open', invocation);
+      const output = this.outputFromInvocation('open', invocation);
+      return this.ensurePageContentInOutput('open', invocation, output, url);
+    } catch (error) {
+      const recovered = await this.recoverPageContentAfterTimeout('open', url, error);
+      if (recovered) {
+        return recovered;
+      }
+      throw error;
+    }
   }
 
   async navigate(url: string): Promise<CommandOutput> {
-    const invocation = await this.callTool(
-      'navigate',
-      [
-        {
-          names: ['navigate_page', 'navigate_to_url'],
-          buildArgs: (tool) => withNavigateArgs(tool, url),
-        },
-        {
-          names: ['new_page', 'create_new_tab'],
-          buildArgs: (tool) => withUrlArgs(tool, url),
-        },
-      ],
-      {}
-    );
-    return this.outputFromInvocation('navigate', invocation);
+    try {
+      const invocation = await this.callTool(
+        'navigate',
+        [
+          {
+            names: ['navigate_page', 'navigate_to_url'],
+            buildArgs: (tool) => withNavigateArgs(tool, url, this.timeoutMs),
+          },
+          {
+            names: ['new_page', 'create_new_tab'],
+            buildArgs: (tool) => withOpenArgs(tool, url),
+          },
+        ],
+        {}
+      );
+      const output = this.outputFromInvocation('navigate', invocation);
+      return this.ensurePageContentInOutput('navigate', invocation, output, url);
+    } catch (error) {
+      const recovered = await this.recoverPageContentAfterTimeout('navigate', url, error);
+      if (recovered) {
+        return recovered;
+      }
+      throw error;
+    }
   }
 
   async close(id: string): Promise<CommandOutput> {
@@ -590,31 +655,12 @@ class BrowserCliContext {
     labels: boolean;
   }): Promise<CommandOutput> {
     const wantsAria = options.format === 'aria' || options.interactive || Boolean(options.selector) || Boolean(options.frame);
-    if (!wantsAria) {
-      const result = await this.connection.getSnapshot();
-      return {
-        ok: true,
-        command: 'snapshot',
-        profile: this.profile,
-        mode: this.mode(),
-        ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
-        format: options.format,
-        url: result.url,
-        title: result.title,
-        snapshot: limitText(result.snapshot, options.limit),
-      };
-    }
-
     const invocation = await this.callTool(
       'snapshot',
       [
         {
-          names: ['take_a11y_snapshot'],
-          buildArgs: (tool) => withSnapshotArgs(tool, options),
-        },
-        {
-          names: ['take_snapshot', 'get_page_content'],
-          buildArgs: (tool) => withSnapshotArgs(tool, options),
+          names: [wantsAria ? 'take_a11y_snapshot' : 'take_md_snapshot'],
+          buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
         },
       ],
       {}
@@ -927,7 +973,22 @@ class BrowserCliContext {
         const args = candidate.buildArgs
           ? candidate.buildArgs(tool)
           : withCanonicalArgs(tool, canonicalArgs);
-        const result = await this.connection.callTool(tool.name, args);
+        // Inject --page-id into every tool call that accepts pageId/tabId,
+        // so the agent doesn't need to use focus/tab select (which disrupts
+        // the user's active browser tab).
+        if (this.pageId !== undefined) {
+          const pageKey = hasProperty(tool, 'pageId', 'tabId');
+          if (pageKey && !(pageKey in args)) {
+            args[pageKey] = this.pageId;
+          }
+        }
+        if (shouldRequestPageStateForCommand(commandName)) {
+          const pageStateKey = hasProperty(tool, 'pageStateFormat', 'page_state_format');
+          if (pageStateKey && !('pageStateFormat' in args) && !('page_state_format' in args)) {
+            args[pageStateKey] = 'markdown';
+          }
+        }
+        const result = await this.connection.callTool(tool.name, args, this.timeoutMs);
         return { tool: tool.name, args, result: result as ToolResult & Record<string, unknown> };
       }
     }
@@ -961,25 +1022,367 @@ class BrowserCliContext {
   }
 
   private outputFromInvocation(commandName: string, invocation: InvocationResult): CommandOutput {
+    const pageContent = firstText(invocation.result);
     return {
       ok: !invocation.result.isError,
       command: commandName,
       profile: this.profile,
       mode: this.mode(),
+      sessionId: this.currentSessionId(),
+      requestedSessionId: this.requestedSessionId,
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       tool: invocation.tool,
+      ...(looksLikePageContentText(pageContent) ? { pageContent } : {}),
       raw: normalizeToolResult(invocation.result),
     };
   }
 
+  private async ensurePageContentInOutput(
+    commandName: 'open' | 'navigate',
+    invocation: InvocationResult,
+    output: CommandOutput,
+    targetUrl?: string,
+  ): Promise<CommandOutput> {
+    if (!output.ok) {
+      return output;
+    }
+
+    const currentText = firstText(invocation.result);
+    if (looksLikePageContentText(currentText) && !isLikelyIncompletePageContent(currentText, targetUrl)) {
+      return output;
+    }
+
+    const targetPageId = extractPageIdFromResult(invocation.result) ?? this.pageId;
+    if (targetPageId === undefined) {
+      return output;
+    }
+
+    const fallback = await this.takeMarkdownSnapshotForTarget(targetPageId, targetUrl);
+    if (!fallback.content) {
+      return output;
+    }
+
+    return {
+      ...output,
+      pageContent: fallback.content,
+      pageContentSource: 'take_md_snapshot',
+      ...(fallback.pageId !== targetPageId ? { pageId: fallback.pageId } : {}),
+    };
+  }
+
+  private async recoverPageContentAfterTimeout(
+    commandName: 'open' | 'navigate',
+    url: string,
+    error: unknown,
+  ): Promise<CommandOutput | undefined> {
+    if (!isTimeoutError(error)) {
+      return undefined;
+    }
+
+    const recoveryTimeoutMs = Math.max(this.timeoutMs, 10_000);
+
+    let targetPageId = this.pageId;
+    if (targetPageId === undefined) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const pages = await this.listPagesForRecovery(recoveryTimeoutMs);
+        const matched = findBestPageMatchByUrl(pages, url);
+        if (matched) {
+          targetPageId = matched.id;
+          break;
+        }
+        await delay(750);
+      }
+    }
+
+    if (targetPageId === undefined) {
+      return undefined;
+    }
+
+    const fallback = await this.takeMarkdownSnapshotForTarget(targetPageId, url, recoveryTimeoutMs);
+    if (!fallback.content) {
+      return undefined;
+    }
+
+    return {
+      ok: true,
+      command: commandName,
+      profile: this.profile,
+      mode: this.mode(),
+      sessionId: this.currentSessionId(),
+      requestedSessionId: this.requestedSessionId,
+      ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
+      tool: 'take_md_snapshot',
+      recoveredFromTimeout: true,
+      pageId: fallback.pageId,
+      url,
+      pageContent: fallback.content,
+      raw: {
+        recovery: 'timeout_fallback',
+      },
+    };
+  }
+
+  private async takeMarkdownSnapshotForTarget(
+    initialPageId: number,
+    targetUrl?: string,
+    timeoutMs: number = this.timeoutMs,
+  ): Promise<{ content?: string; pageId: number }> {
+    let latest: string | undefined;
+    let pageId = initialPageId;
+    const recoveryTimeoutMs = Math.max(timeoutMs, 10_000);
+    const attempts = 8;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      latest = await this.takeMarkdownSnapshotForPage(pageId, recoveryTimeoutMs);
+      if (latest && !isLikelyIncompletePageContent(latest, targetUrl)) {
+        return { content: latest, pageId };
+      }
+
+      if (targetUrl) {
+        const pages = await this.listPagesForRecovery(recoveryTimeoutMs);
+        const matched = findBestPageMatchByUrl(pages, targetUrl);
+        if (matched) {
+          pageId = matched.id;
+        }
+      }
+
+      if (attempt < attempts - 1) {
+        await delay(750);
+      }
+    }
+    return { content: latest, pageId };
+  }
+
+  private async listPagesForRecovery(timeoutMs: number): Promise<PageSummary[]> {
+    try {
+      await this.ensureToolsLoaded(timeoutMs);
+      const listTool = this.tools.find((tool) => {
+        const normalized = normalizeName(tool.name);
+        return normalized === 'list_pages' || normalized === 'get_tabs';
+      });
+      if (!listTool) {
+        return [];
+      }
+
+      const result = await this.connection.callTool(listTool.name, {}, timeoutMs);
+      return extractPages(result as ToolResult & Record<string, unknown>);
+    } catch {
+      return [];
+    }
+  }
+
+  private async takeMarkdownSnapshotForPage(pageId: number, timeoutMs: number = this.timeoutMs): Promise<string | undefined> {
+    await this.ensureToolsLoaded();
+    const snapshotTool = this.tools.find((tool) => normalizeName(tool.name) === 'take_md_snapshot');
+    if (!snapshotTool) {
+      return undefined;
+    }
+
+    const args: Record<string, unknown> = {};
+    const pageKey = hasProperty(snapshotTool, 'pageId', 'tabId');
+    if (pageKey) {
+      args[pageKey] = pageId;
+    }
+    const pageStateKey = hasProperty(snapshotTool, 'pageStateFormat', 'page_state_format');
+    if (pageStateKey) {
+      args[pageStateKey] = 'markdown';
+    }
+
+    try {
+      const result = await this.connection.callTool(snapshotTool.name, args, timeoutMs);
+      const text = firstText(result as ToolResult & Record<string, unknown>);
+      if (!text) {
+        return undefined;
+      }
+      const trimmed = text.trim();
+      if (/^Error:/i.test(trimmed) || /Failed to get valid tab/i.test(trimmed)) {
+        return undefined;
+      }
+      return text;
+    } catch {
+      return undefined;
+    }
+  }
+
   private mode(): 'local' | 'remote' {
     return this.remoteUuid ? 'remote' : 'local';
+  }
+
+  private currentSessionId(): string | undefined {
+    if (this.remoteUuid) {
+      return this.remoteUuid;
+    }
+
+    const connectedSessionIds = new Set(
+      this.sessions
+        .filter((session) => session.connected)
+        .map((session) => session.sessionId)
+    );
+
+    if (this.requestedSessionId && connectedSessionIds.has(this.requestedSessionId)) {
+      return this.requestedSessionId;
+    }
+
+    return this.sessions.find((session) => session.connected)?.sessionId;
   }
 }
 
 interface ToolCandidate {
   names: string[];
   buildArgs?: (tool: ToolDefinition) => Record<string, unknown>;
+}
+
+function shouldRequestPageStateForCommand(commandName: string): boolean {
+  return new Set([
+    'open',
+    'navigate',
+    'click',
+    'type',
+    'press',
+    'hover',
+    'drag',
+    'select',
+    'fill',
+  ]).has(commandName);
+}
+
+function looksLikePageContentText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (/Error retrieving page content/i.test(trimmed) || /page content extraction failed/i.test(trimmed)) {
+    return false;
+  }
+  return /```(?:markdown|text|html)/i.test(trimmed) || /Page State Format:/i.test(trimmed);
+}
+
+function isLikelyIncompletePageContent(text: string, targetUrl?: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return true;
+  }
+
+  const interactiveRefCount = (trimmed.match(/\[M\d+:/g) || []).length;
+
+  // Common in early snapshots right after new_page(waitForReady=false):
+  // tab exists but title/url are still empty.
+  if (/Tab ID:[^\n]*\nTitle:\s*\nURL:\s*(?:\n|$)/i.test(trimmed)) {
+    return true;
+  }
+
+  if (/#\s*Markdown Snapshot:\s*Untitled/i.test(trimmed) && interactiveRefCount < 5) {
+    return true;
+  }
+
+  if (targetUrl) {
+    const normalizedTarget = normalizeUrlForMatch(targetUrl);
+    const hasAnyUrl = /\bURL:\s*\S+/i.test(trimmed);
+    const textNormalized = normalizeUrlForMatch(trimmed);
+    if (!hasAnyUrl) {
+      return true;
+    }
+    if (normalizedTarget && !textNormalized.includes(normalizedTarget)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function extractPageIdFromResult(result: ToolResult & Record<string, unknown>): number | undefined {
+  const direct = firstDefined(result, ['pageId', 'tabId', 'id']);
+  if (typeof direct === 'number' && Number.isFinite(direct)) {
+    return direct;
+  }
+
+  const parsed = parseResultText(result);
+  if (parsed && typeof parsed === 'object') {
+    const parsedId = firstDefined(parsed as Record<string, unknown>, ['pageId', 'tabId', 'id']);
+    if (typeof parsedId === 'number' && Number.isFinite(parsedId)) {
+      return parsedId;
+    }
+  }
+
+  const text = firstText(result);
+  const createdMatch = /new background page \(ID:\s*(\d+)\)/i.exec(text);
+  if (createdMatch) {
+    return Number.parseInt(createdMatch[1], 10);
+  }
+  const tabMatch = /\bTab ID:\s*(\d+)\b/i.exec(text);
+  if (tabMatch) {
+    return Number.parseInt(tabMatch[1], 10);
+  }
+  const pageMatch = /\bPage ID:\s*(\d+)\b/i.exec(text);
+  if (pageMatch) {
+    return Number.parseInt(pageMatch[1], 10);
+  }
+  return undefined;
+}
+
+function isTimeoutError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /timed out|timeout/i.test(message);
+}
+
+function findBestPageMatchByUrl(pages: PageSummary[], targetUrl: string): { id: number; url?: string } | undefined {
+  const normalizedTarget = normalizeUrlForMatch(targetUrl);
+  let bestExact: { id: number; url?: string } | undefined;
+  let bestPartial: { id: number; url?: string } | undefined;
+
+  for (const page of pages) {
+    const id = toFinitePageId(page.id);
+    if (id === undefined || typeof page.url !== 'string') {
+      continue;
+    }
+    const normalizedPage = normalizeUrlForMatch(page.url);
+    if (normalizedPage === normalizedTarget) {
+      if (!bestExact || id > bestExact.id) {
+        bestExact = { id, url: page.url };
+      }
+    }
+    if (normalizedPage.includes(normalizedTarget) || normalizedTarget.includes(normalizedPage)) {
+      if (!bestPartial || id > bestPartial.id) {
+        bestPartial = { id, url: page.url };
+      }
+    }
+  }
+
+  return bestExact ?? bestPartial;
+}
+
+function toFinitePageId(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function normalizeUrlForMatch(value: string): string {
+  const trimmed = value.trim().replace(/\/$/, '');
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    return safeDecode(`${parsed.origin}${parsed.pathname}${parsed.search}`.replace(/\/$/, ''));
+  } catch {
+    return safeDecode(trimmed);
+  }
+}
+
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 function emitOutput(asJson: boolean, data: CommandOutput, humanOutput: string): void {
@@ -996,7 +1399,11 @@ function emitError(
   ctx: BrowserCliContext,
   error: unknown,
 ): void {
-  const message = error instanceof Error ? error.message : String(error);
+  let message = error instanceof Error ? error.message : String(error);
+  // Improve guidance when the extension requires a pageId that wasn't provided
+  if (/\bpageId\b/i.test(message) && /\bmissing\b|\brequired\b/i.test(message)) {
+    message += '\nHint: use `tabs` to list pages, then pass --page-id <id> to target a specific tab.';
+  }
   if (asJson) {
     console.log(JSON.stringify({
       ok: false,
@@ -1018,21 +1425,38 @@ function formatHumanOutput(commandName: string, output: CommandOutput): string {
       return [
         `Profile: ${String(output.profile)}`,
         `Mode: ${String(output.mode)}`,
+        output.sessionId ? `Session: ${String(output.sessionId)}` : null,
+        output.requestedSessionId && output.requestedSessionId !== output.sessionId ? `Requested session: ${String(output.requestedSessionId)}` : null,
         `Relay connected: ${boolText(output.relayConnected)}`,
         `Extension connected: ${boolText(output.extensionConnected)}`,
         `Managed lifecycle: ${boolText(output.managedLifecycle)}`,
         output.toolCount !== undefined ? `Tools: ${String(output.toolCount)}` : null,
         output.note ? String(output.note) : null,
       ].filter(Boolean).join('\n');
+    case 'sessions': {
+      const sessions = Array.isArray(output.sessions) ? output.sessions as RelaySessionSummary[] : [];
+      if (sessions.length === 0) {
+        return 'No browser sessions connected';
+      }
+      return sessions.map((session, index) => {
+        const selected = output.sessionId === session.sessionId ? ' [selected]' : '';
+        const connected = session.connected ? 'connected' : 'disconnected';
+        const tools = session.toolCount !== undefined ? ` tools=${session.toolCount}` : '';
+        return `${index + 1}. ${session.sessionId}${selected} - ${connected}${tools}`;
+      }).join('\n');
+    }
     case 'tabs':
     case 'tab': {
       const pages = Array.isArray(output.pages) ? output.pages as PageSummary[] : [];
       if (pages.length === 0) {
         return firstDefinedText(output.raw, 'No tabs reported by browser');
       }
-      return pages.map((page, index) =>
+      return [
+        output.sessionId ? `Session: ${String(output.sessionId)}` : null,
+        ...pages.map((page, index) =>
         `${index + 1}. ${page.active ? '[active] ' : ''}${page.title || '(untitled)'}${page.url ? ` — ${page.url}` : ''}${page.id !== undefined ? ` [id=${page.id}]` : ''}`
-      ).join('\n');
+      ),
+      ].filter(Boolean).join('\n');
     }
     case 'snapshot':
       return [
@@ -1367,11 +1791,24 @@ function withUrlArgs(tool: ToolDefinition, url: string): Record<string, unknown>
   return args;
 }
 
-function withNavigateArgs(tool: ToolDefinition, url: string): Record<string, unknown> {
+function withOpenArgs(tool: ToolDefinition, url: string): Record<string, unknown> {
+  const args = withUrlArgs(tool, url);
+  const waitForReadyKey = hasProperty(tool, 'waitForReady');
+  if (waitForReadyKey) {
+    args[waitForReadyKey] = false;
+  }
+  return stripUndefined(args);
+}
+
+function withNavigateArgs(tool: ToolDefinition, url: string, timeoutMs?: number): Record<string, unknown> {
   const args = withUrlArgs(tool, url);
   const pageIdKey = hasProperty(tool, 'pageId', 'tabId');
   if (pageIdKey && !(pageIdKey in args)) {
     args[pageIdKey] = undefined;
+  }
+  const timeoutKey = hasProperty(tool, 'timeoutMs', 'timeout');
+  if (timeoutKey && typeof timeoutMs === 'number' && Number.isFinite(timeoutMs)) {
+    args[timeoutKey] = timeoutMs;
   }
   return stripUndefined(args);
 }

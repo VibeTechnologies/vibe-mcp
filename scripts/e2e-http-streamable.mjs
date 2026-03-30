@@ -19,6 +19,7 @@ RESERVED_PORTS.add(MCP_HTTP_PORT);
 const RELAY_PORT = configuredRelayPort ?? await findFreePort(RESERVED_PORTS);
 const RELAY_URL = `ws://${RELAY_HOST}:${RELAY_PORT}`;
 const REMOTE_UUID = 'test-http-relay-uuid';
+const SESSION_ID = REMOTE_UUID;
 const MCP_URL = `http://${RELAY_HOST}:${MCP_HTTP_PORT}/mcp`;
 
 function getConfiguredPort(...names) {
@@ -126,6 +127,7 @@ async function main() {
           return;
         }
         ws.send(JSON.stringify({ type: 'extension_status', connected: true }));
+        ws.send(JSON.stringify({ type: 'connected', sessionId: SESSION_ID }));
         resolve(ws);
       });
     });
@@ -222,6 +224,94 @@ async function main() {
     const textContent = callResult.content.find((item) => item.type === 'text');
     if (!textContent || textContent.text !== 'hello from http') {
       throw new Error(`Unexpected tool result: ${JSON.stringify(callResult)}`);
+    }
+
+    // Update tools and verify MCP call responses include page content fallback
+    // for navigation-style tools that return only structured metadata.
+    extensionWs.send(JSON.stringify({
+      type: 'tools_list',
+      data: [
+        {
+          name: 'echo',
+          description: 'Echo a string',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              text: { type: 'string' },
+            },
+            required: ['text'],
+          },
+        },
+        {
+          name: 'new_page',
+          description: 'Open a new page',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              url: { type: 'string' },
+            },
+            required: ['url'],
+          },
+        },
+        {
+          name: 'take_md_snapshot',
+          description: 'Take markdown snapshot',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              pageId: { type: 'number' },
+            },
+          },
+        },
+      ],
+    }));
+    await delay(50);
+
+    const openToolCallPromise = waitForWebSocketMessage(
+      extensionWs,
+      (message) => message.type === 'call_tool' && message.data?.name === 'new_page',
+    );
+    const openResultPromise = client.callTool({
+      name: 'new_page',
+      arguments: { url: 'https://example.com' },
+    });
+    const openToolCall = await openToolCallPromise;
+
+    const snapshotCallPromise = waitForWebSocketMessage(
+      extensionWs,
+      (message) => message.type === 'call_tool' && message.data?.name === 'take_md_snapshot',
+    );
+
+    extensionWs.send(JSON.stringify({
+      type: 'tool_result',
+      requestId: openToolCall.requestId,
+      data: {
+        success: true,
+        content: [{ type: 'text', text: JSON.stringify({ pageId: 77, url: 'https://example.com' }) }],
+      },
+    }));
+
+    const snapshotCall = await snapshotCallPromise;
+    if (snapshotCall.data?.arguments?.pageId !== 77) {
+      throw new Error(`Expected take_md_snapshot pageId=77, got: ${JSON.stringify(snapshotCall)}`);
+    }
+
+    extensionWs.send(JSON.stringify({
+      type: 'tool_result',
+      requestId: snapshotCall.requestId,
+      data: {
+        success: true,
+        content: [{
+          type: 'text',
+          text: '# Markdown Snapshot: Example\nURL: https://example.com\n\n```markdown\nExample page\n```',
+        }],
+      },
+    }));
+
+    const openResult = await openResultPromise;
+    const openText = openResult.content.find((item) => item.type === 'text');
+    if (!openText || !openText.text.includes('# Markdown Snapshot: Example')) {
+      throw new Error(`Expected page content fallback in MCP response: ${JSON.stringify(openResult)}`);
     }
 
     await client.close();

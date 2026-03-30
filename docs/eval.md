@@ -16,6 +16,7 @@ Evaluation date: **March 26, 2026 (America/Los_Angeles)**.
 | Relay race regression | `npm run test:e2e:relay-race` | local | fake extension socket | relay preserves in-flight tool calls across extension reconnects |
 | HTTP MCP transport | `npm run test:e2e:http` | local | fake extension socket | streamable HTTP MCP path works end to end |
 | OpenClaw-compatible browser CLI | `npm run test:e2e:browser-cli` | `local`, `pack`, `npm` | fake extension socket | `vibebrowser-cli` command shape, JSON output, and tool routing work end to end |
+| Live browser CLI regression | `npm run test:e2e:browser-cli-live` | local | real extension session | validates `open`/`snapshot` behavior on a real URL against the connected Vibe extension |
 | Codex + OpenCode MCP bridge | `npm run test:e2e:agents` | `local`, `pack`, `npm` | real extension session | packaged `vibebrowser-mcp` can be launched by Codex/OpenCode tooling and route MCP traffic to a real Vibe-connected browser |
 | OpenCode financial eval (`../vibe`) | `node tests/mcp-eval.test.js --skip-build --model github-copilot/gpt-4.1 --mcp-source ...` | `auto`, `local`, `pack`, `npm` | harness-managed browser + extension | full OpenCode browser task execution against the Vibe extension |
 
@@ -156,6 +157,25 @@ Hard requirement:
   - `E2E_CODEX_REASONING_EFFORT=low`
   - `E2E_CODEX_TIMEOUT_MS=480000`
 
+### 5a. Live browser CLI regression (real extension)
+
+```bash
+cd /Users/engineer/workspace/vibebrowser/vibe-mcp
+npm run test:e2e:browser-cli-live
+```
+
+Optional env overrides:
+
+- `BROWSER_LIVE_URL` (default: X search URL from issue repro)
+- `BROWSER_LIVE_TIMEOUT_MS` (default: `60000`)
+- `BROWSER_LIVE_MIN_CONTENT_CHARS` (default: `200`)
+
+Pass signal:
+
+- output contains `live browser cli e2e ok`
+- output prints measured `open latency`, content lengths, and matched `pageId`
+- test proves real-extension `open` + page-content + `snapshot --page-id` flow (not mocked)
+
 ### 5b. Latest built extension eval via Chrome for Testing
 
 Build the dev extension first:
@@ -236,6 +256,7 @@ Commands executed in this session:
 | `E2E_TEST_BROWSER=1 E2E_VIBE_REPO_ROOT=/Users/engineer/workspace/vibebrowser/vibe E2E_TEST_EXTENSION_PATH=/Users/engineer/workspace/vibebrowser/vibe/dist/extension/dev E2E_MCP_SOURCE=npm npm run test:e2e:agents` | PASS | canonical repo entrypoint passed against the latest built extension in isolated browser mode |
 | `npx -y --package @vibebrowser/mcp@latest vibebrowser-cli --version` | PASS | standalone CLI is now available from npm `latest` |
 | `E2E_BROWSER_CLI_SOURCE=npm node scripts/e2e-browser-cli.mjs` | PASS | npm-installed `vibebrowser-cli` passed end to end |
+| `npm run test:e2e:browser-cli-live` | PASS | real extension run against X search URL; reported open latency `60718ms`, open content `9119` chars, snapshot content `9564` chars |
 | `E2E_MCP_SOURCE=pack node scripts/e2e-mcp-agents.mjs` | FAIL (environment) | timed out waiting for a live Vibe extension connection on the relay path |
 
 Observed real-extension agent failure:

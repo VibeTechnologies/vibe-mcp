@@ -32,6 +32,7 @@ program
   .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
   .option('-d, --debug', 'Enable debug logging', false)
   .option('-r, --remote <uuid>', 'Connect to a remote extension via public relay (provide the extension UUID)')
+  .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
   .option('--relay-url <url>', 'Custom relay server URL (default: wss://relay.api.vibebrowser.app)')
   .option('--transport <mode>', 'MCP transport to expose: stdio or http', 'stdio')
   .option('--host <host>', 'Host to bind the HTTP server to', '127.0.0.1')
@@ -53,6 +54,7 @@ program
         httpPath: options.httpPath,
         allowedHosts: options.allowHost.length > 0 ? options.allowHost : undefined,
         remoteUuid: options.remote,
+        sessionId: options.session,
         remoteRelayUrl: options.relayUrl,
       });
 

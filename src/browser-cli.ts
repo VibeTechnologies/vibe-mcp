@@ -158,7 +158,7 @@ function registerBrowserSubcommands(browser: Command): void {
 
   tab
     .command('select <id>')
-    .description('Switch to a tab/page by its ID')
+    .description('Switch to a tab/page by its ID (rarely needed — most commands accept a tab id argument instead, prefer that to avoid disrupting the user\'s browser)')
     .action(async function (this: Command, id: string) {
       await runBrowserCommand(this, 'tab select', true, async (ctx) => ctx.focus(id));
     });
@@ -186,7 +186,7 @@ function registerBrowserSubcommands(browser: Command): void {
 
   browser
     .command('focus <id>')
-    .description('Switch focus to a tab/page by its ID')
+    .description('Switch focus to a tab/page by its ID (rarely needed — most commands accept a tab id argument instead, prefer that to avoid disrupting the user\'s browser)')
     .action(async function (this: Command, id: string) {
       await runBrowserCommand(this, 'focus', true, async (ctx) => ctx.focus(id));
     });

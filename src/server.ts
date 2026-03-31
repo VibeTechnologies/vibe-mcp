@@ -289,6 +289,10 @@ export class VibeMcpServer {
       return result;
     }
 
+    if (!hasExplicitPageContext(args) || shouldNeverFallbackToSnapshot(name)) {
+      return result;
+    }
+
     const primaryText = firstToolText(result);
     if (looksLikePageContentText(primaryText)) {
       return result;
@@ -583,6 +587,24 @@ function toRecord(value: unknown): Record<string, unknown> {
 
 function normalizeToolName(value: string): string {
   return value.replace(/[-\s]/g, '_').toLowerCase();
+}
+
+function hasExplicitPageContext(args: Record<string, unknown>): boolean {
+  const candidates = [args.pageId, args.tabId, args.page_id, args.tab_id];
+  return candidates.some((candidate) => {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return true;
+    }
+    if (typeof candidate === 'string') {
+      return /^\d+$/.test(candidate.trim());
+    }
+    return false;
+  });
+}
+
+function shouldNeverFallbackToSnapshot(name: string): boolean {
+  const normalized = normalizeToolName(name);
+  return normalized === 'close_page' || normalized === 'close_tab';
 }
 
 function shouldFallbackToSnapshot(name: string): boolean {

@@ -37,6 +37,30 @@ const RELAY_RECONNECT_DELAY = 2000;
 
 const DEFAULT_RELAY_URL = 'wss://relay.api.vibebrowser.app';
 
+function hasExplicitPageContext(args: Record<string, unknown>): boolean {
+  const candidates = [args.tabId, args.pageId, args.tab_id, args.page_id];
+  return candidates.some((candidate) => {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return true;
+    }
+    if (typeof candidate === 'string') {
+      return /^\d+$/.test(candidate.trim());
+    }
+    return false;
+  });
+}
+
+function withImplicitPageCaptureGuard(args: Record<string, unknown>): Record<string, unknown> {
+  if (args.__skipPageContent === true || hasExplicitPageContext(args)) {
+    return args;
+  }
+
+  return {
+    ...args,
+    __skipPageContent: true,
+  };
+}
+
 /**
  * Remote relay configuration
  */
@@ -533,7 +557,11 @@ export class ExtensionConnection extends EventEmitter {
    * Call a tool on the extension
    */
   async callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<ToolResult> {
-    return this.sendRequest<ToolResult>('call_tool', { name, arguments: args }, timeoutMs);
+    return this.sendRequest<ToolResult>(
+      'call_tool',
+      { name, arguments: withImplicitPageCaptureGuard(args) },
+      timeoutMs,
+    );
   }
 
   /**

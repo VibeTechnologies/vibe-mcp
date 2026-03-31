@@ -155,10 +155,8 @@ try {
   const opened = await runCli(['open', 'https://example.com/docs']);
   assert(opened.ok === true && opened.tool === 'new_page', `open failed: ${JSON.stringify(opened)}`);
   assert(opened.raw?.waitForReady === false, `open should set waitForReady=false: ${JSON.stringify(opened.raw)}`);
-  assert(
-    typeof opened.pageContent === 'string' && opened.pageContent.includes('# Example Domain'),
-    `open should include pageContent: ${JSON.stringify(opened)}`,
-  );
+  assert(opened.pageContent === undefined, `open should not include implicit pageContent without explicit pageId: ${JSON.stringify(opened)}`);
+  assert(!JSON.stringify(opened.raw || {}).includes('# Example Domain'), `open raw should not contain implicit snapshot fallback: ${JSON.stringify(opened.raw)}`);
 
   const navigated = await runCli(['--page-id', '3', 'navigate', 'https://example.com/docs']);
   assert(navigated.ok === true && navigated.tool === 'navigate_page', `navigate failed: ${JSON.stringify(navigated)}`);
@@ -173,6 +171,8 @@ try {
 
   const closed = await runCli(['close', '2']);
   assert(closed.ok === true && closed.tool === 'close_page', `close failed: ${JSON.stringify(closed)}`);
+  assert(closed.pageContent === undefined, `close should never include fallback pageContent: ${JSON.stringify(closed)}`);
+  assert(!JSON.stringify(closed.raw || {}).includes('# Example Domain'), `close raw should not contain fallback snapshot content: ${JSON.stringify(closed.raw)}`);
 
   const focused = await runCli(['focus', '2']);
   assert(focused.ok === true && focused.tool === 'switch_to_page', `focus failed: ${JSON.stringify(focused)}`);
@@ -279,6 +279,23 @@ try {
 }
 
 function handleToolCall(name, args) {
+  const hasExplicitPageContext = Number.isFinite(args.pageId) || Number.isFinite(args.tabId);
+
+  if (name === 'new_page' && args.__skipPageContent !== true) {
+    throw new Error(`Expected __skipPageContent=true for ${name} without explicit page context: ${JSON.stringify(args)}`);
+  }
+  if (name === 'click' && !hasExplicitPageContext && args.__skipPageContent !== true) {
+    throw new Error(`Expected __skipPageContent=true for ${name} without explicit page context: ${JSON.stringify(args)}`);
+  }
+  if (name === 'fill' && !hasExplicitPageContext && args.__skipPageContent !== true) {
+    throw new Error(`Expected __skipPageContent=true for ${name} without explicit page context: ${JSON.stringify(args)}`);
+  }
+  if ((name === 'navigate_page' || name === 'select_page' || name === 'close_page' || name === 'switch_to_page' || name === 'click' || name === 'fill')
+    && hasExplicitPageContext
+    && args.__skipPageContent === true) {
+    throw new Error(`Did not expect __skipPageContent for explicit page-context tool ${name}: ${JSON.stringify(args)}`);
+  }
+
   switch (name) {
     case 'list_pages':
       if (listPagesPlainText) {

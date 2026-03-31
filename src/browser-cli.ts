@@ -1047,6 +1047,10 @@ class BrowserCliContext {
       return output;
     }
 
+    if (!hasExplicitPageContext(invocation.args)) {
+      return output;
+    }
+
     const currentText = firstText(invocation.result);
     if (looksLikePageContentText(currentText) && !isLikelyIncompletePageContent(currentText, targetUrl)) {
       return output;
@@ -1079,20 +1083,13 @@ class BrowserCliContext {
       return undefined;
     }
 
+    if (this.pageId === undefined) {
+      return undefined;
+    }
+
     const recoveryTimeoutMs = Math.max(this.timeoutMs, 10_000);
 
     let targetPageId = this.pageId;
-    if (targetPageId === undefined) {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const pages = await this.listPagesForRecovery(recoveryTimeoutMs);
-        const matched = findBestPageMatchByUrl(pages, url);
-        if (matched) {
-          targetPageId = matched.id;
-          break;
-        }
-        await delay(750);
-      }
-    }
 
     if (targetPageId === undefined) {
       return undefined;
@@ -1254,6 +1251,44 @@ function looksLikePageContentText(text: string): boolean {
     return false;
   }
   return /```(?:markdown|text|html)/i.test(trimmed) || /Page State Format:/i.test(trimmed);
+}
+
+function hasExplicitPageContext(args: Record<string, unknown>): boolean {
+  const candidates = [args.pageId, args.tabId, args.page_id, args.tab_id];
+  return candidates.some((candidate) => {
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return true;
+    }
+    if (typeof candidate === 'string') {
+      return /^\d+$/.test(candidate.trim());
+    }
+    return false;
+  });
+}
+
+function shouldAttachImplicitPageContent(commandName: string, args: Record<string, unknown>): boolean {
+  if (!hasExplicitPageContext(args)) {
+    return false;
+  }
+
+  return commandName !== 'close';
+}
+
+function stripImplicitPageContent(result: ToolResult & Record<string, unknown>): ToolResult & Record<string, unknown> {
+  const firstTextIndex = result.content.findIndex((entry) => entry.type === 'text');
+  if (firstTextIndex < 0) {
+    return result;
+  }
+
+  const firstTextEntry = result.content[firstTextIndex];
+  if (!('text' in firstTextEntry) || !looksLikePageContentText(firstTextEntry.text)) {
+    return result;
+  }
+
+  return {
+    ...result,
+    content: result.content.filter((_, index) => index !== firstTextIndex),
+  };
 }
 
 function isLikelyIncompletePageContent(text: string, targetUrl?: string): boolean {

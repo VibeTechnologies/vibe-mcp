@@ -226,8 +226,8 @@ async function main() {
       throw new Error(`Unexpected tool result: ${JSON.stringify(callResult)}`);
     }
 
-    // Update tools and verify MCP call responses include page content fallback
-    // for navigation-style tools that return only structured metadata.
+    // Update tools and verify MCP call responses do not include implicit page
+    // content fallback when pageId/tabId was not explicitly provided.
     extensionWs.send(JSON.stringify({
       type: 'tools_list',
       data: [
@@ -276,11 +276,9 @@ async function main() {
       arguments: { url: 'https://example.com' },
     });
     const openToolCall = await openToolCallPromise;
-
-    const snapshotCallPromise = waitForWebSocketMessage(
-      extensionWs,
-      (message) => message.type === 'call_tool' && message.data?.name === 'take_md_snapshot',
-    );
+    if (openToolCall.data?.arguments?.__skipPageContent !== true) {
+      throw new Error(`Expected __skipPageContent=true for new_page without explicit pageId: ${JSON.stringify(openToolCall)}`);
+    }
 
     extensionWs.send(JSON.stringify({
       type: 'tool_result',
@@ -291,27 +289,13 @@ async function main() {
       },
     }));
 
-    const snapshotCall = await snapshotCallPromise;
-    if (snapshotCall.data?.arguments?.pageId !== 77) {
-      throw new Error(`Expected take_md_snapshot pageId=77, got: ${JSON.stringify(snapshotCall)}`);
-    }
-
-    extensionWs.send(JSON.stringify({
-      type: 'tool_result',
-      requestId: snapshotCall.requestId,
-      data: {
-        success: true,
-        content: [{
-          type: 'text',
-          text: '# Markdown Snapshot: Example\nURL: https://example.com\n\n```markdown\nExample page\n```',
-        }],
-      },
-    }));
-
     const openResult = await openResultPromise;
     const openText = openResult.content.find((item) => item.type === 'text');
-    if (!openText || !openText.text.includes('# Markdown Snapshot: Example')) {
-      throw new Error(`Expected page content fallback in MCP response: ${JSON.stringify(openResult)}`);
+    if (!openText || !openText.text.includes('"pageId":77')) {
+      throw new Error(`Expected structured new_page response without fallback snapshot: ${JSON.stringify(openResult)}`);
+    }
+    if (openText.text.includes('# Markdown Snapshot: Example')) {
+      throw new Error(`Did not expect implicit snapshot fallback in MCP response: ${JSON.stringify(openResult)}`);
     }
 
     await client.close();

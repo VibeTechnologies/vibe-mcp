@@ -51,7 +51,8 @@ The shell running OpenClaw must have:
 export VIBE_EXTENSION_UUID="<extension-uuid>"
 
 # Optional if you use a custom relay URL.
-# export VIBE_RELAY_URL="wss://relay.api.vibebrowser.app"
+# export VIBE_REMOTE_RELAY_URL="wss://relay.api.vibebrowser.app"
+# export VIBE_RELAY_URL="wss://relay.api.vibebrowser.app"  # legacy alias
 
 # Optional compatibility label. Vibe always targets the real local browser path.
 # export VIBE_BROWSER_PROFILE="user"
@@ -77,6 +78,39 @@ If you set `VIBE_RELAY_URL`, append:
 --relay-url "$VIBE_RELAY_URL"
 ```
 
+If you set `VIBE_REMOTE_RELAY_URL`, use:
+
+```bash
+--relay-url "$VIBE_REMOTE_RELAY_URL"
+```
+
+## Deterministic runbook (default)
+
+Use this sequence when the task needs reliable, repeatable control:
+
+1. Verify connection:
+   ```bash
+   npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json status --wait-for-extension --wait-timeout 10000
+   ```
+2. Resolve a target page id without changing focus:
+   ```bash
+   PAGE_ID="$(
+     npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json tabs \
+     | jq -r '.pages[] | select(.active == true) | .id' \
+     | head -n1
+   )"
+   ```
+3. Snapshot that page before acting:
+   ```bash
+   npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id "$PAGE_ID" snapshot --format aria --interactive
+   ```
+4. Perform action on the same page id:
+   ```bash
+   npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id "$PAGE_ID" click 12
+   ```
+
+If `jq` is unavailable, parse `.pages` from `tabs --json` directly and still pass `--page-id <id>` on every action.
+
 ## Safe operating rules
 
 - **Never use `focus` or `tab select` unless explicitly asked.** The user may be actively working in the browser — switching their active tab is disruptive. Instead, pass `--page-id <id>` (or `--pageId <id>`) to target a specific tab without switching focus. Get the page ID from `tabs` output, then use it on any command:
@@ -84,10 +118,10 @@ If you set `VIBE_RELAY_URL`, append:
   vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id 2 snapshot
   vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id 2 click 7
   ```
-- Prefer `browser tabs` or `browser snapshot` before acting.
+- Prefer `tabs` or `snapshot` before acting.
 - `snapshot` is tool-only and maps to extension snapshot tools (`take_md_snapshot` by default, `take_a11y_snapshot` for `--format aria`).
-- Use `browser open <url>` to create a fresh page when possible.
-- Use `browser evaluate --fn ...` only for simple compatibility-safe expressions such as:
+- Use `open <url>` to create a fresh page when possible.
+- Use `evaluate --fn ...` only for simple compatibility-safe expressions such as:
   - `() => 21 + 21`
   - `() => document.title`
   - `() => location.href`

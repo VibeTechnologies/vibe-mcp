@@ -98,6 +98,12 @@ npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <extension-u
 
 This prints the exact commands and MCP URL you need.
 
+If OpenClaw is running on another machine (for example in the cloud), provide a reachable URL:
+
+```bash
+npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <extension-uuid> --public-url https://<reachable-host>/mcp
+```
+
 **Option B: Manual command**
 
 ```bash
@@ -109,6 +115,8 @@ By default this starts a local MCP endpoint at:
 ```
 http://127.0.0.1:8788/mcp
 ```
+
+That loopback URL only works when OpenClaw can reach the same machine. For cloud OpenClaw, register a reachable URL (`--public-url`) instead.
 
 Keep this terminal open - the bridge must stay running for OpenClaw to connect.
 
@@ -151,6 +159,8 @@ Register the bridge URL in OpenClaw:
   }
 }
 ```
+
+Use that loopback URL only for same-machine setups. For cloud OpenClaw, set `"url"` to the reachable value you passed through `--public-url`.
 
 Once that is configured, the cloud OpenClaw agent can use the Vibe browser tools through the local bridge.
 
@@ -246,7 +256,7 @@ Make sure you've enabled **Remote** mode in the Vibe extension settings. The UUI
 
 1. Ensure the `vibebrowser-mcp` process is still running
 2. Check the terminal for error messages
-3. Verify the MCP URL matches exactly (including the `/mcp` path)
+3. Verify the MCP URL matches exactly (including the `/mcp` path) and is reachable from OpenClaw (not `127.0.0.1` for cloud-hosted OpenClaw)
 
 ### "No extension connected"
 

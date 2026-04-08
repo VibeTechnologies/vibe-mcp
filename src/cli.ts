@@ -79,12 +79,16 @@ program
   .option('--host <host>', 'Host to bind the HTTP server to', '127.0.0.1')
   .option('--http-port <number>', 'Port for streamable HTTP MCP transport', String(DEFAULT_HTTP_PORT))
   .option('--http-path <path>', 'Path for streamable HTTP MCP transport', DEFAULT_HTTP_PATH)
+  .option('--public-url <url>', 'Publicly reachable MCP URL for OpenClaw when different from local bind URL')
   .option('--allow-host <host>', 'Allowed host header for HTTP transport (repeatable)', collectRepeatedOption, [])
   .action((options) => {
     const httpPort = parsePort(options.httpPort, 'HTTP port');
     const httpPath = normalizePath(options.httpPath);
     const host = options.host;
-    const httpUrl = `http://${formatHost(host)}:${httpPort}${httpPath}`;
+    const localHttpUrl = `http://${formatHost(host)}:${httpPort}${httpPath}`;
+    const openClawUrl = options.publicUrl
+      ? normalizePublicUrl(String(options.publicUrl), httpPath)
+      : localHttpUrl;
 
     const cliArgs = [
       '-y',
@@ -114,7 +118,7 @@ program
     const openClawConfig = {
       mcpServers: {
         vibe: {
-          url: httpUrl,
+          url: openClawUrl,
         },
       },
     };
@@ -122,8 +126,16 @@ program
     console.log('Start a local bridge on the machine running the Vibe extension:');
     console.log(`npx ${cliArgs.join(' ')}`);
     console.log('');
-    console.log('Then add this MCP server URL in OpenClaw:');
-    console.log(httpUrl);
+    console.log('Local bridge MCP URL:');
+    console.log(localHttpUrl);
+    console.log('');
+    console.log('Use this MCP server URL in OpenClaw:');
+    console.log(openClawUrl);
+    if (isLoopbackUrl(openClawUrl)) {
+      console.log('');
+      console.log('Warning: this URL uses loopback/localhost and is only reachable from the same machine.');
+      console.log('If OpenClaw runs in the cloud, pass --public-url with a reachable host.');
+    }
     console.log('');
     console.log('OpenClaw JSON snippet:');
     console.log(JSON.stringify(openClawConfig, null, 2));
@@ -182,4 +194,38 @@ function normalizePath(value: string): string {
 
 function formatHost(host: string): string {
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+}
+
+function normalizePublicUrl(value: string, fallbackPath: string): string {
+  const parsed = parseHttpUrl(value, '--public-url');
+  if (!parsed.pathname || parsed.pathname === '/') {
+    parsed.pathname = fallbackPath;
+  }
+  return parsed.toString();
+}
+
+function parseHttpUrl(value: string, label: string): URL {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('protocol must be http:// or https://');
+    }
+    return parsed;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${label} must be a valid HTTP(S) URL (${message})`);
+    process.exit(1);
+  }
+}
+
+function isLoopbackUrl(value: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return false;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1' || hostname === '[::1]';
 }

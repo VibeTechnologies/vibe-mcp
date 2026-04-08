@@ -322,6 +322,26 @@ async function main() {
       return extension;
     };
 
+    // =================================================================
+    // TEST 0: status --wait-for-extension waits up to timeout when disconnected
+    // =================================================================
+    {
+      const { data, elapsed } = await runCli([
+        'status',
+        '--wait-for-extension',
+        '--wait-timeout',
+        '400',
+        '--poll-interval',
+        '100',
+      ]);
+      assert(data.ok === true, `waited status not ok: ${JSON.stringify(data)}`);
+      assert(data.extensionConnected === false, `waited status should time out disconnected: ${JSON.stringify(data)}`);
+      assert(data.waitForExtension === true, `waited status should report waitForExtension: ${JSON.stringify(data)}`);
+      assert(Number(data.waitedMs) >= 300, `waited status should wait near timeout: ${JSON.stringify(data)}`);
+      assert(elapsed >= 300, `status --wait-for-extension should not return immediately: ${elapsed}ms`);
+      console.log(`  status+w:${elapsed}ms (budget: ${MAX_CLI_MS}ms) — waited for timeout ✓`);
+    }
+
     extensionA = await attachFakeExtension(SESSION_A);
     extensionB = await attachFakeExtension(SESSION_B);
 

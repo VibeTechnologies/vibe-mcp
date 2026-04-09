@@ -47,6 +47,7 @@ Claude Desktop       Cursor          VS Code         OpenCode
 - **Fast & Local** - Automation happens on your machine, no cloud latency
 - **Private** - Your browsing data never leaves your device
 - **Stable** - Content script based, no flaky CDP connections
+- **Chrome DevTools Fallback** - Automatically adds `chrome-devtools-mcp` tools when installed; extension tools stay primary
 
 ## Quick Start
 
@@ -210,6 +211,12 @@ Add to your Codex configuration:
 3. Go to Settings and enable "MCP External Control"
 4. The status should show "Connected"
 
+If the extension is not connected, `vibebrowser-mcp` can optionally fall back to
+`chrome-devtools-mcp` (started in `--autoConnect` mode) when that package is installed.
+This fallback runs once in the shared local relay daemon (multi-agent safe), so
+both `vibebrowser-mcp` and `vibebrowser-cli` use the same backend instance.
+When both are available, tool listing is a union and calls prefer the extension implementation.
+
 ## Available Tools
 
 | Tool | Description |
@@ -336,6 +343,7 @@ For OpenClaw agents that need your real browser context (logged-in sessions, exi
 
 The skill is located at [`openclaw/vibebrowser/SKILL.md`](openclaw/vibebrowser/SKILL.md) and provides:
 - Full OpenClaw-compatible CLI commands (`status`, `tabs`, `snapshot`, `click`, `type`, etc.)
+- Fallback-safe commands for DevTools-backed flows (`resize`, `upload`, `dialog`)
 - `--json` output for machine parsing
 - Environment-based configuration
 

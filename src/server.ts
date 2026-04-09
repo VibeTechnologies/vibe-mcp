@@ -210,7 +210,7 @@ export class VibeMcpServer {
     );
 
     server.setRequestHandler(ListToolsRequestSchema, async () => {
-      if (this.connection.getTools().length === 0 && this.connection.isExtensionConnected()) {
+      if (this.connection.getTools().length === 0) {
         try {
           await this.connection.refreshTools(STARTUP_TOOLS_REFRESH_TIMEOUT_MS);
         } catch (error) {
@@ -219,7 +219,7 @@ export class VibeMcpServer {
         }
       }
 
-      if (this.connection.getTools().length === 0 && this.connection.isExtensionConnected()) {
+      if (this.connection.getTools().length === 0) {
         await this.connection.waitForToolsUpdate(STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS);
       }
 
@@ -313,7 +313,7 @@ export class VibeMcpServer {
   }
 
   private async takeMarkdownSnapshot(pageId?: number): Promise<string | undefined> {
-    if (this.connection.getTools().length === 0 && this.connection.isExtensionConnected()) {
+    if (this.connection.getTools().length === 0) {
       try {
         await this.connection.refreshTools(STARTUP_TOOLS_REFRESH_TIMEOUT_MS);
       } catch {

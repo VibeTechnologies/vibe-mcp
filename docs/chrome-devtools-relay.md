@@ -14,6 +14,12 @@ in a cloud Kubernetes pod. There is no direct path.
 
 A **secure relay** that bridges the gap:
 
+> Current `vibebrowser-mcp` behavior: relay+extension remains the primary backend.
+> If `chrome-devtools-mcp` is available locally, the server also starts it in
+> `--autoConnect` mode as a fallback inside the shared relay daemon (single
+> instance for all local agents/CLIs), exposes a union of tools (without
+> duplicates), and routes calls deterministically (extension first, then fallback).
+
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                         CLOUD                                    │

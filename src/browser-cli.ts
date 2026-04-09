@@ -295,7 +295,17 @@ function registerBrowserSubcommands(browser: Command): void {
       );
     });
 
-  // NOTE: resize command removed — no resize_page tool in the extension.
+  browser
+    .command('resize <width> <height>')
+    .description('Resize the current page viewport/window')
+    .action(async function (this: Command, width: string, height: string) {
+      await runBrowserCommand(this, 'resize', true, async (ctx) =>
+        ctx.resize(
+          parsePositiveInteger(width, '<width>'),
+          parsePositiveInteger(height, '<height>'),
+        )
+      );
+    });
 
   browser
     .command('click <ref>')
@@ -331,7 +341,14 @@ function registerBrowserSubcommands(browser: Command): void {
       await runBrowserCommand(this, 'hover', true, async (ctx) => ctx.hover(ref));
     });
 
-  // NOTE: scrollintoview, download, waitfordownload, upload commands removed — no matching tools.
+  browser
+    .command('upload <ref> <path>')
+    .description('Upload a local file via an input element reference')
+    .action(async function (this: Command, ref: string, path: string) {
+      await runBrowserCommand(this, 'upload', true, async (ctx) => ctx.upload(ref, path));
+    });
+
+  // NOTE: scrollintoview, download, waitfordownload commands removed — no matching tools.
 
   browser
     .command('drag <source> <target>')
@@ -357,7 +374,21 @@ function registerBrowserSubcommands(browser: Command): void {
       );
     });
 
-  // NOTE: dialog command removed — no handle_dialog tool in the extension.
+  browser
+    .command('dialog')
+    .description('Handle browser dialog (accept/dismiss prompt/confirm/alert)')
+    .option('--accept', 'Accept dialog', false)
+    .option('--dismiss', 'Dismiss dialog', false)
+    .option('--prompt <text>', 'Optional prompt text when accepting')
+    .action(async function (this: Command) {
+      await runBrowserCommand(this, 'dialog', true, async (ctx, options) =>
+        ctx.dialog({
+          accept: Boolean(options.accept),
+          dismiss: Boolean(options.dismiss),
+          promptText: options.prompt ? String(options.prompt) : undefined,
+        })
+      );
+    });
 
   browser
     .command('wait')
@@ -486,8 +517,9 @@ class BrowserCliContext {
       return;
     }
     this.sessions = await this.connection.listSessions(1_500).catch(() => this.connection.getSessions());
+    this.toolsLoaded = false;
     await this.ensureToolsLoaded();
-    if (!this.connection.isExtensionConnected()) {
+    if (!this.connection.isExtensionConnected() && this.tools.length === 0) {
       throw new Error(this.connection.getConnectionErrorMessage());
     }
   }
@@ -508,12 +540,7 @@ class BrowserCliContext {
 
   async status(): Promise<CommandOutput> {
     this.sessions = await this.connection.listSessions(STATUS_TOOLS_TIMEOUT_MS).catch(() => this.connection.getSessions());
-    if (this.connection.isExtensionConnected()) {
-      // Use a short timeout for status — this is a diagnostic command that
-      // should return quickly.  Fall back to cached tools if the extension
-      // is slow to respond.
-      await this.ensureToolsLoaded(STATUS_TOOLS_TIMEOUT_MS);
-    }
+    await this.ensureToolsLoaded(STATUS_TOOLS_TIMEOUT_MS);
 
     return {
       ok: true,
@@ -947,6 +974,56 @@ class BrowserCliContext {
     return this.outputFromInvocation('evaluate', invocation);
   }
 
+  async resize(width: number, height: number): Promise<CommandOutput> {
+    const invocation = await this.callTool(
+      'resize',
+      [
+        {
+          names: ['resize_page'],
+          buildArgs: (tool) => withResizeArgs(tool, width, height),
+        },
+      ],
+      {}
+    );
+    return this.outputFromInvocation('resize', invocation);
+  }
+
+  async upload(ref: string, path: string): Promise<CommandOutput> {
+    const invocation = await this.callTool(
+      'upload',
+      [
+        {
+          names: ['upload_file', 'file_upload'],
+          buildArgs: (tool) => withUploadArgs(tool, ref, path),
+        },
+      ],
+      {}
+    );
+    return this.outputFromInvocation('upload', invocation);
+  }
+
+  async dialog(options: {
+    accept: boolean;
+    dismiss: boolean;
+    promptText?: string;
+  }): Promise<CommandOutput> {
+    if (options.accept && options.dismiss) {
+      throw new Error('dialog supports either --accept or --dismiss, not both');
+    }
+    const accept = options.dismiss ? false : true;
+    const invocation = await this.callTool(
+      'dialog',
+      [
+        {
+          names: ['handle_dialog'],
+          buildArgs: (tool) => withDialogArgs(tool, accept, options.promptText),
+        },
+      ],
+      {}
+    );
+    return this.outputFromInvocation('dialog', invocation);
+  }
+
   private async callGenericCommand(
     commandName: string,
     candidates: ToolCandidate[],
@@ -1004,19 +1081,15 @@ class BrowserCliContext {
       return;
     }
     const effectiveTimeout = timeoutMs ?? this.timeoutMs;
-    if (this.connection.isExtensionConnected()) {
-      try {
-        this.tools = await this.connection.refreshTools(effectiveTimeout);
-      } catch {
-        // Refresh timed out or failed — fall back to cached tools or a short
-        // passive wait so the status command is not blocked.
-        this.tools = this.connection.getTools();
-        if (this.tools.length === 0) {
-          this.tools = await this.connection.waitForToolsUpdate(1_000);
-        }
-      }
-    } else {
+    try {
+      this.tools = await this.connection.refreshTools(effectiveTimeout);
+    } catch {
+      // Refresh timed out or failed — fall back to cached tools or a short
+      // passive wait so the status command is not blocked.
       this.tools = this.connection.getTools();
+      if (this.tools.length === 0) {
+        this.tools = await this.connection.waitForToolsUpdate(1_000);
+      }
     }
     this.toolsLoaded = true;
   }
@@ -1923,6 +1996,13 @@ function withRequestDetailsArgs(tool: ToolDefinition, requestId: string): Record
   return args;
 }
 
+function withResizeArgs(tool: ToolDefinition, width: number, height: number): Record<string, unknown> {
+  const args: Record<string, unknown> = {};
+  maybeAssign(args, tool, 'width', width);
+  maybeAssign(args, tool, 'height', height);
+  return args;
+}
+
 function withRefArgs(
   tool: ToolDefinition,
   ref: string,
@@ -2002,6 +2082,34 @@ function withFillFormArgs(tool: ToolDefinition, fields: JsonValue[]): Record<str
   const args: Record<string, unknown> = {};
   maybeAssign(args, tool, 'fields', fields);
   maybeAssign(args, tool, 'elements', fields);
+  return args;
+}
+
+function withUploadArgs(tool: ToolDefinition, ref: string, path: string): Record<string, unknown> {
+  const args = withRefArgs(tool, ref);
+  maybeAssign(args, tool, 'filePath', path);
+  maybeAssign(args, tool, 'path', path);
+  if (hasProperty(tool, 'paths')) {
+    args.paths = [path];
+  }
+  return args;
+}
+
+function withDialogArgs(tool: ToolDefinition, accept: boolean, promptText?: string): Record<string, unknown> {
+  const args: Record<string, unknown> = {};
+  if (hasProperty(tool, 'action')) {
+    args.action = accept ? 'accept' : 'dismiss';
+  }
+  if (hasProperty(tool, 'accept')) {
+    args.accept = accept;
+  }
+  if (promptText !== undefined) {
+    maybeAssign(args, tool, 'promptText', promptText);
+    maybeAssign(args, tool, 'prompt', promptText);
+    if (hasProperty(tool, 'prompt_text')) {
+      args.prompt_text = promptText;
+    }
+  }
   return args;
 }
 

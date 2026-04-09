@@ -67,6 +67,9 @@
     "commander": "^12.0.0",
     "ws": "^8.18.0"
   },
+  "optionalDependencies": {
+    "chrome-devtools-mcp": "^0.21.0"
+  },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/ws": "^8.5.0",

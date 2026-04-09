@@ -108,7 +108,10 @@ export interface ToolResult {
  */
 export type ToolResultContent =
   | { type: 'text'; text: string }
-  | { type: 'image'; data: string; mimeType: string };
+  | { type: 'image'; data: string; mimeType: string }
+  | { type: 'audio'; data: string; mimeType: string }
+  | { type: 'resource'; resource: unknown }
+  | { type: 'resource_link'; uri: string; name?: string };
 
 /**
  * Server configuration

@@ -105,6 +105,9 @@ const FAKE_TOOLS = [
   tool('take_screenshot', { detail: { type: 'string' } }),
   tool('press_key', { keys: { type: 'string' } }),
   tool('evaluate_script', { function: { type: 'string' } }),
+  tool('resize_page', { width: { type: 'number' }, height: { type: 'number' } }),
+  tool('upload_file', { uid: { type: 'string' }, filePath: { type: 'string' } }),
+  tool('handle_dialog', { action: { type: 'string' }, promptText: { type: 'string' } }),
   tool('scroll_page', { direction: { type: 'string' }, numPages: { type: 'number' } }),
   tool('wait_for', { text: { type: 'array' }, timeout: { type: 'number' } }),
   tool('hover', { ref: { type: 'string' } }),
@@ -393,6 +396,36 @@ async function main() {
       assert(data.ok === true, `click not ok: ${JSON.stringify(data)}`);
       assert(data.tool === 'click', `click used wrong tool: ${JSON.stringify(data)}`);
       console.log(`  click:   ${elapsed}ms (budget: ${MAX_CLI_MS}ms) ✓`);
+    }
+
+    // =================================================================
+    // TEST 8: `vibebrowser-cli resize <w> <h>` calls resize_page
+    // =================================================================
+    {
+      const { data, elapsed } = await runCli(['resize', '1280', '720']);
+      assert(data.ok === true, `resize not ok: ${JSON.stringify(data)}`);
+      assert(data.tool === 'resize_page', `resize used wrong tool: ${JSON.stringify(data)}`);
+      console.log(`  resize:  ${elapsed}ms (budget: ${MAX_CLI_MS}ms) ✓`);
+    }
+
+    // =================================================================
+    // TEST 9: `vibebrowser-cli upload <ref> <path>` calls upload_file
+    // =================================================================
+    {
+      const { data, elapsed } = await runCli(['upload', 'A7', 'docs/chrome-devtools-relay.md']);
+      assert(data.ok === true, `upload not ok: ${JSON.stringify(data)}`);
+      assert(data.tool === 'upload_file', `upload used wrong tool: ${JSON.stringify(data)}`);
+      console.log(`  upload:  ${elapsed}ms (budget: ${MAX_CLI_MS}ms) ✓`);
+    }
+
+    // =================================================================
+    // TEST 10: `vibebrowser-cli dialog --dismiss` calls handle_dialog
+    // =================================================================
+    {
+      const { data, elapsed } = await runCli(['dialog', '--dismiss']);
+      assert(data.ok === true, `dialog not ok: ${JSON.stringify(data)}`);
+      assert(data.tool === 'handle_dialog', `dialog used wrong tool: ${JSON.stringify(data)}`);
+      console.log(`  dialog:  ${elapsed}ms (budget: ${MAX_CLI_MS}ms) ✓`);
     }
 
     console.log('cli relay e2e ok');

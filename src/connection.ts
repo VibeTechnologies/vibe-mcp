@@ -409,10 +409,6 @@ export class ExtensionConnection extends EventEmitter {
       throw new Error('Not connected to relay');
     }
 
-    if (type !== 'list_sessions' && !this.extensionConnected) {
-      throw new Error(this.getConnectionErrorMessage());
-    }
-
     const requestId = `req_${++this.requestIdCounter}`;
     
     return new Promise<T>((resolve, reject) => {

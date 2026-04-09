@@ -10,6 +10,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, isInitializeRequest, ListToolsRequestSchema, } from '@modelcontextprotocol/sdk/types.js';
 import { ExtensionConnection } from './connection.js';
+import { DevtoolsFallbackConnection } from './devtools-fallback.js';
 import { DEFAULT_HTTP_PATH, DEFAULT_HTTP_PORT, DEFAULT_WS_PORT, } from './types.js';
 import { getPackageVersion } from './version.js';
 const SERVER_NAME = 'vibebrowser-mcp';
@@ -34,6 +35,7 @@ export class VibeMcpServer {
             port: config.port ?? DEFAULT_WS_PORT,
             host: config.host ?? '127.0.0.1',
             debug: config.debug ?? false,
+            devtools: config.devtools ?? false,
             transport: config.transport ?? 'stdio',
             httpPort: config.httpPort ?? DEFAULT_HTTP_PORT,
             httpPath: normalizeHttpPath(config.httpPath ?? DEFAULT_HTTP_PATH),
@@ -42,10 +44,15 @@ export class VibeMcpServer {
             sessionId: config.sessionId,
             remoteRelayUrl: config.remoteRelayUrl,
         };
-        const remoteConfig = this.config.remoteUuid
-            ? { uuid: this.config.remoteUuid, relayUrl: this.config.remoteRelayUrl }
-            : undefined;
-        this.connection = new ExtensionConnection(this.config.port, this.config.debug, remoteConfig, this.config.remoteUuid ? undefined : { sessionId: this.config.sessionId });
+        if (this.config.devtools) {
+            this.connection = new DevtoolsFallbackConnection(this.config.debug);
+        }
+        else {
+            const remoteConfig = this.config.remoteUuid
+                ? { uuid: this.config.remoteUuid, relayUrl: this.config.remoteRelayUrl }
+                : undefined;
+            this.connection = new ExtensionConnection(this.config.port, this.config.debug, remoteConfig, this.config.remoteUuid ? undefined : { sessionId: this.config.sessionId });
+        }
         this.setupConnectionEvents();
     }
     /**
@@ -53,7 +60,15 @@ export class VibeMcpServer {
      */
     async start() {
         await this.connection.start();
-        if (this.config.remoteUuid) {
+        if (this.config.devtools) {
+            if (this.connection instanceof DevtoolsFallbackConnection && this.connection.isAvailable()) {
+                this.log('Connected to chrome-devtools backend');
+            }
+            else {
+                this.log('chrome-devtools backend unavailable; server started without tools');
+            }
+        }
+        else if (this.config.remoteUuid) {
             this.log(`Connected to remote relay for UUID ${this.config.remoteUuid}`);
         }
         else {
@@ -132,6 +147,20 @@ export class VibeMcpServer {
      * Set up extension connection events
      */
     setupConnectionEvents() {
+        if (this.connection instanceof DevtoolsFallbackConnection) {
+            this.connection.on('connected', () => {
+                this.log('chrome-devtools backend connected');
+            });
+            this.connection.on('unavailable', (reason) => {
+                this.log(reason);
+                this.notifyToolListChanged();
+            });
+            this.connection.on('tools_updated', (tools) => {
+                this.log(`Received ${tools.length} tools from chrome-devtools backend`);
+                this.notifyToolListChanged();
+            });
+            return;
+        }
         this.connection.on('connected', () => {
             this.log('Extension connected');
         });
@@ -163,7 +192,7 @@ export class VibeMcpServer {
             },
         });
         server.setRequestHandler(ListToolsRequestSchema, async () => {
-            if (this.connection.getTools().length === 0 && this.connection.isExtensionConnected()) {
+            if (this.connection.getTools().length === 0) {
                 try {
                     await this.connection.refreshTools(STARTUP_TOOLS_REFRESH_TIMEOUT_MS);
                 }
@@ -172,8 +201,10 @@ export class VibeMcpServer {
                     this.log(`tools/list refresh failed: ${message}`);
                 }
             }
-            if (this.connection.getTools().length === 0 && this.connection.isExtensionConnected()) {
-                await this.connection.waitForToolsUpdate(STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS);
+            if (this.connection.getTools().length === 0) {
+                if (this.connection instanceof ExtensionConnection) {
+                    await this.connection.waitForToolsUpdate(STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS);
+                }
             }
             return {
                 tools: this.connection.getTools().map((tool) => ({
@@ -248,7 +279,7 @@ export class VibeMcpServer {
         };
     }
     async takeMarkdownSnapshot(pageId) {
-        if (this.connection.getTools().length === 0 && this.connection.isExtensionConnected()) {
+        if (this.connection.getTools().length === 0) {
             try {
                 await this.connection.refreshTools(STARTUP_TOOLS_REFRESH_TIMEOUT_MS);
             }
@@ -315,7 +346,9 @@ export class VibeMcpServer {
                 version: SERVER_VERSION,
                 transport: 'http',
                 mcpPath: this.config.httpPath,
-                extensionConnected: this.connection.isExtensionConnected(),
+                extensionConnected: this.connection instanceof DevtoolsFallbackConnection
+                    ? this.connection.isAvailable()
+                    : this.connection.isExtensionConnected(),
                 cachedTools: this.connection.getTools().length,
             }));
         };

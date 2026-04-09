@@ -14,6 +14,8 @@ import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from '
 import { join } from 'path';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
+import { DevtoolsFallbackConnection } from './devtools-fallback.js';
+import type { ToolDefinition } from './types.js';
 
 function parseEnvPort(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -26,6 +28,10 @@ function parseEnvPort(name: string, fallback: number): number {
     throw new Error(`Invalid ${name} value: ${raw}`);
   }
   return port;
+}
+
+function normalizeToolName(value: string): string {
+  return value.replace(/[-\s]/g, '_').toLowerCase();
 }
 
 // Ports (19888/19889 to avoid conflict with Playwriter MCP which uses 19988/19989)
@@ -72,7 +78,7 @@ interface ExtensionSession {
   ws: WebSocket;
   sessionId: string;
   connectedAt: number;
-  tools: unknown[];
+  tools: ToolDefinition[];
   toolsSyncTimer: NodeJS.Timeout | null;
 }
 
@@ -98,6 +104,11 @@ interface PendingRequest {
 
 /**
  * Vibe MCP Relay Server
+ *
+ * Owns exactly one shared chrome-devtools fallback backend process per relay
+ * daemon instance. All connected MCP clients (vibebrowser-mcp and
+ * vibebrowser-cli) route through this relay, so fallback lifecycle and tool
+ * routing stay deterministic across concurrent agents.
  */
 export class RelayServer extends EventEmitter {
   private extensionWss: WebSocketServer | null = null;
@@ -109,10 +120,12 @@ export class RelayServer extends EventEmitter {
   private requestIdCounter = 0;
   private anonymousSessionCounter = 0;
   private debug: boolean;
+  private readonly devtoolsFallback: DevtoolsFallbackConnection;
 
   constructor(debug: boolean = false) {
     super();
     this.debug = debug;
+    this.devtoolsFallback = new DevtoolsFallbackConnection(debug);
   }
 
   /**
@@ -129,6 +142,20 @@ export class RelayServer extends EventEmitter {
     
     // Start agent WebSocket server
     await this.startAgentServer();
+    await this.devtoolsFallback.start();
+
+    this.devtoolsFallback.on('tools_updated', () => {
+      this.broadcastDefaultToolsToAgents();
+      this.broadcastSessionState();
+    });
+    this.devtoolsFallback.on('connected', () => {
+      this.broadcastDefaultToolsToAgents();
+      this.broadcastSessionState();
+    });
+    this.devtoolsFallback.on('unavailable', () => {
+      this.broadcastDefaultToolsToAgents();
+      this.broadcastSessionState();
+    });
 
     // Write PID file
     writeFileSync(PID_FILE, String(process.pid));
@@ -221,6 +248,7 @@ export class RelayServer extends EventEmitter {
       this.broadcastSessionState();
       if (this.extensionSessions.size === 0) {
         this.broadcastToAgents({ type: 'extension_disconnected' });
+        this.broadcastDefaultToolsToAgents();
       }
     });
 
@@ -248,14 +276,18 @@ export class RelayServer extends EventEmitter {
     this.sendSessionStateToAgent(ws);
 
     const defaultSession = this.getDefaultSession();
-    if (defaultSession && defaultSession.tools.length > 0) {
-      ws.send(JSON.stringify({ type: 'tools_list', data: defaultSession.tools, sessionId: defaultSession.sessionId }));
+    const tools = this.getToolsForSession(defaultSession);
+    if (tools.length > 0) {
+      ws.send(JSON.stringify({ type: 'tools_list', data: tools, sessionId: defaultSession?.sessionId }));
     }
 
     ws.on('message', (data) => {
       try {
         const message = JSON.parse(data.toString());
-        this.handleAgentMessage(agentId, message);
+        this.handleAgentMessage(agentId, message).catch((error) => {
+          const reason = error instanceof Error ? error.message : String(error);
+          this.log(`Unhandled agent message failure (${agentId}): ${reason}`);
+        });
       } catch (error) {
         this.log(`Failed to parse agent message: ${error}`);
       }
@@ -305,19 +337,28 @@ export class RelayServer extends EventEmitter {
         // Forward response to the requesting agent
         const agent = this.agents.get(pending.agentId);
         if (agent) {
-          agent.ws.send(JSON.stringify({
-            ...message,
-            sessionId: session.sessionId,
-            requestId: pending.originalRequestId,
-          }));
+          if (message.type === 'tools_list') {
+            agent.ws.send(JSON.stringify({
+              type: 'tools_list',
+              requestId: pending.originalRequestId,
+              data: this.getToolsForSession(this.extensionSessions.get(pending.sessionId) || null),
+              sessionId: pending.sessionId,
+            }));
+          } else {
+            agent.ws.send(JSON.stringify({
+              ...message,
+              sessionId: session.sessionId,
+              requestId: pending.originalRequestId,
+            }));
+          }
         }
 
         // For tools_list we still want to cache + broadcast to *other* agents
         // so they stay in sync, but the requesting agent already got its copy.
         if (message.type === 'tools_list') {
-          session.tools = message.data as unknown[];
+          session.tools = this.parseToolDefinitions(message.data);
           this.stopToolsSyncLoop(session);
-          this.broadcastToAgents({ type: 'tools_list', data: session.tools, sessionId: session.sessionId }, pending.agentId);
+          this.broadcastDefaultToolsToAgents(pending.agentId);
           this.broadcastSessionState();
         }
         return;
@@ -326,9 +367,9 @@ export class RelayServer extends EventEmitter {
 
     // Handle unsolicited tools list (e.g. extension announces on connect)
     if (message.type === 'tools_list') {
-      session.tools = message.data as unknown[];
+      session.tools = this.parseToolDefinitions(message.data);
       this.stopToolsSyncLoop(session);
-      this.broadcastToAgents({ type: 'tools_list', data: session.tools, sessionId: session.sessionId });
+      this.broadcastDefaultToolsToAgents();
       this.broadcastSessionState();
       return;
     }
@@ -340,8 +381,9 @@ export class RelayServer extends EventEmitter {
   /**
    * Handle message from an agent
    */
-  private handleAgentMessage(agentId: string, message: ServerMessage): void {
-    this.log(`Agent ${agentId} message: ${message.type}`);
+  private async handleAgentMessage(agentId: string, message: ServerMessage): Promise<void> {
+    try {
+      this.log(`Agent ${agentId} message: ${message.type}`);
 
     if (message.type === 'list_sessions') {
       const agent = this.agents.get(agentId);
@@ -357,11 +399,114 @@ export class RelayServer extends EventEmitter {
 
     const requestedSessionId = typeof message.data?.sessionId === 'string' ? message.data.sessionId : undefined;
     const targetSession = this.resolveTargetSession(requestedSessionId);
+    const agent = this.agents.get(agentId);
+    if (!agent || !message.requestId) {
+      return;
+    }
 
-    if (!targetSession) {
-      // No extension connected, send error back
-      const agent = this.agents.get(agentId);
-      if (agent && message.requestId) {
+    if (message.type === 'list_tools') {
+      if (requestedSessionId && !targetSession) {
+        agent.ws.send(JSON.stringify({
+          type: 'error',
+          requestId: message.requestId,
+          error: `No browser session connected for sessionId=${requestedSessionId}`,
+        }));
+        return;
+      }
+
+      agent.ws.send(JSON.stringify({
+        type: 'tools_list',
+        requestId: message.requestId,
+        data: this.getToolsForSession(targetSession),
+        sessionId: targetSession?.sessionId,
+      }));
+      return;
+    }
+
+    if (message.type === 'call_tool') {
+      const requestedToolName = message.data?.name;
+      if (typeof requestedToolName !== 'string' || requestedToolName.trim().length === 0) {
+        agent.ws.send(JSON.stringify({
+          type: 'error',
+          requestId: message.requestId,
+          error: 'Tool name is required',
+        }));
+        return;
+      }
+
+      if (requestedSessionId && !targetSession) {
+        agent.ws.send(JSON.stringify({
+          type: 'error',
+          requestId: message.requestId,
+          error: `No browser session connected for sessionId=${requestedSessionId}`,
+        }));
+        return;
+      }
+
+      const extensionTool = this.findExtensionTool(targetSession, requestedToolName);
+      if (extensionTool && targetSession) {
+        const relayRequestId = `relay_${++this.requestIdCounter}`;
+        const cleanData = message.data ? { ...message.data } : undefined;
+        if (cleanData && 'sessionId' in cleanData) {
+          delete cleanData.sessionId;
+        }
+        const forwardMessage: ServerMessage = {
+          ...message,
+          requestId: relayRequestId,
+          ...(cleanData ? { data: cleanData } : {}),
+        };
+
+        this.pendingRequests.set(relayRequestId, {
+          agentId,
+          originalRequestId: message.requestId,
+          lastSentAt: Date.now(),
+          forwardMessage,
+          sessionId: targetSession.sessionId,
+        });
+
+        targetSession.ws.send(JSON.stringify(forwardMessage));
+        return;
+      }
+
+      if (!this.hasConnectedExtensionSession() && this.findFallbackTool(requestedToolName)) {
+        try {
+          const args = message.data?.arguments && typeof message.data.arguments === 'object'
+            ? message.data.arguments
+            : {};
+          const result = await this.devtoolsFallback.callTool(
+            requestedToolName,
+            args as Record<string, unknown>,
+          );
+          agent.ws.send(JSON.stringify({
+            type: 'tool_result',
+            requestId: message.requestId,
+            data: result,
+            sessionId: targetSession?.sessionId,
+          }));
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          agent.ws.send(JSON.stringify({
+            type: 'error',
+            requestId: message.requestId,
+            error: reason,
+            sessionId: targetSession?.sessionId,
+          }));
+        }
+        return;
+      }
+
+      agent.ws.send(JSON.stringify({
+        type: 'error',
+        requestId: message.requestId,
+        error: targetSession
+          ? `Tool not found: ${requestedToolName}`
+          : 'No extension connected',
+      }));
+      return;
+    }
+
+      if (!targetSession) {
+        // No extension connected, send error back
         agent.ws.send(JSON.stringify({
           type: 'error',
           requestId: message.requestId,
@@ -369,9 +514,8 @@ export class RelayServer extends EventEmitter {
             ? `No browser session connected for sessionId=${requestedSessionId}`
             : 'No extension connected',
         }));
+        return;
       }
-      return;
-    }
 
     // Generate relay request ID
     const relayRequestId = `relay_${++this.requestIdCounter}`;
@@ -396,7 +540,20 @@ export class RelayServer extends EventEmitter {
     });
 
     // Forward to extension with relay request ID
-    targetSession.ws.send(JSON.stringify(forwardMessage));
+      targetSession.ws.send(JSON.stringify(forwardMessage));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.log(`Failed to handle agent message (${agentId}, ${message.type}): ${reason}`);
+
+      const agent = this.agents.get(agentId);
+      if (agent && message.requestId && agent.ws.readyState === WebSocket.OPEN) {
+        agent.ws.send(JSON.stringify({
+          type: 'error',
+          requestId: message.requestId,
+          error: `Relay error: ${reason}`,
+        }));
+      }
+    }
   }
 
   /**
@@ -511,6 +668,7 @@ export class RelayServer extends EventEmitter {
     }
     this.extensionSessions.clear();
     this.socketToSessionId.clear();
+    await this.devtoolsFallback.stop();
 
     // Close servers
     if (this.agentWss) {
@@ -629,6 +787,55 @@ export class RelayServer extends EventEmitter {
       return null;
     }
     return this.getDefaultSession();
+  }
+
+  private parseToolDefinitions(data: unknown): ToolDefinition[] {
+    if (!Array.isArray(data)) {
+      return [];
+    }
+
+    return data
+      .filter((entry) => Boolean(entry) && typeof entry === 'object' && typeof (entry as { name?: unknown }).name === 'string')
+      .map((entry) => entry as ToolDefinition);
+  }
+
+  private getToolsForSession(session: ExtensionSession | null): ToolDefinition[] {
+    if (session) {
+      return [...session.tools];
+    }
+
+    if (this.hasConnectedExtensionSession()) {
+      return [];
+    }
+
+    return [...this.devtoolsFallback.getTools()];
+  }
+
+  private findExtensionTool(session: ExtensionSession | null, toolName: string): ToolDefinition | undefined {
+    if (!session) {
+      return undefined;
+    }
+    const key = normalizeToolName(toolName);
+    return session.tools.find((tool) => normalizeToolName(tool.name) === key);
+  }
+
+  private findFallbackTool(toolName: string): ToolDefinition | undefined {
+    const key = normalizeToolName(toolName);
+    return this.devtoolsFallback.getTools().find((tool) => normalizeToolName(tool.name) === key);
+  }
+
+  private broadcastDefaultToolsToAgents(excludeAgentId?: string): void {
+    const defaultSession = this.getDefaultSession();
+    const tools = this.getToolsForSession(defaultSession);
+    this.broadcastToAgents({
+      type: 'tools_list',
+      data: tools,
+      sessionId: defaultSession?.sessionId,
+    }, excludeAgentId);
+  }
+
+  private hasConnectedExtensionSession(): boolean {
+    return this.getDefaultSession() !== null;
   }
 
   private sendSessionStateToAgent(ws: WebSocket): void {

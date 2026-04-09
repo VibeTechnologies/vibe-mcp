@@ -6,6 +6,7 @@ import { getPackageVersion } from './version.js';
 
 program
   .name('vibebrowser-cli')
+  .description('OpenClaw-compatible browser CLI (relay mode by default, or chrome-devtools with --devtools)')
   .version(getPackageVersion());
 
 registerStandaloneBrowserCli(program);

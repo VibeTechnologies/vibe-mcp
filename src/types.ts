@@ -108,7 +108,10 @@ export interface ToolResult {
  */
 export type ToolResultContent =
   | { type: 'text'; text: string }
-  | { type: 'image'; data: string; mimeType: string };
+  | { type: 'image'; data: string; mimeType: string }
+  | { type: 'audio'; data: string; mimeType: string }
+  | { type: 'resource'; resource: unknown }
+  | { type: 'resource_link'; uri: string; name?: string };
 
 /**
  * Server configuration
@@ -117,6 +120,8 @@ export interface ServerConfig {
   port: number;
   host: string;
   debug: boolean;
+  /** Use chrome-devtools-mcp directly and bypass relay/extension routing. */
+  devtools?: boolean;
   transport: ServerTransportMode;
   httpPort: number;
   httpPath: string;

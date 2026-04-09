@@ -47,6 +47,7 @@ Claude Desktop       Cursor          VS Code         OpenCode
 - **Fast & Local** - Automation happens on your machine, no cloud latency
 - **Private** - Your browsing data never leaves your device
 - **Stable** - Content script based, no flaky CDP connections
+- **Chrome DevTools Fallback** - Extension tools stay primary by default; use `--devtools` to force chrome-devtools-only mode
 
 ## Quick Start
 
@@ -210,6 +211,15 @@ Add to your Codex configuration:
 3. Go to Settings and enable "MCP External Control"
 4. The status should show "Connected"
 
+If the extension is not connected, `vibebrowser-mcp` can optionally fall back to
+`chrome-devtools-mcp` (started in `--autoConnect` mode) when that package is installed.
+This fallback runs once in the shared local relay daemon (multi-agent safe), so
+both `vibebrowser-mcp` and `vibebrowser-cli` use the same backend instance.
+When extension is connected, extension tools are authoritative. Chrome DevTools
+fallback tools are exposed only when extension is unavailable/disconnected.
+Pass `--devtools` to either CLI to bypass relay/extension routing and use only
+the chrome-devtools backend.
+
 ## Available Tools
 
 | Tool | Description |
@@ -286,6 +296,7 @@ npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> open
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> snapshot
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> click 12
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> type 23 "hello" --submit
+npx -y --package @vibebrowser/mcp vibebrowser-cli --devtools status
 ```
 
 The package now exposes two executables:
@@ -336,6 +347,7 @@ For OpenClaw agents that need your real browser context (logged-in sessions, exi
 
 The skill is located at [`openclaw/vibebrowser/SKILL.md`](openclaw/vibebrowser/SKILL.md) and provides:
 - Full OpenClaw-compatible CLI commands (`status`, `tabs`, `snapshot`, `click`, `type`, etc.)
+- Fallback-safe commands for DevTools-backed flows (`resize`, `upload`, `dialog`)
 - `--json` output for machine parsing
 - Environment-based configuration
 
@@ -402,6 +414,7 @@ npx -y --package @vibebrowser/mcp vibebrowser-mcp [start] [options]
   --http-path <path>   Path for streamable HTTP MCP transport (default: /mcp)
   --allow-host <host>  Allowed host header for HTTP transport (repeatable)
   -r, --remote <uuid>  Connect to a remote extension via public relay
+  --devtools           Use only chrome-devtools backend (bypasses extension relay)
   --relay-url <url>    Custom relay server URL
 
 # OpenClaw helper
@@ -413,6 +426,7 @@ npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> tabs
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> snapshot --json
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> click 12
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> type 23 "hello" --submit
+npx -y --package @vibebrowser/mcp vibebrowser-cli --devtools tabs
 
 # Local LLM server
 npx -y --package @vibebrowser/mcp vibebrowser-mcp serve <model> [options]

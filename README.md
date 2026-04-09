@@ -215,7 +215,8 @@ If the extension is not connected, `vibebrowser-mcp` can optionally fall back to
 `chrome-devtools-mcp` (started in `--autoConnect` mode) when that package is installed.
 This fallback runs once in the shared local relay daemon (multi-agent safe), so
 both `vibebrowser-mcp` and `vibebrowser-cli` use the same backend instance.
-When both are available, tool listing is a union and calls prefer the extension implementation.
+When extension is connected, extension tools are authoritative. Chrome DevTools
+fallback tools are exposed only when extension is unavailable/disconnected.
 
 ## Available Tools
 

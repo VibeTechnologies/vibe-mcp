@@ -17,8 +17,9 @@ A **secure relay** that bridges the gap:
 > Current `vibebrowser-mcp` behavior: relay+extension remains the primary backend.
 > If `chrome-devtools-mcp` is available locally, the server also starts it in
 > `--autoConnect` mode as a fallback inside the shared relay daemon (single
-> instance for all local agents/CLIs), exposes a union of tools (without
-> duplicates), and routes calls deterministically (extension first, then fallback).
+> instance for all local agents/CLIs). When extension is connected, extension
+> tools remain authoritative. Fallback tools are exposed and used only when the
+> extension is unavailable/disconnected.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐

@@ -468,7 +468,7 @@ export class RelayServer extends EventEmitter {
         return;
       }
 
-      if (this.findFallbackTool(requestedToolName)) {
+      if (!this.hasConnectedExtensionSession() && this.findFallbackTool(requestedToolName)) {
         try {
           const args = message.data?.arguments && typeof message.data.arguments === 'object'
             ? message.data.arguments
@@ -800,22 +800,15 @@ export class RelayServer extends EventEmitter {
   }
 
   private getToolsForSession(session: ExtensionSession | null): ToolDefinition[] {
-    const byName = new Map<string, ToolDefinition>();
-
     if (session) {
-      for (const tool of session.tools) {
-        byName.set(normalizeToolName(tool.name), tool);
-      }
+      return [...session.tools];
     }
 
-    for (const tool of this.devtoolsFallback.getTools()) {
-      const key = normalizeToolName(tool.name);
-      if (!byName.has(key)) {
-        byName.set(key, tool);
-      }
+    if (this.hasConnectedExtensionSession()) {
+      return [];
     }
 
-    return [...byName.values()];
+    return [...this.devtoolsFallback.getTools()];
   }
 
   private findExtensionTool(session: ExtensionSession | null, toolName: string): ToolDefinition | undefined {
@@ -839,6 +832,10 @@ export class RelayServer extends EventEmitter {
       data: tools,
       sessionId: defaultSession?.sessionId,
     }, excludeAgentId);
+  }
+
+  private hasConnectedExtensionSession(): boolean {
+    return this.getDefaultSession() !== null;
   }
 
   private sendSessionStateToAgent(ws: WebSocket): void {

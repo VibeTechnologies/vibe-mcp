@@ -327,7 +327,7 @@ async function main() {
       const { data, elapsed } = await runCli(['status']);
       assert(data.ok === true, `status not ok: ${JSON.stringify(data)}`);
       assert(data.extensionConnected === true, `extension not connected: ${JSON.stringify(data)}`);
-      assert(Number(data.toolCount) >= 10, `toolCount too low (${data.toolCount}): ${JSON.stringify(data)}`);
+      assert(Number(data.toolCount) === FAKE_TOOLS.length, `toolCount mismatch (${data.toolCount} != ${FAKE_TOOLS.length}): ${JSON.stringify(data)}`);
       assert(data.sessionId === SESSION_A, `status should select ${SESSION_A} by default: ${JSON.stringify(data)}`);
       console.log(`  status:  ${elapsed}ms (budget: ${MAX_CLI_MS}ms) — ${data.toolCount} tools ✓`);
     }

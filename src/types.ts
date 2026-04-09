@@ -120,6 +120,8 @@ export interface ServerConfig {
   port: number;
   host: string;
   debug: boolean;
+  /** Use chrome-devtools-mcp directly and bypass relay/extension routing. */
+  devtools?: boolean;
   transport: ServerTransportMode;
   httpPort: number;
   httpPath: string;

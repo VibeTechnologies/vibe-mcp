@@ -1,13 +1,31 @@
-import { writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { basename, extname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
 import { ExtensionConnection } from './connection.js';
+import { DevtoolsFallbackConnection } from './devtools-fallback.js';
 import { DEFAULT_WS_PORT, type RelaySessionSummary, type ToolDefinition, type ToolResult } from './types.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 /** Short timeout for the `status` command — it should never block for 30 s. */
 const STATUS_TOOLS_TIMEOUT_MS = 2_000;
+const MIME_TYPE_BY_EXTENSION: Record<string, string> = {
+  '.css': 'text/css',
+  '.csv': 'text/csv',
+  '.gif': 'image/gif',
+  '.html': 'text/html',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.js': 'text/javascript',
+  '.json': 'application/json',
+  '.md': 'text/markdown',
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.txt': 'text/plain',
+  '.webp': 'image/webp',
+  '.xml': 'application/xml',
+};
 const DEFAULT_BROWSER_PROFILE = process.env.VIBE_BROWSER_PROFILE || 'user';
 const DEFAULT_REMOTE_UUID = process.env.VIBE_EXTENSION_UUID || process.env.VIBE_RELAY_UUID;
 const DEFAULT_REMOTE_RELAY_URL = process.env.VIBE_REMOTE_RELAY_URL || process.env.VIBE_RELAY_URL;
@@ -20,6 +38,7 @@ interface BrowserCommandOptions {
   target?: string;
   port: string;
   debug: boolean;
+  devtools: boolean;
   remote?: string;
   session?: string;
   relayUrl?: string;
@@ -48,7 +67,7 @@ interface CommandOutput {
   ok: boolean;
   command: string;
   profile: string;
-  mode: 'local' | 'remote';
+  mode: 'local' | 'remote' | 'devtools';
   sessionId?: string;
   requestedSessionId?: string;
   sessions?: RelaySessionSummary[];
@@ -65,6 +84,7 @@ interface InvocationResult {
 interface CommandContextInit {
   port: number;
   debug: boolean;
+  devtools: boolean;
   remoteUuid?: string;
   sessionId?: string;
   relayUrl?: string;
@@ -99,6 +119,7 @@ function buildBrowserCommand(command: Command): Command {
     .option('--target <target>', 'OpenClaw compatibility target selector (accepted, not used by the Vibe browser CLI)')
     .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
     .option('-d, --debug', 'Enable debug logging', false)
+    .option('--devtools', 'Use only chrome-devtools backend (bypasses extension relay)', false)
     .option('-r, --remote <uuid>', 'Connect to a remote extension via public relay (provide the extension UUID)', DEFAULT_REMOTE_UUID)
     .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
     .option('--relay-url <url>', 'Custom relay server URL', DEFAULT_REMOTE_RELAY_URL)
@@ -441,6 +462,7 @@ async function runBrowserCommand(
   const ctx = new BrowserCliContext({
     port: parsePositiveInteger(globalOptions.port, '--port'),
     debug: Boolean(globalOptions.debug),
+    devtools: Boolean(globalOptions.devtools),
     remoteUuid: globalOptions.remote,
     sessionId: globalOptions.session,
     relayUrl: globalOptions.relayUrl,
@@ -468,10 +490,11 @@ async function runBrowserCommand(
 }
 
 class BrowserCliContext {
-  private readonly connection: ExtensionConnection;
+  private readonly connection: ExtensionConnection | DevtoolsFallbackConnection;
   private readonly profile: string;
   private readonly json: boolean;
   private readonly timeoutMs: number;
+  private readonly devtoolsOnly: boolean;
   private readonly remoteUuid?: string;
   private readonly requestedSessionId?: string;
   private readonly target?: string;
@@ -482,12 +505,15 @@ class BrowserCliContext {
   private readonly ignoredCompatibilityOptions: string[];
 
   constructor(init: CommandContextInit) {
-    this.connection = new ExtensionConnection(
-      init.port,
-      init.debug,
-      init.remoteUuid ? { uuid: init.remoteUuid, relayUrl: init.relayUrl } : undefined,
-      init.remoteUuid ? undefined : { sessionId: init.sessionId },
-    );
+    this.devtoolsOnly = init.devtools;
+    this.connection = init.devtools
+      ? new DevtoolsFallbackConnection(init.debug)
+      : new ExtensionConnection(
+        init.port,
+        init.debug,
+        init.remoteUuid ? { uuid: init.remoteUuid, relayUrl: init.relayUrl } : undefined,
+        init.remoteUuid ? undefined : { sessionId: init.sessionId },
+      );
     this.profile = init.profile;
     this.json = init.json;
     this.timeoutMs = init.timeoutMs;
@@ -503,9 +529,12 @@ class BrowserCliContext {
 
   async connect(): Promise<void> {
     await this.connection.start();
-    await delay(100);
-    this.sessions = await this.connection.listSessions(1_500).catch(() => this.connection.getSessions());
-    await this.connection.waitForToolsUpdate(500);
+    if (this.connection instanceof ExtensionConnection) {
+      const extension = this.connection;
+      await delay(100);
+      this.sessions = await extension.listSessions(1_500).catch(() => extension.getSessions());
+      await extension.waitForToolsUpdate(500);
+    }
   }
 
   async shutdown(): Promise<void> {
@@ -513,19 +542,26 @@ class BrowserCliContext {
   }
 
   async ensureExtensionConnected(): Promise<void> {
-    if (this.connection.isExtensionConnected()) {
+    if (this.isBackendConnected()) {
       return;
     }
-    this.sessions = await this.connection.listSessions(1_500).catch(() => this.connection.getSessions());
+    if (this.connection instanceof ExtensionConnection) {
+      const extension = this.connection;
+      this.sessions = await extension.listSessions(1_500).catch(() => extension.getSessions());
+    }
     this.toolsLoaded = false;
     await this.ensureToolsLoaded();
-    if (!this.connection.isExtensionConnected() && this.tools.length === 0) {
-      throw new Error(this.connection.getConnectionErrorMessage());
+    if (!this.isBackendConnected() && this.tools.length === 0) {
+      throw new Error(this.getConnectionErrorMessage());
     }
   }
 
   async listSessions(): Promise<CommandOutput> {
-    this.sessions = await this.connection.listSessions(this.timeoutMs);
+    if (this.connection instanceof ExtensionConnection) {
+      this.sessions = await this.connection.listSessions(this.timeoutMs);
+    } else {
+      this.sessions = [];
+    }
     return {
       ok: true,
       command: 'sessions',
@@ -539,20 +575,27 @@ class BrowserCliContext {
   }
 
   async status(): Promise<CommandOutput> {
-    this.sessions = await this.connection.listSessions(STATUS_TOOLS_TIMEOUT_MS).catch(() => this.connection.getSessions());
+    if (this.connection instanceof ExtensionConnection) {
+      const extension = this.connection;
+      this.sessions = await extension.listSessions(STATUS_TOOLS_TIMEOUT_MS).catch(() => extension.getSessions());
+    } else {
+      this.sessions = [];
+    }
     await this.ensureToolsLoaded(STATUS_TOOLS_TIMEOUT_MS);
 
     return {
       ok: true,
       command: 'status',
       profile: this.profile,
-      mode: this.remoteUuid ? 'remote' : 'local',
+      mode: this.mode(),
       sessionId: this.currentSessionId(),
       requestedSessionId: this.requestedSessionId,
       sessions: this.sessions,
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
-      relayConnected: this.connection.getStatus() === 'connected',
-      extensionConnected: this.connection.isExtensionConnected(),
+      relayConnected: this.connection instanceof ExtensionConnection
+        ? this.connection.getStatus() === 'connected'
+        : false,
+      extensionConnected: this.isBackendConnected(),
       managedLifecycle: false,
       transport: 'vibebrowser-mcp',
       toolCount: this.tools.length,
@@ -1088,7 +1131,9 @@ class BrowserCliContext {
       // passive wait so the status command is not blocked.
       this.tools = this.connection.getTools();
       if (this.tools.length === 0) {
-        this.tools = await this.connection.waitForToolsUpdate(1_000);
+        if (this.connection instanceof ExtensionConnection) {
+          this.tools = await this.connection.waitForToolsUpdate(1_000);
+        }
       }
     }
     this.toolsLoaded = true;
@@ -1273,11 +1318,17 @@ class BrowserCliContext {
     }
   }
 
-  private mode(): 'local' | 'remote' {
+  private mode(): 'local' | 'remote' | 'devtools' {
+    if (this.devtoolsOnly) {
+      return 'devtools';
+    }
     return this.remoteUuid ? 'remote' : 'local';
   }
 
   private currentSessionId(): string | undefined {
+    if (this.devtoolsOnly) {
+      return undefined;
+    }
     if (this.remoteUuid) {
       return this.remoteUuid;
     }
@@ -1293,6 +1344,24 @@ class BrowserCliContext {
     }
 
     return this.sessions.find((session) => session.connected)?.sessionId;
+  }
+
+  private isBackendConnected(): boolean {
+    if (this.connection instanceof ExtensionConnection) {
+      return this.connection.isExtensionConnected();
+    }
+    return this.connection.isAvailable();
+  }
+
+  private getConnectionErrorMessage(): string {
+    if (this.connection instanceof ExtensionConnection) {
+      return this.connection.getConnectionErrorMessage();
+    }
+    return this.connection.getUnavailableReason() || 'chrome-devtools backend unavailable';
+  }
+
+  outputMode(): 'local' | 'remote' | 'devtools' {
+    return this.mode();
   }
 }
 
@@ -1517,7 +1586,7 @@ function emitError(
       ok: false,
       command: commandName,
       profile: DEFAULT_BROWSER_PROFILE,
-      mode: 'local',
+      mode: ctx.outputMode(),
       error: message,
     }, null, 2));
     return;
@@ -2092,6 +2161,36 @@ function withUploadArgs(tool: ToolDefinition, ref: string, path: string): Record
   if (hasProperty(tool, 'paths')) {
     args.paths = [path];
   }
+
+  const filenameKey = hasProperty(tool, 'filename');
+  const mimeTypeKey = hasProperty(tool, 'mimeType');
+  const contentBase64Key = hasProperty(tool, 'contentBase64');
+  const hasTopLevelPayload = Boolean(filenameKey && mimeTypeKey && contentBase64Key);
+
+  const fileKey = hasProperty(tool, 'file');
+  const fileSchema = fileKey ? toolProperties(tool)[fileKey] : undefined;
+  const fileProperties = isRecord(fileSchema) && isRecord(fileSchema.properties) ? fileSchema.properties : undefined;
+  const hasNestedPayload = Boolean(
+    fileKey
+    && fileProperties
+    && Object.prototype.hasOwnProperty.call(fileProperties, 'filename')
+    && Object.prototype.hasOwnProperty.call(fileProperties, 'mimeType')
+    && Object.prototype.hasOwnProperty.call(fileProperties, 'contentBase64'),
+  );
+
+  if (!hasTopLevelPayload && !hasNestedPayload) {
+    return args;
+  }
+
+  const filePayload = buildUploadFilePayload(path);
+  if (hasTopLevelPayload && filenameKey && mimeTypeKey && contentBase64Key) {
+    args[filenameKey] = filePayload.filename;
+    args[mimeTypeKey] = filePayload.mimeType;
+    args[contentBase64Key] = filePayload.contentBase64;
+  }
+  if (hasNestedPayload && fileKey) {
+    args[fileKey] = filePayload;
+  }
   return args;
 }
 
@@ -2160,6 +2259,25 @@ function maybeAssign(target: Record<string, unknown>, tool: ToolDefinition, prop
 
 function stripUndefined(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+}
+
+function buildUploadFilePayload(path: string): { filename: string; mimeType: string; contentBase64: string } {
+  let contentBase64: string;
+  try {
+    contentBase64 = readFileSync(path).toString('base64');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to read upload file at "${path}": ${message}`);
+  }
+  return {
+    filename: basename(path),
+    mimeType: MIME_TYPE_BY_EXTENSION[extname(path).toLowerCase()] ?? 'application/octet-stream',
+    contentBase64,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function parseRef(ref: string): RefTarget {

@@ -16,6 +16,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { ExtensionConnection, type RemoteConfig } from './connection.js';
+import { DevtoolsFallbackConnection } from './devtools-fallback.js';
 import {
   DEFAULT_HTTP_PATH,
   DEFAULT_HTTP_PORT,
@@ -46,7 +47,7 @@ interface SessionState {
  * Exposes Vibe browser tools to MCP clients via stdio or streamable HTTP transport.
  */
 export class VibeMcpServer {
-  private readonly connection: ExtensionConnection;
+  private readonly connection: ExtensionConnection | DevtoolsFallbackConnection;
   private readonly config: ServerConfig;
   private readonly sessions = new Map<string, SessionState>();
   private stdioServer: Server | null = null;
@@ -59,6 +60,7 @@ export class VibeMcpServer {
       port: config.port ?? DEFAULT_WS_PORT,
       host: config.host ?? '127.0.0.1',
       debug: config.debug ?? false,
+      devtools: config.devtools ?? false,
       transport: config.transport ?? 'stdio',
       httpPort: config.httpPort ?? DEFAULT_HTTP_PORT,
       httpPath: normalizeHttpPath(config.httpPath ?? DEFAULT_HTTP_PATH),
@@ -68,16 +70,20 @@ export class VibeMcpServer {
       remoteRelayUrl: config.remoteRelayUrl,
     };
 
-    const remoteConfig: RemoteConfig | undefined = this.config.remoteUuid
-      ? { uuid: this.config.remoteUuid, relayUrl: this.config.remoteRelayUrl }
-      : undefined;
+    if (this.config.devtools) {
+      this.connection = new DevtoolsFallbackConnection(this.config.debug);
+    } else {
+      const remoteConfig: RemoteConfig | undefined = this.config.remoteUuid
+        ? { uuid: this.config.remoteUuid, relayUrl: this.config.remoteRelayUrl }
+        : undefined;
 
-    this.connection = new ExtensionConnection(
-      this.config.port,
-      this.config.debug,
-      remoteConfig,
-      this.config.remoteUuid ? undefined : { sessionId: this.config.sessionId },
-    );
+      this.connection = new ExtensionConnection(
+        this.config.port,
+        this.config.debug,
+        remoteConfig,
+        this.config.remoteUuid ? undefined : { sessionId: this.config.sessionId },
+      );
+    }
     this.setupConnectionEvents();
   }
 
@@ -86,7 +92,13 @@ export class VibeMcpServer {
    */
   async start(): Promise<void> {
     await this.connection.start();
-    if (this.config.remoteUuid) {
+    if (this.config.devtools) {
+      if (this.connection instanceof DevtoolsFallbackConnection && this.connection.isAvailable()) {
+        this.log('Connected to chrome-devtools backend');
+      } else {
+        this.log('chrome-devtools backend unavailable; server started without tools');
+      }
+    } else if (this.config.remoteUuid) {
       this.log(`Connected to remote relay for UUID ${this.config.remoteUuid}`);
     } else {
       this.log(`Waiting for Vibe extension connection on port ${this.config.port}...`);
@@ -171,6 +183,21 @@ export class VibeMcpServer {
    * Set up extension connection events
    */
   private setupConnectionEvents(): void {
+    if (this.connection instanceof DevtoolsFallbackConnection) {
+      this.connection.on('connected', () => {
+        this.log('chrome-devtools backend connected');
+      });
+      this.connection.on('unavailable', (reason: string) => {
+        this.log(reason);
+        this.notifyToolListChanged();
+      });
+      this.connection.on('tools_updated', (tools: ToolDefinition[]) => {
+        this.log(`Received ${tools.length} tools from chrome-devtools backend`);
+        this.notifyToolListChanged();
+      });
+      return;
+    }
+
     this.connection.on('connected', () => {
       this.log('Extension connected');
     });
@@ -220,7 +247,9 @@ export class VibeMcpServer {
       }
 
       if (this.connection.getTools().length === 0) {
-        await this.connection.waitForToolsUpdate(STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS);
+        if (this.connection instanceof ExtensionConnection) {
+          await this.connection.waitForToolsUpdate(STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS);
+        }
       }
 
       return {
@@ -385,7 +414,9 @@ export class VibeMcpServer {
         version: SERVER_VERSION,
         transport: 'http',
         mcpPath: this.config.httpPath,
-        extensionConnected: this.connection.isExtensionConnected(),
+        extensionConnected: this.connection instanceof DevtoolsFallbackConnection
+          ? this.connection.isAvailable()
+          : this.connection.isExtensionConnected(),
         cachedTools: this.connection.getTools().length,
       }));
     };

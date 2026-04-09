@@ -8,6 +8,8 @@ import type { ToolDefinition, ToolResult, ToolResultContent } from './types.js';
 
 const TOOLS_REFRESH_TIMEOUT_MS = 6_000;
 const TOOL_CALL_TIMEOUT_MS = 30_000;
+const DEVTOOLS_UNAVAILABLE_PREFIX = 'chrome-devtools backend unavailable';
+const DEVTOOLS_NOT_INSTALLED_MESSAGE = `${DEVTOOLS_UNAVAILABLE_PREFIX}: chrome-devtools-mcp is not installed`;
 
 interface ChromeDevtoolsPackageMeta {
   bin?: string | Record<string, string>;
@@ -53,7 +55,7 @@ export class DevtoolsFallbackConnection extends EventEmitter {
   async start(): Promise<void> {
     const binaryPath = this.resolveBinaryPath();
     if (!binaryPath) {
-      this.unavailableReason = 'chrome-devtools-mcp is not installed';
+      this.unavailableReason = DEVTOOLS_NOT_INSTALLED_MESSAGE;
       this.log(this.unavailableReason);
       return;
     }
@@ -81,7 +83,7 @@ export class DevtoolsFallbackConnection extends EventEmitter {
       this.emit('connected');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.unavailableReason = `chrome-devtools fallback unavailable: ${message}`;
+      this.unavailableReason = `${DEVTOOLS_UNAVAILABLE_PREFIX}: ${message}`;
       this.log(this.unavailableReason);
       this.available = false;
       this.client = null;
@@ -152,7 +154,7 @@ export class DevtoolsFallbackConnection extends EventEmitter {
 
   async callTool(name: string, args: Record<string, unknown>, timeoutMs: number = TOOL_CALL_TIMEOUT_MS): Promise<ToolResult> {
     if (!this.client || !this.available) {
-      throw new Error(this.unavailableReason || 'chrome-devtools fallback is unavailable');
+      throw new Error(this.unavailableReason || DEVTOOLS_UNAVAILABLE_PREFIX);
     }
 
     const result = await this.client.callTool(

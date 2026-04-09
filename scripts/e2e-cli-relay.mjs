@@ -19,7 +19,7 @@
  *   - tool list caching / refresh hangs that the fake-relay test masks
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
@@ -95,7 +95,10 @@ function assert(condition, message) {
 // Fake extension tool handler
 // ---------------------------------------------------------------------------
 
-const FAKE_TOOLS = [
+const SESSION_A = 'browser-alpha';
+const SESSION_B = 'browser-beta';
+
+const COMMON_TOOLS = [
   tool('list_pages', {}),
   tool('navigate_page', { pageId: { type: 'number' }, url: { type: 'string' }, type: { type: 'string' } }),
   tool('new_page', { url: { type: 'string' } }),
@@ -106,15 +109,31 @@ const FAKE_TOOLS = [
   tool('press_key', { keys: { type: 'string' } }),
   tool('evaluate_script', { function: { type: 'string' } }),
   tool('resize_page', { width: { type: 'number' }, height: { type: 'number' } }),
-  tool('upload_file', { uid: { type: 'string' }, filePath: { type: 'string' } }),
   tool('handle_dialog', { action: { type: 'string' }, promptText: { type: 'string' } }),
   tool('scroll_page', { direction: { type: 'string' }, numPages: { type: 'number' } }),
   tool('wait_for', { text: { type: 'array' }, timeout: { type: 'number' } }),
   tool('hover', { ref: { type: 'string' } }),
 ];
 
-const SESSION_A = 'browser-alpha';
-const SESSION_B = 'browser-beta';
+const SESSION_A_TOOLS = [
+  ...COMMON_TOOLS,
+  tool('file_upload', {
+    uid: { type: 'string' },
+    file: {
+      type: 'object',
+      properties: {
+        filename: { type: 'string' },
+        mimeType: { type: 'string' },
+        contentBase64: { type: 'string' },
+      },
+    },
+  }),
+];
+
+const SESSION_B_TOOLS = [
+  ...COMMON_TOOLS,
+  tool('upload_file', { uid: { type: 'string' }, filePath: { type: 'string' } }),
+];
 
 function tool(name, properties) {
   return { name, description: `Fake ${name}`, inputSchema: { type: 'object', properties } };
@@ -267,13 +286,14 @@ async function main() {
 
     // ------ Connect fake extensions (two local browser sessions) ------
     const attachFakeExtension = async (sessionId) => {
+      const sessionTools = sessionId === SESSION_B ? SESSION_B_TOOLS : SESSION_A_TOOLS;
       const extension = await connectWebSocket(`ws://${HOST}:${EXTENSION_PORT}`);
       extension.send(JSON.stringify({ type: 'connected', sessionId }));
       extension.send(JSON.stringify({
         type: 'sessions_list',
         connected: true,
         sessionId,
-        sessions: [{ sessionId, connected: true, connectedAt: Date.now(), toolCount: FAKE_TOOLS.length }],
+        sessions: [{ sessionId, connected: true, connectedAt: Date.now(), toolCount: sessionTools.length }],
       }));
 
       extension.on('message', (raw) => {
@@ -285,7 +305,7 @@ async function main() {
             type: 'tools_list',
             requestId: msg.requestId,
             sessionId,
-            data: FAKE_TOOLS,
+            data: sessionTools,
           }));
         }
 
@@ -327,7 +347,7 @@ async function main() {
       const { data, elapsed } = await runCli(['status']);
       assert(data.ok === true, `status not ok: ${JSON.stringify(data)}`);
       assert(data.extensionConnected === true, `extension not connected: ${JSON.stringify(data)}`);
-      assert(Number(data.toolCount) === FAKE_TOOLS.length, `toolCount mismatch (${data.toolCount} != ${FAKE_TOOLS.length}): ${JSON.stringify(data)}`);
+      assert(Number(data.toolCount) === SESSION_A_TOOLS.length, `toolCount mismatch (${data.toolCount} != ${SESSION_A_TOOLS.length}): ${JSON.stringify(data)}`);
       assert(data.sessionId === SESSION_A, `status should select ${SESSION_A} by default: ${JSON.stringify(data)}`);
       console.log(`  status:  ${elapsed}ms (budget: ${MAX_CLI_MS}ms) — ${data.toolCount} tools ✓`);
     }
@@ -409,17 +429,34 @@ async function main() {
     }
 
     // =================================================================
-    // TEST 9: `vibebrowser-cli upload <ref> <path>` calls upload_file
+    // TEST 9: `vibebrowser-cli upload <ref> <path>` maps extension payload schema
     // =================================================================
     {
       const { data, elapsed } = await runCli(['upload', 'A7', 'docs/chrome-devtools-relay.md']);
       assert(data.ok === true, `upload not ok: ${JSON.stringify(data)}`);
-      assert(data.tool === 'upload_file', `upload used wrong tool: ${JSON.stringify(data)}`);
-      console.log(`  upload:  ${elapsed}ms (budget: ${MAX_CLI_MS}ms) ✓`);
+      const expectedBase64 = readFileSync(resolve(PACKAGE_ROOT, 'docs/chrome-devtools-relay.md')).toString('base64');
+      assert(data.tool === 'file_upload', `upload used wrong tool: ${JSON.stringify(data)}`);
+      const echoed = JSON.parse(data.raw?.content?.[0]?.text ?? '{}');
+      assert(echoed.args?.file?.filename === 'chrome-devtools-relay.md', `upload filename mismatch: ${JSON.stringify(data)}`);
+      assert(echoed.args?.file?.mimeType === 'text/markdown', `upload mimeType mismatch: ${JSON.stringify(data)}`);
+      assert(echoed.args?.file?.contentBase64 === expectedBase64, `upload content payload mismatch: ${JSON.stringify(data)}`);
+      console.log(`  upload-e:${elapsed}ms (budget: ${MAX_CLI_MS}ms) — extension payload ✓`);
     }
 
     // =================================================================
-    // TEST 10: `vibebrowser-cli dialog --dismiss` calls handle_dialog
+    // TEST 10: `vibebrowser-cli upload <ref> <path>` maps devtools path schema
+    // =================================================================
+    {
+      const { data, elapsed } = await runCli(['--session', SESSION_B, 'upload', 'A7', 'docs/chrome-devtools-relay.md']);
+      assert(data.ok === true, `upload not ok: ${JSON.stringify(data)}`);
+      assert(data.tool === 'upload_file', `upload used wrong tool: ${JSON.stringify(data)}`);
+      const echoed = JSON.parse(data.raw?.content?.[0]?.text ?? '{}');
+      assert(echoed.args?.filePath === 'docs/chrome-devtools-relay.md', `upload filePath mismatch: ${JSON.stringify(data)}`);
+      console.log(`  upload-d:${elapsed}ms (budget: ${MAX_CLI_MS}ms) — devtools path ✓`);
+    }
+
+    // =================================================================
+    // TEST 11: `vibebrowser-cli dialog --dismiss` calls handle_dialog
     // =================================================================
     {
       const { data, elapsed } = await runCli(['dialog', '--dismiss']);

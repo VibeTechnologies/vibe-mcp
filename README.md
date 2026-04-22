@@ -321,8 +321,8 @@ Local-session selection:
 
 Snapshot behavior is tool-only (no legacy snapshot RPC shortcut):
 
-- `snapshot` (default) resolves via `take_md_snapshot`
-- `snapshot --format aria` resolves via `take_a11y_snapshot`
+- `snapshot` (default, `--format ai`) resolves via `take_md_snapshot` — uses the content script's in-page markdown extractor. Fast and readable, but **may return empty for background tabs or complex SPAs** (Notion, Gmail) where the content script is unreachable or layout is not computed.
+- `snapshot --format aria` resolves via `take_a11y_snapshot` — uses Chrome DevTools Protocol `Accessibility.getFullAXTree` directly. **Reliable for all tabs including background tabs and SPAs.** Use this as a fallback when the default format returns empty or only a page title.
 
 This keeps CLI behavior aligned with extension-supported tools and ensures page targeting works consistently with `--page-id`/`--pageId`.
 

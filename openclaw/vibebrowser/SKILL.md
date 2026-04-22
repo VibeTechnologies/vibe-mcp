@@ -104,6 +104,12 @@ Use this sequence when the task needs reliable, repeatable control:
    ```bash
    npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id "$PAGE_ID" snapshot --format aria --interactive
    ```
+   If the aria snapshot is too verbose, try the default first and fall back:
+   ```bash
+   npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id "$PAGE_ID" snapshot
+   # If empty or only title returned, retry with aria:
+   npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id "$PAGE_ID" snapshot --format aria --interactive
+   ```
 4. Perform action on the same page id:
    ```bash
    npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id "$PAGE_ID" click 12
@@ -175,6 +181,32 @@ Evaluate JavaScript:
 ```bash
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json evaluate --fn '() => document.title'
 ```
+
+## Snapshot format: `ai` vs `aria`
+
+The `snapshot` command supports two extraction formats:
+
+| Format | Flag | Engine | Best for |
+|--------|------|--------|----------|
+| `ai` (default) | `--format ai` | Content script (in-page JS) | Simple pages, articles, search results |
+| `aria` | `--format aria` | CDP accessibility tree | **SPAs, background tabs, Notion, Gmail, complex apps** |
+
+**When the default `--format ai` returns only the page title or empty content**, switch to `--format aria`:
+
+```bash
+# Default — may return empty for background tabs or SPAs like Notion
+vibebrowser-cli ... snapshot
+
+# Reliable fallback — uses Chrome DevTools Protocol directly, works on background tabs
+vibebrowser-cli ... snapshot --format aria --interactive
+```
+
+**Known limitations of `--format ai`:**
+- Returns empty for **background tabs** (content script not injected or `getBoundingClientRect` returns 0x0)
+- Returns `"Could not establish connection"` when the content script is unreachable
+- May miss content behind `aria-hidden` containers in SPAs like Notion
+
+**Rule of thumb:** If `snapshot` returns suspiciously little content, retry with `--format aria --interactive` before reporting failure.
 
 ## Success criteria
 

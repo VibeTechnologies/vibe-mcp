@@ -252,7 +252,7 @@ function registerBrowserSubcommands(browser: Command): void {
   browser
     .command('snapshot')
     .description('Capture a textual browser snapshot')
-    .option('--format <format>', 'Snapshot format (ai or aria)', 'ai')
+    .option('--format <format>', 'Snapshot format: "ai" (default, content-script markdown — may fail on background tabs or complex SPAs) or "aria" (CDP accessibility tree — reliable for all tabs)', 'ai')
     .option('--limit <count>', 'Max visible lines/items to print in human mode')
     .option('--interactive', 'Prefer interactive/ARIA-flavored snapshot output', false)
     .option('--selector <selector>', 'Selector to scope the snapshot to')

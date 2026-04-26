@@ -276,6 +276,12 @@ npx -y --package @vibebrowser/mcp vibebrowser-mcp start --transport http --remot
 
 This exposes a local MCP endpoint at `http://127.0.0.1:8788/mcp` by default.
 
+When OpenClaw runs on a different machine (for example cloud-hosted), provide a reachable URL:
+
+```bash
+npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <extension-uuid> --public-url https://<reachable-host>/mcp
+```
+
 You can print the exact OpenClaw-friendly setup with:
 
 ```bash
@@ -315,8 +321,8 @@ Local-session selection:
 
 Snapshot behavior is tool-only (no legacy snapshot RPC shortcut):
 
-- `snapshot` (default) resolves via `take_md_snapshot`
-- `snapshot --format aria` resolves via `take_a11y_snapshot`
+- `snapshot` (default, `--format ai`) resolves via `take_md_snapshot` — uses the content script's in-page markdown extractor. Fast and readable, but **may return empty for background tabs or complex SPAs** (Notion, Gmail) where the content script is unreachable or layout is not computed.
+- `snapshot --format aria` resolves via `take_a11y_snapshot` — uses Chrome DevTools Protocol `Accessibility.getFullAXTree` directly. **Reliable for all tabs including background tabs and SPAs.** Use this as a fallback when the default format returns empty or only a page title.
 
 This keeps CLI behavior aligned with extension-supported tools and ensures page targeting works consistently with `--page-id`/`--pageId`.
 
@@ -334,7 +340,7 @@ There are two ways to use Vibe with OpenClaw:
 If OpenClaw runs in the cloud but you want it to control your local browser:
 
 1. Install the Vibe extension and enable **Remote** mode (see [docs/openclaw-local-browser.md](docs/openclaw-local-browser.md))
-2. Start the local HTTP bridge: `vibebrowser-mcp openclaw --remote <extension-uuid>`
+2. Start the local HTTP bridge: `vibebrowser-mcp openclaw --remote <extension-uuid> [--public-url <url>]`
 3. Register the MCP URL in OpenClaw
 
 **Option B: OpenClaw skill for local agents**
@@ -418,10 +424,11 @@ npx -y --package @vibebrowser/mcp vibebrowser-mcp [start] [options]
   --relay-url <url>    Custom relay server URL
 
 # OpenClaw helper
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <extension-uuid>
+npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <extension-uuid> [--public-url <url>]
 
 # OpenClaw-compatible browser CLI
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> status
+npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> status --wait-for-extension --wait-timeout 10000
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> tabs
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> snapshot --json
 npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> click 12
@@ -448,7 +455,7 @@ npx -y --package @vibebrowser/mcp vibebrowser-mcp serve <model> [options]
 1. Start `vibebrowser-mcp` in HTTP mode instead of stdio
 2. Make sure the bridge process is still running on the user's machine
 3. Confirm the extension is in `Remote` mode and connected
-4. Verify the MCP URL in OpenClaw matches the bridge URL, usually `http://127.0.0.1:8788/mcp`
+4. Verify the MCP URL in OpenClaw matches the bridge URL. If OpenClaw is cloud-hosted, do not use `127.0.0.1`; use `openclaw --public-url` with a reachable host.
 
 ### Debug mode
 

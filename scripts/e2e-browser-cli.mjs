@@ -25,6 +25,7 @@ let packedPackageDir = null;
 let cliInvocation = null;
 let delayToolResultMs = 0;
 let missingPageIdMode = false;
+let fillCompatibilityErrorMode = false;
 
 const ONE_PIXEL_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W6n8AAAAASUVORK5CYII=';
@@ -48,6 +49,7 @@ const TOOLS = [
   }),
   tool('click', { ref: { type: 'string' }, dblClick: { type: 'boolean' }, pageId: { type: 'number' } }),
   tool('fill', { ref: { type: 'string' }, value: { type: 'string' }, pageId: { type: 'number' } }),
+  tool('type_text', { text: { type: 'string' }, submitKey: { type: 'string' }, pageId: { type: 'number' } }),
   tool('press_key', { keys: { type: 'string' }, pageId: { type: 'number' } }),
   tool('hover', { ref: { type: 'string' }, pageId: { type: 'number' } }),
   tool('drag', { source: { type: 'string' }, target: { type: 'string' }, pageId: { type: 'number' } }),
@@ -104,13 +106,21 @@ try {
       if (message.type === 'call_tool') {
         if (
           missingPageIdMode
-          && message.data?.name === 'navigate_page'
+          && (message.data?.name === 'navigate_page' || message.data?.name === 'click')
           && message.data?.arguments?.pageId === undefined
         ) {
           ws.send(JSON.stringify({
             type: 'error',
             requestId: message.requestId,
             error: 'Missing required pageId',
+          }));
+          return;
+        }
+        if (fillCompatibilityErrorMode && message.data?.name === 'fill') {
+          ws.send(JSON.stringify({
+            type: 'error',
+            requestId: message.requestId,
+            error: 'Invalid arguments: fill does not accept ref in this backend',
           }));
           return;
         }
@@ -205,6 +215,11 @@ try {
   const typed = await runCli(['type', '23', 'hello world', '--submit']);
   assert(typed.ok === true && typed.tool === 'fill', `type failed: ${JSON.stringify(typed)}`);
 
+  fillCompatibilityErrorMode = true;
+  const typedFallback = await runCli(['type', '23', 'hello via fallback']);
+  assert(typedFallback.ok === true && typedFallback.tool === 'type_text', `type fallback failed: ${JSON.stringify(typedFallback)}`);
+  fillCompatibilityErrorMode = false;
+
   const pressed = await runCli(['press', 'Enter']);
   assert(pressed.ok === true && pressed.tool === 'press_key', `press failed: ${JSON.stringify(pressed)}`);
 
@@ -256,7 +271,12 @@ try {
 
   // Missing required pageId should include actionable hint.
   missingPageIdMode = true;
-  await expectCliFailure(['navigate', 'https://example.com'], /Hint: use `tabs` to list pages, then pass --page-id <id> to target a specific tab\./);
+  const missingPageMessage = await expectCliFailure(
+    ['click', '12'],
+    /Hint: use `tabs` to list pages, then pass --page-id <id> to target a specific tab\./,
+  );
+  assert(/"mode":\s*"remote"/.test(missingPageMessage), `error payload should report remote mode: ${missingPageMessage}`);
+  assert(/"profile":\s*"user"/.test(missingPageMessage), `error payload should report user profile: ${missingPageMessage}`);
   missingPageIdMode = false;
 
   console.log('browser cli e2e ok');
@@ -336,6 +356,8 @@ function handleToolCall(name, args) {
       return jsonResult({ clicked: args.ref ?? null, double: Boolean(args.dblClick), ...(args.pageId !== undefined ? { pageId: args.pageId } : {}) });
     case 'fill':
       return jsonResult({ ref: args.ref ?? null, value: args.value ?? '' });
+    case 'type_text':
+      return jsonResult({ text: args.text ?? '', submitKey: args.submitKey ?? null });
     case 'press_key':
       return jsonResult({ keys: args.keys ?? '' });
     case 'hover':
@@ -451,6 +473,7 @@ async function expectCliFailure(args, pattern) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     assert(pattern.test(message), `Expected failure matching ${pattern}, got:\n${message}`);
+    return message;
   }
 }
 

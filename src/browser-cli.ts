@@ -134,8 +134,21 @@ function registerBrowserSubcommands(browser: Command): void {
   browser
     .command('status')
     .description('Show browser bridge status')
+    .option('--wait-for-extension', 'Wait for extension connection before returning status', false)
+    .option('--wait-timeout <ms>', 'Maximum wait time when --wait-for-extension is enabled')
+    .option('--poll-interval <ms>', 'Polling interval while waiting for extension')
     .action(async function (this: Command) {
-      await runBrowserCommand(this, 'status', false, async (ctx) => ctx.status());
+      await runBrowserCommand(this, 'status', false, async (ctx, options) =>
+        ctx.status({
+          waitForExtension: Boolean(options.waitForExtension),
+          waitTimeoutMs: options.waitTimeout
+            ? parsePositiveInteger(String(options.waitTimeout), '--wait-timeout')
+            : undefined,
+          pollIntervalMs: options.pollInterval
+            ? parsePositiveInteger(String(options.pollInterval), '--poll-interval')
+            : undefined,
+        })
+      );
     });
 
   browser
@@ -239,7 +252,7 @@ function registerBrowserSubcommands(browser: Command): void {
   browser
     .command('snapshot')
     .description('Capture a textual browser snapshot')
-    .option('--format <format>', 'Snapshot format (ai or aria)', 'ai')
+    .option('--format <format>', 'Snapshot format: "ai" (default, content-script markdown — may fail on background tabs or complex SPAs) or "aria" (CDP accessibility tree — reliable for all tabs)', 'ai')
     .option('--limit <count>', 'Max visible lines/items to print in human mode')
     .option('--interactive', 'Prefer interactive/ARIA-flavored snapshot output', false)
     .option('--selector <selector>', 'Selector to scope the snapshot to')
@@ -574,12 +587,43 @@ class BrowserCliContext {
     };
   }
 
-  async status(): Promise<CommandOutput> {
+  async status(options: {
+    waitForExtension?: boolean;
+    waitTimeoutMs?: number;
+    pollIntervalMs?: number;
+  } = {}): Promise<CommandOutput> {
+    const waitForExtension = options.waitForExtension === true;
+    const waitTimeoutMs = options.waitTimeoutMs ?? this.timeoutMs;
+    const pollIntervalMs = options.pollIntervalMs ?? 250;
+    const waitStartedAt = Date.now();
+
     if (this.connection instanceof ExtensionConnection) {
       const extension = this.connection;
       this.sessions = await extension.listSessions(STATUS_TOOLS_TIMEOUT_MS).catch(() => extension.getSessions());
     } else {
       this.sessions = [];
+    }
+
+    if (waitForExtension && !this.isBackendConnected()) {
+      const deadline = Date.now() + waitTimeoutMs;
+      while (!this.isBackendConnected() && Date.now() < deadline) {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+          break;
+        }
+        await delay(Math.min(pollIntervalMs, remainingMs));
+        if (this.connection instanceof ExtensionConnection) {
+          const extension = this.connection;
+          this.sessions = await extension.listSessions(STATUS_TOOLS_TIMEOUT_MS).catch(() => extension.getSessions());
+        }
+      }
+    }
+
+    if (this.isBackendConnected()) {
+      // Use a short timeout for status — this is a diagnostic command that
+      // should return quickly.  Fall back to cached tools if the extension
+      // is slow to respond.
+      await this.ensureToolsLoaded(STATUS_TOOLS_TIMEOUT_MS);
     }
     await this.ensureToolsLoaded(STATUS_TOOLS_TIMEOUT_MS);
 
@@ -600,6 +644,12 @@ class BrowserCliContext {
       transport: 'vibebrowser-mcp',
       toolCount: this.tools.length,
       tools: this.tools.map((tool) => tool.name),
+      ...(waitForExtension
+        ? {
+          waitForExtension: true,
+          waitedMs: Date.now() - waitStartedAt,
+        }
+        : {}),
     };
   }
 
@@ -1084,6 +1134,7 @@ class BrowserCliContext {
     await this.ensureToolsLoaded();
 
     const available = new Map(this.tools.map((tool) => [normalizeName(tool.name), tool]));
+    const compatibilityErrors: string[] = [];
     for (const candidate of candidates) {
       for (const candidateName of candidate.names) {
         const tool = available.get(normalizeName(candidateName));
@@ -1108,14 +1159,25 @@ class BrowserCliContext {
             args[pageStateKey] = 'markdown';
           }
         }
-        const result = await this.connection.callTool(tool.name, args, this.timeoutMs);
-        return { tool: tool.name, args, result: result as ToolResult & Record<string, unknown> };
+        try {
+          const result = await this.connection.callTool(tool.name, args, this.timeoutMs);
+          return { tool: tool.name, args, result: result as ToolResult & Record<string, unknown> };
+        } catch (error) {
+          if (!isToolArgumentCompatibilityError(error)) {
+            throw error;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          compatibilityErrors.push(`${tool.name}: ${message}`);
+        }
       }
     }
 
     const requested = candidates.flatMap((candidate) => candidate.names);
+    const compatibilityHint = compatibilityErrors.length > 0
+      ? ` Compatibility errors: ${compatibilityErrors.join(' | ')}`
+      : '';
     throw new Error(
-      `No compatible browser tool found for "${commandName}". Tried ${requested.join(', ')}. Available tools: ${this.tools.map((tool) => tool.name).join(', ')}`
+      `No compatible browser tool found for "${commandName}". Tried ${requested.join(', ')}. Available tools: ${this.tools.map((tool) => tool.name).join(', ')}.${compatibilityHint}`
     );
   }
 
@@ -1363,6 +1425,16 @@ class BrowserCliContext {
   outputMode(): 'local' | 'remote' | 'devtools' {
     return this.mode();
   }
+
+  outputContext(): Pick<CommandOutput, 'profile' | 'mode' | 'sessionId' | 'requestedSessionId' | 'ignoredCompatibilityOptions'> {
+    return {
+      profile: this.profile,
+      mode: this.mode(),
+      sessionId: this.currentSessionId(),
+      requestedSessionId: this.requestedSessionId,
+      ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
+    };
+  }
 }
 
 interface ToolCandidate {
@@ -1501,6 +1573,21 @@ function isTimeoutError(error: unknown): boolean {
   return /timed out|timeout/i.test(message);
 }
 
+function isToolArgumentCompatibilityError(error: unknown): boolean {
+  const message = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (!message) {
+    return false;
+  }
+
+  if (
+    /timed out|timeout|relay connection|connection lost|not connected|no connection|disconnected/.test(message)
+  ) {
+    return false;
+  }
+
+  return /missing required|required (field|property|argument)|invalid argument|invalid args|invalid input|unexpected argument|unexpected property|unknown argument|does not accept|unrecognized (field|property|argument)/.test(message);
+}
+
 function findBestPageMatchByUrl(pages: PageSummary[], targetUrl: string): { id: number; url?: string } | undefined {
   const normalizedTarget = normalizeUrlForMatch(targetUrl);
   let bestExact: { id: number; url?: string } | undefined;
@@ -1582,11 +1669,11 @@ function emitError(
     message += '\nHint: use `tabs` to list pages, then pass --page-id <id> to target a specific tab.';
   }
   if (asJson) {
+    const context = ctx.outputContext();
     console.log(JSON.stringify({
       ok: false,
       command: commandName,
-      profile: DEFAULT_BROWSER_PROFILE,
-      mode: ctx.outputMode(),
+      ...context,
       error: message,
     }, null, 2));
     return;

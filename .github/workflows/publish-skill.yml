@@ -1,0 +1,40 @@
+name: Publish Skill
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'openclaw/**'
+  workflow_dispatch:
+
+jobs:
+  publish-skill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate SKILL.md exists
+        run: |
+          if [ ! -f openclaw/vibe-local-browser/SKILL.md ]; then
+            echo "ERROR: openclaw/vibe-local-browser/SKILL.md not found"
+            exit 1
+          fi
+          echo "Skill file validated"
+
+      - name: Validate SKILL.md frontmatter
+        run: |
+          head -1 openclaw/vibe-local-browser/SKILL.md | grep -q '^---' || {
+            echo "ERROR: SKILL.md missing frontmatter"
+            exit 1
+          }
+          echo "Frontmatter validated"
+
+      - name: Report skill metadata
+        run: |
+          echo "## Skill Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Path:** \`openclaw/vibe-local-browser/SKILL.md\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry key:** \`VibeTechnologies/vibe-mcp-browser-cli/vibe-local-browser\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Install:** \`npx skills add VibeTechnologies/vibe-mcp-browser-cli/vibe-local-browser\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The skill is available on GitHub and via the \`@vibebrowser/mcp\` npm package." >> $GITHUB_STEP_SUMMARY

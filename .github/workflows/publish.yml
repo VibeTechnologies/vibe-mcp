@@ -8,6 +8,7 @@ on:
     paths:
       - 'src/**'
       - 'package.json'
+      - 'openclaw/**'
   release:
     types: [published]
   workflow_dispatch:

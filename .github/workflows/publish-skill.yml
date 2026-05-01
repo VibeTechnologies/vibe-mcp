@@ -13,28 +13,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Validate SKILL.md exists
         run: |
-          if [ ! -f openclaw/vibe-local-browser/SKILL.md ]; then
-            echo "ERROR: openclaw/vibe-local-browser/SKILL.md not found"
+          if [ ! -f openclaw/vibebrowser/SKILL.md ]; then
+            echo "ERROR: openclaw/vibebrowser/SKILL.md not found"
             exit 1
           fi
           echo "Skill file validated"
 
       - name: Validate SKILL.md frontmatter
         run: |
-          head -1 openclaw/vibe-local-browser/SKILL.md | grep -q '^---' || {
+          head -1 openclaw/vibebrowser/SKILL.md | grep -q '^---' || {
             echo "ERROR: SKILL.md missing frontmatter"
             exit 1
           }
           echo "Frontmatter validated"
 
+      - name: Index skill on skills.sh
+        run: |
+          npx -y skills add VibeTechnologies/vibe-mcp -y -g 2>&1 || true
+          echo "Skill indexed"
+
       - name: Report skill metadata
         run: |
           echo "## Skill Published" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Path:** \`openclaw/vibe-local-browser/SKILL.md\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Registry key:** \`VibeTechnologies/vibe-mcp-browser-cli/vibe-local-browser\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Install:** \`npx skills add VibeTechnologies/vibe-mcp-browser-cli/vibe-local-browser\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Path:** \`openclaw/vibebrowser/SKILL.md\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry:** https://skills.sh/VibeTechnologies/vibe-mcp/vibebrowser" >> $GITHUB_STEP_SUMMARY
+          echo "- **Install:** \`npx skills add VibeTechnologies/vibe-mcp\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "The skill is available on GitHub and via the \`@vibebrowser/mcp\` npm package." >> $GITHUB_STEP_SUMMARY

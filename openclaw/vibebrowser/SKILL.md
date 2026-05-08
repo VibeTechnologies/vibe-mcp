@@ -19,15 +19,19 @@ metadata:
 
 ## Installation
 
-1. **Get the Extension UUID**:
-   - Install the Vibe extension in Chrome
-   - Open extension Settings → MCP External
-   - Enable Remote mode and copy the Extension UUID
+1. **Get the relay URL**:
+    - Install the Vibe extension in Chrome
+    - Open extension Settings → MCP External
+    - Enable Remote mode and copy the WSS relay URL, for example `wss://relay.api.vibebrowser.app/<extension-uuid>`
 
 2. **Set environment variable**:
-   ```bash
-   export VIBE_EXTENSION_UUID="<your-extension-uuid>"
-   ```
+    ```bash
+    export VIBE_RELAY_WS_URL="wss://relay.api.vibebrowser.app/<extension-uuid>"
+    export VIBE_EXTENSION_UUID="${VIBE_RELAY_WS_URL##*/}"
+    export VIBE_REMOTE_RELAY_URL="${VIBE_RELAY_WS_URL%/*}"
+    ```
+
+   If you already have only the UUID, set `VIBE_EXTENSION_UUID` directly.
 
 3. **Install the skill**:
    Copy this file to your OpenClaw skills directory (typically `~/.openclaw/skills/` or your project's `openclaw/skills/` folder).
@@ -48,6 +52,12 @@ Do not use this skill for OpenClaw tenant cloud browsing.
 The shell running OpenClaw must have:
 
 ```bash
+# Preferred: use the full relay URL from extension settings, then parse it.
+export VIBE_RELAY_WS_URL="wss://relay.api.vibebrowser.app/<extension-uuid>"
+export VIBE_EXTENSION_UUID="${VIBE_RELAY_WS_URL##*/}"
+export VIBE_REMOTE_RELAY_URL="${VIBE_RELAY_WS_URL%/*}"
+
+# Or, if you already have only the UUID:
 export VIBE_EXTENSION_UUID="<extension-uuid>"
 
 # Optional if you use a custom relay URL.
@@ -83,6 +93,8 @@ If you set `VIBE_REMOTE_RELAY_URL`, use:
 ```bash
 --relay-url "$VIBE_REMOTE_RELAY_URL"
 ```
+
+Do not pass the full `wss://.../<uuid>` relay URL to Playwright CDP or `connectOverCDP`; it is a Vibe relay URL, not a raw browser debugging endpoint.
 
 ## Deterministic runbook (default)
 

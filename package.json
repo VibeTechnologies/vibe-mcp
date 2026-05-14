@@ -1,10 +1,13 @@
 {
   "name": "@vibebrowser/mcp",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "type": "module",
   "description": "MCP server for browser automation - the only solution supporting multiple AI agents (Claude, Cursor, VS Code) simultaneously controlling your Chrome browser",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "workspaces": [
+    "packages/*"
+  ],
   "bin": {
     "vibebrowser-mcp": "./dist/cli.js",
     "vibe-mcp": "./dist/cli.js",
@@ -14,7 +17,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/prepare-cli-package.mjs",
     "dev": "tsc --watch",
     "start": "node dist/cli.js",
     "prepublishOnly": "npm run build",

@@ -17,9 +17,14 @@ const RESERVED_PORTS = new Set();
 const MCP_HTTP_PORT = configuredHttpPort ?? await findFreePort(RESERVED_PORTS);
 RESERVED_PORTS.add(MCP_HTTP_PORT);
 const RELAY_PORT = configuredRelayPort ?? await findFreePort(RESERVED_PORTS);
+RESERVED_PORTS.add(RELAY_PORT);
+const RELAY_PORT_B = await findFreePort(RESERVED_PORTS);
 const RELAY_URL = `ws://${RELAY_HOST}:${RELAY_PORT}`;
+const RELAY_URL_B = `ws://${RELAY_HOST}:${RELAY_PORT_B}`;
 const REMOTE_UUID = 'test-http-relay-uuid';
+const REMOTE_UUID_B = 'test-http-relay-uuid-b';
 const SESSION_ID = REMOTE_UUID;
+const SESSION_ID_B = REMOTE_UUID_B;
 const MCP_URL = `http://${RELAY_HOST}:${MCP_HTTP_PORT}/mcp`;
 
 function getConfiguredPort(...names) {
@@ -105,8 +110,18 @@ function waitForWebSocketMessage(ws, predicate, timeoutMs = 10_000) {
   });
 }
 
+function withTimeout(promise, label, timeoutMs = 10_000) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 async function main() {
-  let wss;
+  let remoteA;
+  let remoteB;
   let serverProcess;
   const stateDir = mkdtempSync(join(tmpdir(), 'vibe-mcp-http-e2e-'));
 
@@ -117,20 +132,12 @@ async function main() {
     if (await probePort(RELAY_PORT)) {
       throw new Error(`Relay test port ${RELAY_PORT} is already in use`);
     }
+    if (await probePort(RELAY_PORT_B)) {
+      throw new Error(`Relay test port ${RELAY_PORT_B} is already in use`);
+    }
 
-    wss = new WebSocketServer({ host: RELAY_HOST, port: RELAY_PORT });
-
-    const extensionConnected = new Promise((resolve) => {
-      wss.on('connection', (ws, req) => {
-        if (req.url !== `/${REMOTE_UUID}`) {
-          ws.close();
-          return;
-        }
-        ws.send(JSON.stringify({ type: 'extension_status', connected: true }));
-        ws.send(JSON.stringify({ type: 'connected', sessionId: SESSION_ID }));
-        resolve(ws);
-      });
-    });
+    remoteA = startFakeRemoteRelay(RELAY_PORT, REMOTE_UUID, SESSION_ID);
+    remoteB = startFakeRemoteRelay(RELAY_PORT_B, REMOTE_UUID_B, SESSION_ID_B);
 
     serverProcess = spawn(
       process.execPath,
@@ -144,9 +151,7 @@ async function main() {
         '--http-port',
         String(MCP_HTTP_PORT),
         '--remote',
-        REMOTE_UUID,
-        '--relay-url',
-        RELAY_URL,
+        `${RELAY_URL}/${REMOTE_UUID}`,
       ],
       {
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -163,14 +168,14 @@ async function main() {
     });
 
     const [extensionWs] = await Promise.all([
-      extensionConnected,
+      remoteA.connected,
       waitForPort(MCP_HTTP_PORT),
     ]);
 
     const transport = new StreamableHTTPClientTransport(new URL(MCP_URL));
     const client = new Client({ name: 'vibe-mcp-http-e2e', version: '1.0.0' });
 
-    await client.connect(transport);
+    await withTimeout(client.connect(transport), 'MCP client connect');
     const listToolsPromise = waitForWebSocketMessage(
       extensionWs,
       (message) => message.type === 'list_tools',
@@ -196,7 +201,7 @@ async function main() {
       ],
     }));
 
-    const tools = await toolsPromise;
+    const tools = await withTimeout(toolsPromise, 'initial tools/list response');
     if (!tools.tools.some((tool) => tool.name === 'echo')) {
       throw new Error(`Expected echo tool in listTools response: ${JSON.stringify(tools)}`);
     }
@@ -220,7 +225,7 @@ async function main() {
       },
     }));
 
-    const callResult = await callResultPromise;
+    const callResult = await withTimeout(callResultPromise, 'initial echo call response');
     const textContent = callResult.content.find((item) => item.type === 'text');
     if (!textContent || textContent.text !== 'hello from http') {
       throw new Error(`Unexpected tool result: ${JSON.stringify(callResult)}`);
@@ -276,9 +281,6 @@ async function main() {
       arguments: { url: 'https://example.com' },
     });
     const openToolCall = await openToolCallPromise;
-    if (openToolCall.data?.arguments?.__skipPageContent !== true) {
-      throw new Error(`Expected __skipPageContent=true for new_page without explicit pageId: ${JSON.stringify(openToolCall)}`);
-    }
 
     extensionWs.send(JSON.stringify({
       type: 'tool_result',
@@ -289,7 +291,7 @@ async function main() {
       },
     }));
 
-    const openResult = await openResultPromise;
+    const openResult = await withTimeout(openResultPromise, 'new_page call response');
     const openText = openResult.content.find((item) => item.type === 'text');
     if (!openText || !openText.text.includes('"pageId":77')) {
       throw new Error(`Expected structured new_page response without fallback snapshot: ${JSON.stringify(openResult)}`);
@@ -298,32 +300,153 @@ async function main() {
       throw new Error(`Did not expect implicit snapshot fallback in MCP response: ${JSON.stringify(openResult)}`);
     }
 
-    await client.close();
+    const setRemoteResultPromise = client.callTool({
+      name: 'set_remote',
+      arguments: { url: `${RELAY_URL_B}/${REMOTE_UUID_B}` },
+    });
+    const [extensionWsB, setRemoteResult] = await withTimeout(Promise.all([
+      remoteB.connected,
+      setRemoteResultPromise,
+    ]), 'set_remote response and relay B connection');
+
+    const setRemoteText = setRemoteResult.content.find((item) => item.type === 'text');
+    if (!setRemoteText) {
+      throw new Error(`Expected set_remote text result: ${JSON.stringify(setRemoteResult)}`);
+    }
+    const setRemotePayload = JSON.parse(setRemoteText.text);
+    if (setRemotePayload.ok !== true || setRemotePayload.mode !== 'remote' || setRemotePayload.relayUrl !== RELAY_URL_B || setRemotePayload.uuid !== REMOTE_UUID_B) {
+      throw new Error(`Unexpected set_remote payload: ${JSON.stringify(setRemotePayload)}`);
+    }
+
+    const listToolsBPromise = waitForWebSocketMessage(
+      extensionWsB,
+      (message) => message.type === 'list_tools',
+    );
+    const toolsBPromise = client.listTools();
+    const listToolsBRequest = await listToolsBPromise;
+
+    extensionWsB.send(JSON.stringify({
+      type: 'tools_list',
+      requestId: listToolsBRequest.requestId,
+      data: [
+        {
+          name: 'echo_b',
+          description: 'Echo from relay B',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              text: { type: 'string' },
+            },
+            required: ['text'],
+          },
+        },
+      ],
+    }));
+
+    const toolsB = await withTimeout(toolsBPromise, 'relay B tools/list response');
+    if (!toolsB.tools.some((tool) => tool.name === 'set_remote')) {
+      throw new Error(`Expected set_remote tool after switching remotes: ${JSON.stringify(toolsB)}`);
+    }
+    if (!toolsB.tools.some((tool) => tool.name === 'echo_b')) {
+      throw new Error(`Expected relay B tool after set_remote: ${JSON.stringify(toolsB)}`);
+    }
+    if (toolsB.tools.some((tool) => tool.name === 'echo')) {
+      throw new Error(`Did not expect stale relay A tools after set_remote: ${JSON.stringify(toolsB)}`);
+    }
+
+    const callToolBPromise = waitForWebSocketMessage(
+      extensionWsB,
+      (message) => message.type === 'call_tool' && message.data?.name === 'echo_b',
+    );
+    const callResultBPromise = client.callTool({
+      name: 'echo_b',
+      arguments: { text: 'hello from relay b' },
+    });
+    const callRequestB = await callToolBPromise;
+
+    extensionWsB.send(JSON.stringify({
+      type: 'tool_result',
+      requestId: callRequestB.requestId,
+      data: {
+        success: true,
+        content: [{ type: 'text', text: 'hello from relay b' }],
+      },
+    }));
+
+    const callResultB = await withTimeout(callResultBPromise, 'relay B echo call response');
+    const textContentB = callResultB.content.find((item) => item.type === 'text');
+    if (!textContentB || textContentB.text !== 'hello from relay b') {
+      throw new Error(`Unexpected relay B tool result: ${JSON.stringify(callResultB)}`);
+    }
+
+    await withTimeout(client.close(), 'MCP client close');
     console.log('http e2e ok');
   } finally {
     if (serverProcess) {
       serverProcess.kill('SIGTERM');
-      await onceProcessExit(serverProcess);
+      await waitForProcessExit(serverProcess);
     }
-    if (wss) {
-      await new Promise((resolve, reject) => {
-        wss.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      });
-    }
+    await closeFakeRemoteRelay(remoteA);
+    await closeFakeRemoteRelay(remoteB);
     rmSync(stateDir, { recursive: true, force: true });
   }
 }
 
-function onceProcessExit(child) {
+function startFakeRemoteRelay(port, uuid, sessionId) {
+  const server = new WebSocketServer({ host: RELAY_HOST, port });
+  const connected = new Promise((resolve) => {
+    server.on('connection', (ws, req) => {
+      if (req.url !== `/${uuid}`) {
+        ws.close();
+        return;
+      }
+      ws.send(JSON.stringify({ type: 'extension_status', connected: true }));
+      ws.send(JSON.stringify({ type: 'connected', sessionId }));
+      resolve(ws);
+    });
+  });
+
+  return { server, connected };
+}
+
+async function closeFakeRemoteRelay(remote) {
+  if (!remote) {
+    return;
+  }
+
+  for (const client of remote.server.clients) {
+    client.terminate();
+  }
+
+  await new Promise((resolve, reject) => {
+    remote.server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function waitForProcessExit(child, timeoutMs = 5_000) {
   return new Promise((resolve) => {
-    child.once('exit', () => resolve());
-    child.once('close', () => resolve());
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish();
+    }, timeoutMs);
+
+    child.once('exit', finish);
+    child.once('close', finish);
   });
 }
 

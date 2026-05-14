@@ -27,8 +27,7 @@ const MIME_TYPE_BY_EXTENSION: Record<string, string> = {
   '.xml': 'application/xml',
 };
 const DEFAULT_BROWSER_PROFILE = process.env.VIBE_BROWSER_PROFILE || 'user';
-const DEFAULT_REMOTE_UUID = process.env.VIBE_REMOTE_URL || process.env.VIBE_EXTENSION_UUID || process.env.VIBE_RELAY_UUID;
-const DEFAULT_REMOTE_RELAY_URL = process.env.VIBE_REMOTE_RELAY_URL || process.env.VIBE_RELAY_URL;
+const DEFAULT_REMOTE = process.env.VIBE_REMOTE_URL || process.env.VIBE_EXTENSION_UUID || process.env.VIBE_RELAY_UUID;
 
 type JsonPrimitive = null | boolean | number | string;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -41,7 +40,6 @@ interface BrowserCommandOptions {
   devtools: boolean;
   remote?: string;
   session?: string;
-  relayUrl?: string;
   json: boolean;
   timeout: string;
   pageId?: string;
@@ -87,7 +85,6 @@ interface CommandContextInit {
   devtools: boolean;
   remoteUuid?: string;
   sessionId?: string;
-  relayUrl?: string;
   profile: string;
   json: boolean;
   timeoutMs: number;
@@ -120,9 +117,8 @@ function buildBrowserCommand(command: Command): Command {
     .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
     .option('-d, --debug', 'Enable debug logging', false)
     .option('--devtools', 'Use only chrome-devtools backend (bypasses extension relay)', false)
-    .option('-r, --remote <uuid>', 'Connect to a remote extension via public relay (provide the extension UUID)', DEFAULT_REMOTE_UUID)
+    .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide the extension UUID or full ws(s) relay URL)', DEFAULT_REMOTE)
     .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
-    .option('--relay-url <url>', 'Custom relay server URL', DEFAULT_REMOTE_RELAY_URL)
     .option('--json', 'Emit machine-readable JSON output', false)
     .option('--timeout <ms>', 'Command timeout in milliseconds', String(DEFAULT_TIMEOUT_MS))
     .option('--page-id <id>', 'Target a specific page/tab by its numeric ID (avoids switching the user\'s active tab)')
@@ -478,7 +474,6 @@ async function runBrowserCommand(
     devtools: Boolean(globalOptions.devtools),
     remoteUuid: globalOptions.remote,
     sessionId: globalOptions.session,
-    relayUrl: globalOptions.relayUrl,
     profile: globalOptions.browserProfile || DEFAULT_BROWSER_PROFILE,
     json: Boolean(globalOptions.json),
     timeoutMs: parsePositiveInteger(globalOptions.timeout, '--timeout'),
@@ -524,7 +519,7 @@ class BrowserCliContext {
       : new ExtensionConnection(
         init.port,
         init.debug,
-        init.remoteUuid ? { uuid: init.remoteUuid, relayUrl: init.relayUrl } : undefined,
+        init.remoteUuid ? { uuid: init.remoteUuid } : undefined,
         init.remoteUuid ? undefined : { sessionId: init.sessionId },
       );
     this.profile = init.profile;
@@ -779,7 +774,7 @@ class BrowserCliContext {
       'snapshot',
       [
         {
-          names: ['take_snapshot'],
+          names: [wantsAria ? 'take_a11y_snapshot' : 'take_md_snapshot'],
           buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
         },
       ],
@@ -1249,7 +1244,7 @@ class BrowserCliContext {
     return {
       ...output,
       pageContent: fallback.content,
-      pageContentSource: 'take_snapshot',
+      pageContentSource: 'take_md_snapshot',
       ...(fallback.pageId !== targetPageId ? { pageId: fallback.pageId } : {}),
     };
   }
@@ -1288,7 +1283,7 @@ class BrowserCliContext {
       sessionId: this.currentSessionId(),
       requestedSessionId: this.requestedSessionId,
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
-      tool: 'take_snapshot',
+      tool: 'take_md_snapshot',
       recoveredFromTimeout: true,
       pageId: fallback.pageId,
       url,
@@ -1349,7 +1344,7 @@ class BrowserCliContext {
 
   private async takeMarkdownSnapshotForPage(pageId: number, timeoutMs: number = this.timeoutMs): Promise<string | undefined> {
     await this.ensureToolsLoaded();
-    const snapshotTool = this.tools.find((tool) => normalizeName(tool.name) === 'take_snapshot');
+    const snapshotTool = this.tools.find((tool) => normalizeName(tool.name) === 'take_md_snapshot');
     if (!snapshotTool) {
       return undefined;
     }
@@ -1359,9 +1354,9 @@ class BrowserCliContext {
     if (pageKey) {
       args[pageKey] = pageId;
     }
-    const formatKey = hasProperty(snapshotTool, 'format', 'pageStateFormat', 'page_state_format');
-    if (formatKey) {
-      args[formatKey] = 'markdown';
+    const pageStateKey = hasProperty(snapshotTool, 'pageStateFormat', 'page_state_format');
+    if (pageStateKey) {
+      args[pageStateKey] = 'markdown';
     }
 
     try {
@@ -1392,7 +1387,9 @@ class BrowserCliContext {
       return undefined;
     }
     if (this.remoteUuid) {
-      return this.remoteUuid;
+      return this.connection instanceof ExtensionConnection
+        ? this.connection.getRemoteConfig()?.uuid ?? this.remoteUuid
+        : this.remoteUuid;
     }
 
     const connectedSessionIds = new Set(

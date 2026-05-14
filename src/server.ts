@@ -32,6 +32,20 @@ const SERVER_NAME = 'vibebrowser-mcp';
 const SERVER_VERSION = getPackageVersion();
 const STARTUP_TOOLS_REFRESH_TIMEOUT_MS = 4_000;
 const STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS = 1_500;
+const SET_REMOTE_TOOL: ToolDefinition = {
+  name: 'set_remote',
+  description: 'Reconnect this MCP server to a full Vibe remote websocket relay URL.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      url: {
+        type: 'string',
+        description: 'Full websocket relay URL, for example wss://relay.api.vibebrowser.app/<extension-uuid>',
+      },
+    },
+    required: ['url'],
+  },
+};
 
 type HttpTransport = StreamableHTTPServerTransport;
 type HttpRequest = IncomingMessage & { body?: unknown };
@@ -253,7 +267,7 @@ export class VibeMcpServer {
       }
 
       return {
-        tools: this.connection.getTools().map((tool: ToolDefinition) => ({
+        tools: [SET_REMOTE_TOOL, ...this.connection.getTools()].map((tool: ToolDefinition) => ({
           name: tool.name,
           description: tool.description,
           inputSchema: tool.inputSchema,
@@ -265,6 +279,10 @@ export class VibeMcpServer {
       const { name, arguments: args } = request.params;
 
       try {
+        if (normalizeToolName(name) === SET_REMOTE_TOOL.name) {
+          return await this.handleSetRemoteTool(toRecord(args));
+        }
+
         const preparedArgs = this.withDefaultPageStateFormat(name, toRecord(args));
         const result = await this.connection.callTool(name, preparedArgs);
         const enriched = await this.withFallbackPageContent(name, preparedArgs, result);
@@ -283,6 +301,37 @@ export class VibeMcpServer {
     });
 
     return server;
+  }
+
+  private async handleSetRemoteTool(args: Record<string, unknown>): Promise<{ content: ToolResult['content']; isError?: boolean }> {
+    if (!(this.connection instanceof ExtensionConnection)) {
+      return {
+        content: [{ type: 'text', text: 'Error: set_remote is not supported when using the chrome-devtools fallback backend' }],
+        isError: true,
+      };
+    }
+
+    if (typeof args.url !== 'string' || args.url.trim().length === 0) {
+      return {
+        content: [{ type: 'text', text: 'Error: set_remote requires a non-empty string url' }],
+        isError: true,
+      };
+    }
+
+    const remote = await this.connection.setRemoteUrl(args.url.trim());
+    this.notifyToolListChanged();
+
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          ok: true,
+          mode: 'remote',
+          relayUrl: remote.relayUrl,
+          uuid: remote.uuid,
+        }),
+      }],
+    };
   }
 
   private withDefaultPageStateFormat(name: string, args: Record<string, unknown>): Record<string, unknown> {

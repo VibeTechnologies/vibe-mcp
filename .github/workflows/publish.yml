@@ -8,7 +8,12 @@ on:
     paths:
       - 'src/**'
       - 'package.json'
+      - 'package-lock.json'
       - 'openclaw/**'
+      - 'docs/**'
+      - 'packages/cli/**'
+      - 'scripts/prepare-cli-package.mjs'
+      - '.github/workflows/publish.yml'
   release:
     types: [published]
   workflow_dispatch:
@@ -36,32 +41,78 @@ jobs:
       - name: Build
         run: npm run build
       
-      - name: Check if version changed
-        id: version
+      - name: Check package versions
+        id: versions
+        shell: bash
         run: |
-          CURRENT_VERSION=$(node -p "require('./package.json').version")
-          NPM_VERSION=$(npm view @vibebrowser/mcp version 2>/dev/null || echo "0.0.0")
-          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
-          echo "npm=$NPM_VERSION" >> $GITHUB_OUTPUT
-          if [ "$CURRENT_VERSION" != "$NPM_VERSION" ]; then
-            echo "changed=true" >> $GITHUB_OUTPUT
-          else
-            echo "changed=false" >> $GITHUB_OUTPUT
-          fi
+          set -euo pipefail
+
+          check_package() {
+            local key="$1"
+            local package_name="$2"
+            local package_dir="$3"
+            local current_version
+            local npm_version
+            local published
+            local out
+            local err
+
+            current_version=$(node -p "require('./${package_dir}/package.json').version")
+            out=$(mktemp)
+            err=$(mktemp)
+
+            if npm view "$package_name@$current_version" version >"$out" 2>"$err"; then
+              npm_version=$(tr -d '[:space:]' <"$out")
+              published=true
+            elif grep -qiE 'E404|404 Not Found|Not found' "$err"; then
+              npm_version="unpublished"
+              published=false
+            else
+              echo "Unable to determine whether $package_name@$current_version is published." >&2
+              cat "$err" >&2
+              echo "Check npm access/network for @vibebrowser/mcp and @vibebrowser/cli." >&2
+              rm -f "$out" "$err"
+              exit 1
+            fi
+
+            rm -f "$out" "$err"
+
+            echo "${key}_name=$package_name" >> "$GITHUB_OUTPUT"
+            echo "${key}_dir=$package_dir" >> "$GITHUB_OUTPUT"
+            echo "${key}_current=$current_version" >> "$GITHUB_OUTPUT"
+            echo "${key}_npm=$npm_version" >> "$GITHUB_OUTPUT"
+            echo "${key}_published=$published" >> "$GITHUB_OUTPUT"
+            if [ "$published" != "true" ]; then
+              echo "${key}_changed=true" >> "$GITHUB_OUTPUT"
+              echo "$package_name version $current_version needs publishing (exact version not found on npm)"
+            else
+              echo "${key}_changed=false" >> "$GITHUB_OUTPUT"
+              echo "$package_name version $current_version already published"
+            fi
+          }
+
+          check_package "root" "@vibebrowser/mcp" "."
+          check_package "cli" "@vibebrowser/cli" "packages/cli"
       
       - name: Publish to npm
         id: publish
-        if: steps.version.outputs.changed == 'true'
+        if: steps.versions.outputs.root_changed == 'true' || steps.versions.outputs.cli_changed == 'true'
         shell: bash
         run: |
           set -euo pipefail
 
           publish_with_oidc() {
-            npm publish --provenance --access public
+            local package_name="$1"
+            local package_dir="$2"
+            echo "Attempting npm publish for $package_name from $package_dir via OIDC trusted publishing..."
+            (cd "$package_dir" && env -u NODE_AUTH_TOKEN npm publish --provenance --access public)
           }
 
           publish_with_token() {
-            npm publish --access public
+            local package_name="$1"
+            local package_dir="$2"
+            echo "Attempting npm publish for $package_name from $package_dir via token fallback..."
+            (cd "$package_dir" && NODE_AUTH_TOKEN="$token_value" npm publish --access public)
           }
 
           looks_like_npm_token() {
@@ -72,9 +123,9 @@ jobs:
             local candidate="${1:-}"
             local source="$2"
             if looks_like_npm_token "$candidate"; then
-              export NODE_AUTH_TOKEN="$candidate"
               token_available=true
               token_source="$source"
+              token_value="$candidate"
               return 0
             fi
             if [ -n "$candidate" ]; then
@@ -85,6 +136,7 @@ jobs:
 
           token_available=false
           token_source="none"
+          token_value=""
           if use_token_if_valid "${NODE_AUTH_TOKEN:-}" "NODE_AUTH_TOKEN"; then
             :
           elif use_token_if_valid "${NPM_TOKEN:-}" "NPM_TOKEN"; then
@@ -95,37 +147,78 @@ jobs:
 
           echo "Token fallback available: $token_available (source: $token_source)"
 
-          echo "Attempting npm publish via OIDC trusted publishing..."
-          if publish_with_oidc; then
-            echo "mode=oidc" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          publish_package() {
+            local key="$1"
+            local package_name="$2"
+            local package_dir="$3"
 
-          echo "OIDC publish failed. Attempting token-based publish fallback..."
-          if [ "$token_available" = "true" ]; then
-            if publish_with_token; then
-              echo "mode=token" >> "$GITHUB_OUTPUT"
-              exit 0
+            if publish_with_oidc "$package_name" "$package_dir"; then
+              echo "${key}_mode=oidc" >> "$GITHUB_OUTPUT"
+              return 0
             fi
-            echo "Token-based publish failed. Ensure NODE_AUTH_TOKEN/NPM_TOKEN is valid and has publish rights for @vibebrowser/mcp." >&2
+
+            echo "OIDC publish failed for $package_name. Attempting token-based publish fallback..."
+            if [ "$token_available" = "true" ]; then
+              if publish_with_token "$package_name" "$package_dir"; then
+                echo "${key}_mode=token" >> "$GITHUB_OUTPUT"
+                return 0
+              fi
+              echo "Token-based publish failed for $package_name." >&2
+              echo "Ensure NODE_AUTH_TOKEN/NPM_TOKEN is valid and has publish rights for @vibebrowser/mcp and @vibebrowser/cli." >&2
+              exit 1
+            fi
+
+            echo "No valid npm auth path available for $package_name." >&2
+            echo "Configure npm trusted publishing for this repository/workflow OR set a valid NODE_AUTH_TOKEN/NPM_TOKEN secret for @vibebrowser/mcp and @vibebrowser/cli." >&2
             exit 1
+          }
+
+          if [ "${{ steps.versions.outputs.root_changed }}" = "true" ]; then
+            publish_package "root" "${{ steps.versions.outputs.root_name }}" "${{ steps.versions.outputs.root_dir }}"
           fi
 
-          echo "No valid npm auth path available." >&2
-          echo "Configure npm trusted publishing for this repository/workflow OR set a valid NODE_AUTH_TOKEN/NPM_TOKEN secret." >&2
-          exit 1
+          if [ "${{ steps.versions.outputs.cli_changed }}" = "true" ]; then
+            publish_package "cli" "${{ steps.versions.outputs.cli_name }}" "${{ steps.versions.outputs.cli_dir }}"
+          fi
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN_FALLBACK: ${{ secrets.NODE_AUTH_TOKEN }}
-      
-      - name: Create Git tag
-        if: steps.version.outputs.changed == 'true'
+
+      - name: Create Git tags
+        if: steps.versions.outputs.root_changed == 'true' || steps.versions.outputs.cli_changed == 'true'
+        shell: bash
         run: |
+          set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${{ steps.version.outputs.current }}" -m "Release v${{ steps.version.outputs.current }}" || true
-          git push origin "v${{ steps.version.outputs.current }}" || true
-      
+
+          create_tag_if_missing() {
+            local tag="$1"
+            local message="$2"
+
+            if git rev-parse "$tag" >/dev/null 2>&1; then
+              echo "Tag $tag already exists locally, skipping"
+              return 0
+            fi
+
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+              echo "Tag $tag already exists on origin, skipping"
+              return 0
+            fi
+
+            git tag -a "$tag" -m "$message"
+            git push origin "$tag" || echo "Tag $tag push failed or already exists, continuing"
+          }
+
+          if [ "${{ steps.versions.outputs.root_changed }}" = "true" ]; then
+            create_tag_if_missing "v${{ steps.versions.outputs.root_current }}" "Release v${{ steps.versions.outputs.root_current }}"
+          fi
+
+          if [ "${{ steps.versions.outputs.cli_changed }}" = "true" ]; then
+            create_tag_if_missing "cli-v${{ steps.versions.outputs.cli_current }}" "Release @vibebrowser/cli v${{ steps.versions.outputs.cli_current }}"
+          fi
+
       - name: Skip publish (version unchanged)
-        if: steps.version.outputs.changed == 'false'
-        run: echo "Version ${{ steps.version.outputs.current }} already published, skipping"
+        if: steps.versions.outputs.root_changed == 'false' && steps.versions.outputs.cli_changed == 'false'
+        run: echo "@vibebrowser/mcp ${{ steps.versions.outputs.root_current }} and @vibebrowser/cli ${{ steps.versions.outputs.cli_current }} already published, skipping"

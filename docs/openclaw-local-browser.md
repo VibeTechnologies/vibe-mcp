@@ -82,18 +82,22 @@ The user needs three pieces:
 3. Go to **Settings** (gear icon)
 4. Find **MCP External** (or "MCP External Control")
 5. Enable it and select **Remote** mode
-6. Copy the **Extension UUID** shown - you'll need this for the next step
+6. Copy either the extension UUID or the full WebSocket relay URL shown, for example `wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84`
 
-> **Note**: The Extension UUID is a unique identifier that allows `vibebrowser-mcp` to connect to your specific browser session through the Vibe relay.
+> **Note**: `--remote <uuid>` uses the default public relay. `--remote <full-ws-url>` targets an explicit relay endpoint.
 
 ## Step 2: Start the local HTTP bridge
 
-On the same machine where the browser extension is installed, run:
+On the same machine where the browser extension is installed, run one of these remote forms.
 
 **Option A: Using the helper command (recommended)**
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <extension-uuid>
+VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+
+npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_UUID"
+npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_URL"
 ```
 
 This prints the exact commands and MCP URL you need.
@@ -101,13 +105,22 @@ This prints the exact commands and MCP URL you need.
 If OpenClaw is running on another machine (for example in the cloud), provide a reachable URL:
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <extension-uuid> --public-url https://<reachable-host>/mcp
+VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+PUBLIC_MCP_URL="https://browser-bridge.example.com/mcp"
+
+npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_UUID" --public-url "$PUBLIC_MCP_URL"
+npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
 ```
 
 **Option B: Manual command**
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-mcp start --transport http --remote <extension-uuid>
+VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+
+npx -y --package @vibebrowser/mcp vibebrowser-mcp start --transport http --remote "$VIBE_REMOTE_UUID"
+npx -y --package @vibebrowser/mcp vibebrowser-mcp start --transport http --remote "$VIBE_REMOTE_URL"
 ```
 
 By default this starts a local MCP endpoint at:
@@ -123,11 +136,25 @@ Keep this terminal open - the bridge must stay running for OpenClaw to connect.
 For operator workflows and OpenClaw skills, you can also use the OpenClaw-compatible browser CLI surface directly:
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-cli sessions
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> status
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> tabs
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote <extension-uuid> snapshot --json
+npx @vibebrowser/cli sessions
+VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" status
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" tabs
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" snapshot --json
 ```
+
+The CLI accepts only these remote forms:
+
+```bash
+VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json status
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
+```
+
+`--remote <uuid>` uses the default public relay. `--remote <full-ws-url>` targets an explicit relay endpoint.
 
 `snapshot` in `vibebrowser-cli` is tool-only and maps directly to extension snapshot tools:
 
@@ -138,7 +165,7 @@ Use `--page-id <id>` (or `--pageId <id>`) to target a specific tab without switc
 
 For local relay mode with multiple connected browsers/profiles:
 
-- run `vibebrowser-cli sessions` to list available local session IDs
+- run `npx @vibebrowser/cli sessions` to list available local session IDs
 - pass `--session <id>` to target one explicitly
 - if omitted, the CLI uses the first connected local session
 
@@ -164,6 +191,14 @@ Use that loopback URL only for same-machine setups. For cloud OpenClaw, set `"ur
 
 Once that is configured, the cloud OpenClaw agent can use the Vibe browser tools through the local bridge.
 
+If the browser relay URL changes while the MCP server is already running, call the MCP server tool `set_remote` with the new full URL to hot-reconnect without restarting the server:
+
+```json
+{ "url": "wss://relay.api.vibebrowser.app/<extension-uuid>" }
+```
+
+`set_remote` is an MCP tool exposed by the server, not a `vibebrowser-cli` subcommand.
+
 ## Optional: Use the OpenClaw skill for local agents
 
 For OpenClaw agents running locally (not in the cloud) that need access to your real browser, you can use the Vibe skill instead of configuring an MCP server URL.
@@ -174,29 +209,35 @@ Copy `openclaw/vibebrowser/SKILL.md` from this package to your OpenClaw skills d
 
 ### Configure environment
 
-Set the extension UUID in your shell:
+Use either remote form in commands:
 
 ```bash
-export VIBE_EXTENSION_UUID="<your-extension-uuid>"
+VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json status
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
 ```
 
 ### Available commands
 
 ```bash
 # Check status
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json status
+VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json status
 
 # List tabs
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json tabs
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json tabs
 
 # Open a page
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json open https://example.com
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json open https://example.com
 
 # Click element by index
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json click 12
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json click 12
 
 # Type into element
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json type 23 "hello"
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json type 23 "hello"
 ```
 
 See [`openclaw/vibebrowser/SKILL.md`](../openclaw/vibebrowser/SKILL.md) for the full command reference.
@@ -248,9 +289,9 @@ The end result is simple:
 
 ## Troubleshooting
 
-### "Extension UUID not found"
+### "Remote relay URL not found"
 
-Make sure you've enabled **Remote** mode in the Vibe extension settings. The UUID only appears when Remote mode is active.
+Make sure you've enabled **Remote** mode in the Vibe extension settings. Use `--remote <uuid>` for the default public relay or `--remote <full-ws-url>` for an explicit relay endpoint.
 
 ### "Connection refused" errors
 

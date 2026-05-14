@@ -9,7 +9,7 @@ metadata:
         "requires":
           {
             "bins": ["npx"],
-            "env": ["VIBE_EXTENSION_UUID"],
+            "env": ["VIBE_REMOTE_URL"],
           },
       },
   }
@@ -19,20 +19,25 @@ metadata:
 
 ## Installation
 
-1. **Get the Extension UUID**:
+1. **Get the remote value**:
    - Install the Vibe extension in Chrome
    - Open extension Settings → MCP External
-   - Enable Remote mode and copy the Extension UUID
+   - Enable Remote mode and copy either the extension UUID or full WebSocket relay URL
 
-2. **Set environment variable**:
-   ```bash
-   export VIBE_EXTENSION_UUID="<your-extension-uuid>"
-   ```
+2. **Set environment variables**:
+     ```bash
+     export VIBE_REMOTE_URL="<uuid>"
+     ```
+
+   Or target an explicit relay endpoint:
+       ```bash
+       export VIBE_REMOTE_URL="<full-ws-url>"
+       ```
 
 3. **Install the skill**:
    Copy this file to your OpenClaw skills directory (typically `~/.openclaw/skills/` or your project's `openclaw/skills/` folder).
 
-Use the `vibebrowser-cli` command when the user wants OpenClaw to drive their real local browser through the Vibe extension.
+Use the `@vibebrowser/cli` command when the user wants OpenClaw to drive their real local browser through the Vibe extension.
 
 Prefer this skill when the task depends on:
 
@@ -48,11 +53,10 @@ Do not use this skill for OpenClaw tenant cloud browsing.
 The shell running OpenClaw must have:
 
 ```bash
-export VIBE_EXTENSION_UUID="<extension-uuid>"
+export VIBE_REMOTE_URL="<uuid>"
 
-# Optional if you use a custom relay URL.
-# export VIBE_REMOTE_RELAY_URL="wss://relay.api.vibebrowser.app"
-# export VIBE_RELAY_URL="wss://relay.api.vibebrowser.app"  # legacy alias
+# Explicit relay endpoint:
+# export VIBE_REMOTE_URL="<full-ws-url>"
 
 # Optional compatibility label. Vibe always targets the real local browser path.
 # export VIBE_BROWSER_PROFILE="user"
@@ -63,26 +67,10 @@ export VIBE_EXTENSION_UUID="<extension-uuid>"
 Prefer this exact command pattern:
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json <subcommand> ...
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
 ```
 
-If the package is already installed locally, you can use:
-
-```bash
-vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json <subcommand> ...
-```
-
-If you set `VIBE_RELAY_URL`, append:
-
-```bash
---relay-url "$VIBE_RELAY_URL"
-```
-
-If you set `VIBE_REMOTE_RELAY_URL`, use:
-
-```bash
---relay-url "$VIBE_REMOTE_RELAY_URL"
-```
+Pass only one of these remote forms: `--remote <uuid>` for the default public relay, or `--remote <full-ws-url>` for an explicit relay endpoint.
 
 ## Deterministic runbook (default)
 
@@ -90,29 +78,29 @@ Use this sequence when the task needs reliable, repeatable control:
 
 1. Verify connection:
    ```bash
-   npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json status --wait-for-extension --wait-timeout 10000
+   npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status --wait-for-extension --wait-timeout 10000
    ```
 2. Resolve a target page id without changing focus:
    ```bash
    PAGE_ID="$(
-     npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json tabs \
+      npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json tabs \
      | jq -r '.pages[] | select(.active == true) | .id' \
      | head -n1
    )"
    ```
 3. Snapshot that page before acting:
    ```bash
-   npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id "$PAGE_ID" snapshot --format aria --interactive
+   npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" snapshot --format aria --interactive
    ```
    If the aria snapshot is too verbose, try the default first and fall back:
    ```bash
-   npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id "$PAGE_ID" snapshot
+   npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" snapshot
    # If empty or only title returned, retry with aria:
-   npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id "$PAGE_ID" snapshot --format aria --interactive
+   npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" snapshot --format aria --interactive
    ```
 4. Perform action on the same page id:
    ```bash
-   npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id "$PAGE_ID" click 12
+   npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" click 12
    ```
 
 If `jq` is unavailable, parse `.pages` from `tabs --json` directly and still pass `--page-id <id>` on every action.
@@ -121,8 +109,8 @@ If `jq` is unavailable, parse `.pages` from `tabs --json` directly and still pas
 
 - **Never use `focus` or `tab select` unless explicitly asked.** The user may be actively working in the browser — switching their active tab is disruptive. Instead, pass `--page-id <id>` (or `--pageId <id>`) to target a specific tab without switching focus. Get the page ID from `tabs` output, then use it on any command:
   ```bash
-  vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id 2 snapshot
-  vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json --page-id 2 click 7
+  npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id 2 snapshot
+  npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id 2 click 7
   ```
 - Prefer `tabs` or `snapshot` before acting.
 - `snapshot` is tool-only and maps to extension snapshot tools (`take_md_snapshot` by default, `take_a11y_snapshot` for `--format aria`).
@@ -142,44 +130,44 @@ If `jq` is unavailable, parse `.pages` from `tabs --json` directly and still pas
 Status:
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json status
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
 ```
 
 List pages:
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json tabs
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json tabs
 ```
 
 Open a new page:
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json open https://example.com
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json open https://example.com
 ```
 
 Take the default AI snapshot:
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json snapshot
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json snapshot
 ```
 
 Take the ARIA / interactive snapshot:
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json snapshot --format aria --interactive
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json snapshot --format aria --interactive
 ```
 
 Click and type using OpenClaw-style refs:
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json click 12
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json type 23 "hello" --submit
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json click 12
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json type 23 "hello" --submit
 ```
 
 Evaluate JavaScript:
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-cli --remote "$VIBE_EXTENSION_UUID" --json evaluate --fn '() => document.title'
+npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json evaluate --fn '() => document.title'
 ```
 
 ## Snapshot format: `ai` vs `aria`
@@ -195,10 +183,10 @@ The `snapshot` command supports two extraction formats:
 
 ```bash
 # Default — may return empty for background tabs or SPAs like Notion
-vibebrowser-cli ... snapshot
+npx @vibebrowser/cli ... snapshot
 
 # Reliable fallback — uses Chrome DevTools Protocol directly, works on background tabs
-vibebrowser-cli ... snapshot --format aria --interactive
+npx @vibebrowser/cli ... snapshot --format aria --interactive
 ```
 
 **Known limitations of `--format ai`:**

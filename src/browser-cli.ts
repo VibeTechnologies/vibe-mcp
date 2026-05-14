@@ -27,7 +27,7 @@ const MIME_TYPE_BY_EXTENSION: Record<string, string> = {
   '.xml': 'application/xml',
 };
 const DEFAULT_BROWSER_PROFILE = process.env.VIBE_BROWSER_PROFILE || 'user';
-const DEFAULT_REMOTE_UUID = process.env.VIBE_EXTENSION_UUID || process.env.VIBE_RELAY_UUID;
+const DEFAULT_REMOTE_UUID = process.env.VIBE_REMOTE_URL || process.env.VIBE_EXTENSION_UUID || process.env.VIBE_RELAY_UUID;
 const DEFAULT_REMOTE_RELAY_URL = process.env.VIBE_REMOTE_RELAY_URL || process.env.VIBE_RELAY_URL;
 
 type JsonPrimitive = null | boolean | number | string;
@@ -779,7 +779,7 @@ class BrowserCliContext {
       'snapshot',
       [
         {
-          names: [wantsAria ? 'take_a11y_snapshot' : 'take_md_snapshot'],
+          names: ['take_snapshot'],
           buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
         },
       ],
@@ -1249,7 +1249,7 @@ class BrowserCliContext {
     return {
       ...output,
       pageContent: fallback.content,
-      pageContentSource: 'take_md_snapshot',
+      pageContentSource: 'take_snapshot',
       ...(fallback.pageId !== targetPageId ? { pageId: fallback.pageId } : {}),
     };
   }
@@ -1288,7 +1288,7 @@ class BrowserCliContext {
       sessionId: this.currentSessionId(),
       requestedSessionId: this.requestedSessionId,
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
-      tool: 'take_md_snapshot',
+      tool: 'take_snapshot',
       recoveredFromTimeout: true,
       pageId: fallback.pageId,
       url,
@@ -1349,7 +1349,7 @@ class BrowserCliContext {
 
   private async takeMarkdownSnapshotForPage(pageId: number, timeoutMs: number = this.timeoutMs): Promise<string | undefined> {
     await this.ensureToolsLoaded();
-    const snapshotTool = this.tools.find((tool) => normalizeName(tool.name) === 'take_md_snapshot');
+    const snapshotTool = this.tools.find((tool) => normalizeName(tool.name) === 'take_snapshot');
     if (!snapshotTool) {
       return undefined;
     }
@@ -1359,9 +1359,9 @@ class BrowserCliContext {
     if (pageKey) {
       args[pageKey] = pageId;
     }
-    const pageStateKey = hasProperty(snapshotTool, 'pageStateFormat', 'page_state_format');
-    if (pageStateKey) {
-      args[pageStateKey] = 'markdown';
+    const formatKey = hasProperty(snapshotTool, 'format', 'pageStateFormat', 'page_state_format');
+    if (formatKey) {
+      args[formatKey] = 'markdown';
     }
 
     try {

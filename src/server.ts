@@ -350,7 +350,7 @@ export class VibeMcpServer {
       }
     }
 
-    const snapshotTool = this.findToolByName('take_md_snapshot');
+    const snapshotTool = this.findToolByName('take_snapshot');
     if (!snapshotTool) {
       return undefined;
     }
@@ -366,7 +366,9 @@ export class VibeMcpServer {
       }
     }
 
-    if (Object.prototype.hasOwnProperty.call(properties, 'pageStateFormat')) {
+    if (Object.prototype.hasOwnProperty.call(properties, 'format')) {
+      callArgs.format = 'markdown';
+    } else if (Object.prototype.hasOwnProperty.call(properties, 'pageStateFormat')) {
       callArgs.pageStateFormat = 'markdown';
     } else if (Object.prototype.hasOwnProperty.call(properties, 'page_state_format')) {
       callArgs.page_state_format = 'markdown';

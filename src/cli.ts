@@ -4,7 +4,7 @@
  *
  * Modes:
  *   Local (default): connects to local relay daemon on localhost
- *   Remote (--remote <uuid>): connects to public relay at relay.api.vibebrowser.app
+ *   Remote (--remote <uuid-or-url>): connects to public relay at relay.api.vibebrowser.app
  */
 
 import { program } from 'commander';
@@ -32,9 +32,8 @@ program
   .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
   .option('-d, --debug', 'Enable debug logging', false)
   .option('--devtools', 'Use only chrome-devtools backend (bypasses extension relay)', false)
-  .option('-r, --remote <uuid>', 'Connect to a remote extension via public relay (provide the extension UUID)')
+  .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide the extension UUID or full ws(s) relay URL)')
   .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
-  .option('--relay-url <url>', 'Custom relay server URL (default: wss://relay.api.vibebrowser.app)')
   .option('--transport <mode>', 'MCP transport to expose: stdio or http', 'stdio')
   .option('--host <host>', 'Host to bind the HTTP server to', '127.0.0.1')
   .option('--http-port <number>', 'Port for streamable HTTP MCP transport', String(DEFAULT_HTTP_PORT))
@@ -57,7 +56,6 @@ program
         allowedHosts: options.allowHost.length > 0 ? options.allowHost : undefined,
         remoteUuid: options.remote,
         sessionId: options.session,
-        remoteRelayUrl: options.relayUrl,
       });
 
       const httpUrl = server.getHttpUrl();
@@ -74,8 +72,7 @@ program
 program
   .command('openclaw')
   .description('Print OpenClaw-friendly configuration for cloud agent -> local browser relay')
-  .requiredOption('-r, --remote <uuid>', 'Extension UUID from Vibe extension Settings > MCP External > Remote')
-  .option('--relay-url <url>', 'Custom relay server URL (default: wss://relay.api.vibebrowser.app)')
+  .requiredOption('-r, --remote <uuid-or-url>', 'Extension UUID or full ws(s) relay URL from Vibe extension Settings > MCP External > Remote')
   .option('--host <host>', 'Host to bind the HTTP server to', '127.0.0.1')
   .option('--http-port <number>', 'Port for streamable HTTP MCP transport', String(DEFAULT_HTTP_PORT))
   .option('--http-path <path>', 'Path for streamable HTTP MCP transport', DEFAULT_HTTP_PATH)
@@ -108,9 +105,6 @@ program
       options.remote,
     ];
 
-    if (options.relayUrl) {
-      cliArgs.push('--relay-url', options.relayUrl);
-    }
     for (const allowedHost of options.allowHost as string[]) {
       cliArgs.push('--allow-host', allowedHost);
     }

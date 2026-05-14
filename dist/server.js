@@ -17,6 +17,20 @@ const SERVER_NAME = 'vibebrowser-mcp';
 const SERVER_VERSION = getPackageVersion();
 const STARTUP_TOOLS_REFRESH_TIMEOUT_MS = 4_000;
 const STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS = 1_500;
+const SET_REMOTE_TOOL = {
+    name: 'set_remote',
+    description: 'Reconnect this MCP server to a full Vibe remote websocket relay URL.',
+    inputSchema: {
+        type: 'object',
+        properties: {
+            url: {
+                type: 'string',
+                description: 'Full websocket relay URL, for example wss://relay.api.vibebrowser.app/<extension-uuid>',
+            },
+        },
+        required: ['url'],
+    },
+};
 /**
  * Vibe MCP Server
  *
@@ -207,7 +221,7 @@ export class VibeMcpServer {
                 }
             }
             return {
-                tools: this.connection.getTools().map((tool) => ({
+                tools: [SET_REMOTE_TOOL, ...this.connection.getTools()].map((tool) => ({
                     name: tool.name,
                     description: tool.description,
                     inputSchema: tool.inputSchema,
@@ -217,6 +231,9 @@ export class VibeMcpServer {
         server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const { name, arguments: args } = request.params;
             try {
+                if (normalizeToolName(name) === SET_REMOTE_TOOL.name) {
+                    return await this.handleSetRemoteTool(toRecord(args));
+                }
                 const preparedArgs = this.withDefaultPageStateFormat(name, toRecord(args));
                 const result = await this.connection.callTool(name, preparedArgs);
                 const enriched = await this.withFallbackPageContent(name, preparedArgs, result);
@@ -234,6 +251,33 @@ export class VibeMcpServer {
             }
         });
         return server;
+    }
+    async handleSetRemoteTool(args) {
+        if (!(this.connection instanceof ExtensionConnection)) {
+            return {
+                content: [{ type: 'text', text: 'Error: set_remote is not supported when using the chrome-devtools fallback backend' }],
+                isError: true,
+            };
+        }
+        if (typeof args.url !== 'string' || args.url.trim().length === 0) {
+            return {
+                content: [{ type: 'text', text: 'Error: set_remote requires a non-empty string url' }],
+                isError: true,
+            };
+        }
+        const remote = await this.connection.setRemoteUrl(args.url.trim());
+        this.notifyToolListChanged();
+        return {
+            content: [{
+                    type: 'text',
+                    text: JSON.stringify({
+                        ok: true,
+                        mode: 'remote',
+                        relayUrl: remote.relayUrl,
+                        uuid: remote.uuid,
+                    }),
+                }],
+        };
     }
     withDefaultPageStateFormat(name, args) {
         const tool = this.findToolByName(name);
@@ -287,7 +331,7 @@ export class VibeMcpServer {
                 // ignore and continue with cached tools
             }
         }
-        const snapshotTool = this.findToolByName('take_md_snapshot');
+        const snapshotTool = this.findToolByName('take_snapshot');
         if (!snapshotTool) {
             return undefined;
         }
@@ -301,7 +345,10 @@ export class VibeMcpServer {
                 callArgs.tabId = pageId;
             }
         }
-        if (Object.prototype.hasOwnProperty.call(properties, 'pageStateFormat')) {
+        if (Object.prototype.hasOwnProperty.call(properties, 'format')) {
+            callArgs.format = 'markdown';
+        }
+        else if (Object.prototype.hasOwnProperty.call(properties, 'pageStateFormat')) {
             callArgs.pageStateFormat = 'markdown';
         }
         else if (Object.prototype.hasOwnProperty.call(properties, 'page_state_format')) {

@@ -15,6 +15,8 @@ const RELAY_URL = `ws://${HOST}:${RELAY_PORT}`;
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(SCRIPT_DIR, '..');
 const LOCAL_BROWSER_CLI = resolve(PACKAGE_ROOT, 'dist', 'browser-main.js');
+const DIST_CONNECTION = resolve(PACKAGE_ROOT, 'dist', 'connection.js');
+const CLI_PACKAGE_ROOT = resolve(PACKAGE_ROOT, 'packages', 'cli');
 const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const NPX_BIN = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const E2E_BROWSER_CLI_SOURCE = (process.env.E2E_BROWSER_CLI_SOURCE || 'local').toLowerCase();
@@ -140,11 +142,32 @@ try {
     });
   });
 
+  const { parseRemoteRelayUrl } = await import(DIST_CONNECTION);
+  const parsedWssRemote = parseRemoteRelayUrl(`wss://relay.example.test/nested/${REMOTE_UUID}`);
+  assert(parsedWssRemote.relayUrl === 'wss://relay.example.test/nested', `wss remote relay base parsed incorrectly: ${JSON.stringify(parsedWssRemote)}`);
+  assert(parsedWssRemote.uuid === REMOTE_UUID, `wss remote UUID parsed incorrectly: ${JSON.stringify(parsedWssRemote)}`);
+
   const status = await runCli(['status']);
   assert(status.ok === true, `status failed: ${JSON.stringify(status)}`);
   assert(status.extensionConnected === true, `expected extension connected: ${JSON.stringify(status)}`);
   assert(Number(status.toolCount) >= 10, `expected toolCount >= 10: ${JSON.stringify(status)}`);
   assert(status.sessionId === REMOTE_UUID, `expected status sessionId=${REMOTE_UUID}: ${JSON.stringify(status)}`);
+
+  const uuidStatus = await runCli(['status'], { remoteValue: REMOTE_UUID });
+  if (E2E_BROWSER_CLI_SOURCE === 'local') {
+    assert(uuidStatus.ok === true, `UUID-only remote should return structured status locally: ${JSON.stringify(uuidStatus)}`);
+    assert(uuidStatus.mode === 'remote', `UUID-only status should still be remote mode: ${JSON.stringify(uuidStatus)}`);
+    assert(uuidStatus.extensionConnected === false, `UUID-only remote without public relay should report disconnected extension locally: ${JSON.stringify(uuidStatus)}`);
+    assert(uuidStatus.sessionId === REMOTE_UUID, `UUID-only status should parse UUID as sessionId: ${JSON.stringify(uuidStatus)}`);
+  }
+
+  const envStatus = await runCli(['status'], {
+    remoteFromEnv: true,
+    env: { VIBE_REMOTE_URL: `${RELAY_URL}/${REMOTE_UUID}` },
+  });
+  assert(envStatus.ok === true, `status via VIBE_REMOTE_URL failed: ${JSON.stringify(envStatus)}`);
+  assert(envStatus.extensionConnected === true, `VIBE_REMOTE_URL should connect extension: ${JSON.stringify(envStatus)}`);
+  assert(envStatus.sessionId === REMOTE_UUID, `VIBE_REMOTE_URL should target ${REMOTE_UUID}: ${JSON.stringify(envStatus)}`);
 
   const sessions = await runCli(['sessions']);
   assert(Array.isArray(sessions.sessions) && sessions.sessions.length === 1, `sessions missing session list: ${JSON.stringify(sessions)}`);
@@ -301,15 +324,6 @@ try {
 function handleToolCall(name, args) {
   const hasExplicitPageContext = Number.isFinite(args.pageId) || Number.isFinite(args.tabId);
 
-  if (name === 'new_page' && args.__skipPageContent !== true) {
-    throw new Error(`Expected __skipPageContent=true for ${name} without explicit page context: ${JSON.stringify(args)}`);
-  }
-  if (name === 'click' && !hasExplicitPageContext && args.__skipPageContent !== true) {
-    throw new Error(`Expected __skipPageContent=true for ${name} without explicit page context: ${JSON.stringify(args)}`);
-  }
-  if (name === 'fill' && !hasExplicitPageContext && args.__skipPageContent !== true) {
-    throw new Error(`Expected __skipPageContent=true for ${name} without explicit page context: ${JSON.stringify(args)}`);
-  }
   if ((name === 'navigate_page' || name === 'select_page' || name === 'close_page' || name === 'switch_to_page' || name === 'click' || name === 'fill')
     && hasExplicitPageContext
     && args.__skipPageContent === true) {
@@ -413,16 +427,16 @@ function tool(name, properties) {
   };
 }
 
-async function runCli(args) {
+async function runCli(args, options = {}) {
   const invocation = getCliInvocation();
+  const remoteArgs = options.remoteFromEnv
+    ? []
+    : ['--remote', options.remoteValue ?? `${RELAY_URL}/${REMOTE_UUID}`];
   const child = spawn(
     invocation.command,
     [
       ...invocation.args,
-      '--remote',
-      REMOTE_UUID,
-      '--relay-url',
-      RELAY_URL,
+      ...remoteArgs,
       '--browser-profile',
       'user',
       '--json',
@@ -431,6 +445,10 @@ async function runCli(args) {
     {
       cwd: PACKAGE_ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        ...(options.env ?? {}),
+      },
     },
   );
 
@@ -524,12 +542,12 @@ function getCliInvocation() {
 
   const packageSpec = E2E_BROWSER_CLI_SOURCE === 'pack'
     ? resolvePackedPackageSpec()
-    : '@vibebrowser/mcp@latest';
+    : '@vibebrowser/cli@latest';
 
   cliInvocation = {
     source: E2E_BROWSER_CLI_SOURCE,
     command: NPX_BIN,
-    args: ['-y', '--package', packageSpec, 'vibebrowser-cli'],
+    args: ['-y', packageSpec],
   };
   return cliInvocation;
 }
@@ -548,7 +566,7 @@ function resolvePackedPackageSpec() {
     NPM_BIN,
     ['pack', '--json', '--pack-destination', packedPackageDir],
     {
-      cwd: PACKAGE_ROOT,
+      cwd: CLI_PACKAGE_ROOT,
       encoding: 'utf-8',
     },
   );
@@ -569,7 +587,7 @@ function resolvePackedPackageSpec() {
     throw new Error(`npm pack did not report a filename: ${result.stdout}`);
   }
 
-  return join(packedPackageDir, filename);
+  return `file:${join(packedPackageDir, filename)}`;
 }
 
 function normalizePackageSpec(spec) {

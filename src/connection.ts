@@ -45,6 +45,66 @@ export interface RemoteConfig {
   relayUrl?: string; // defaults to DEFAULT_RELAY_URL
 }
 
+export interface ParsedRemoteRelayUrl {
+  relayUrl: string;
+  uuid: string;
+}
+
+function isRemoteRelayUrl(value: string): boolean {
+  return /^wss?:\/\//i.test(value);
+}
+
+export function parseRemoteRelayUrl(value: string): ParsedRemoteRelayUrl {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid remote relay URL: ${message}`);
+  }
+
+  if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
+    throw new Error('Invalid remote relay URL: protocol must be ws:// or wss://');
+  }
+
+  const pathSegments = parsed.pathname.split('/').filter(Boolean);
+  const uuid = pathSegments[pathSegments.length - 1];
+  if (!uuid) {
+    throw new Error('Invalid remote relay URL: missing UUID path segment');
+  }
+
+  pathSegments.pop();
+  parsed.pathname = pathSegments.length > 0 ? `/${pathSegments.join('/')}` : '';
+  parsed.search = '';
+  parsed.hash = '';
+
+  return {
+    relayUrl: parsed.toString().replace(/\/$/, ''),
+    uuid,
+  };
+}
+
+export function normalizeRemoteConfig(remote?: RemoteConfig): RemoteConfig | undefined {
+  if (!remote) {
+    return undefined;
+  }
+
+  const relayUrl = remote.relayUrl?.replace(/\/$/, '');
+  if (!isRemoteRelayUrl(remote.uuid)) {
+    return { uuid: remote.uuid, relayUrl };
+  }
+
+  const parsed = parseRemoteRelayUrl(remote.uuid);
+  if (relayUrl && relayUrl !== parsed.relayUrl) {
+    throw new Error(`Remote relay URL mismatch: remote URL includes ${parsed.relayUrl}, but configured relay URL is ${relayUrl}`);
+  }
+
+  return {
+    uuid: parsed.uuid,
+    relayUrl: relayUrl || parsed.relayUrl,
+  };
+}
+
 export interface LocalSessionConfig {
   sessionId?: string;
 }
@@ -82,7 +142,7 @@ export class ExtensionConnection extends EventEmitter {
     super();
     this.port = port;
     this.debug = debug;
-    this.remoteConfig = remote || null;
+    this.remoteConfig = normalizeRemoteConfig(remote) || null;
     this.localSessionConfig = localSessionConfig || {};
   }
 
@@ -109,6 +169,27 @@ export class ExtensionConnection extends EventEmitter {
 
     // Connect to relay
     await this.connectToRelay();
+  }
+
+  async setRemoteUrl(url: string): Promise<ParsedRemoteRelayUrl> {
+    const parsed = parseRemoteRelayUrl(url);
+
+    this.stopping = true;
+    this.clearReconnectTimer();
+    this.rejectPendingRequests(new Error('Remote relay changed'));
+    this.closeSocket();
+
+    this.remoteConfig = { uuid: parsed.uuid, relayUrl: parsed.relayUrl };
+    this.tools = [];
+    this.sessions = [];
+    this.extensionConnected = false;
+    this.status = 'disconnected';
+    this.emit('tools_updated', this.tools);
+    this.emit('extension_status', false);
+
+    this.stopping = false;
+    await this.connectToRelay();
+    return parsed;
   }
 
   /**
@@ -180,6 +261,10 @@ export class ExtensionConnection extends EventEmitter {
       return `${base}/${this.remoteConfig.uuid}`;
     }
     return `ws://127.0.0.1:${this.port}`;
+  }
+
+  getRemoteConfig(): RemoteConfig | null {
+    return this.remoteConfig ? { ...this.remoteConfig } : null;
   }
 
   /**
@@ -267,30 +352,39 @@ export class ExtensionConnection extends EventEmitter {
    */
   async stop(): Promise<void> {
     this.stopping = true;
+    this.clearReconnectTimer();
+
+    this.rejectPendingRequests(new Error('Connection closed'));
+    this.closeSocket();
+
+    this.status = 'disconnected';
+  }
+
+  private clearReconnectTimer(): void {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+  }
 
-    // Reject all pending requests
-    for (const [id, request] of this.pendingRequests) {
+  private rejectPendingRequests(error: Error): void {
+    for (const [, request] of this.pendingRequests) {
       clearTimeout(request.timeout);
-      request.reject(new Error('Connection closed'));
+      request.reject(error);
     }
     this.pendingRequests.clear();
+  }
 
-    if (this.ws) {
-      // Remove all listeners to prevent stray callbacks (e.g. the 'close'
-      // handler scheduling a reconnect or keeping the EventEmitter alive).
-      this.ws.removeAllListeners();
-      // terminate() destroys the underlying socket immediately instead of
-      // waiting for the TCP close handshake, which lets the Node.js event
-      // loop exit promptly.
-      this.ws.terminate();
-      this.ws = null;
+  private closeSocket(): void {
+    if (!this.ws) {
+      return;
     }
 
-    this.status = 'disconnected';
+    // Remove listeners so a deliberate reconnect does not trigger stale close
+    // handlers or schedule a reconnect against the previous relay URL.
+    this.ws.removeAllListeners();
+    this.ws.terminate();
+    this.ws = null;
   }
 
   /**

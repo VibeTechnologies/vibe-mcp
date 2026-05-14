@@ -149,9 +149,7 @@ async function main() {
     const browserStatus = await runJsonCli(BROWSER_CLI, [
       '--devtools',
       '--remote',
-      REMOTE_UUID,
-      '--relay-url',
-      relayUrl,
+      `${relayUrl}/${REMOTE_UUID}`,
       'status',
     ]);
     assert(browserStatus.command === 'status', `Unexpected browser status payload: ${JSON.stringify(browserStatus)}`);
@@ -171,9 +169,7 @@ async function main() {
         String(httpPort),
         '--devtools',
         '--remote',
-        REMOTE_UUID,
-        '--relay-url',
-        relayUrl,
+        `${relayUrl}/${REMOTE_UUID}`,
       ],
       {
         cwd: PACKAGE_ROOT,

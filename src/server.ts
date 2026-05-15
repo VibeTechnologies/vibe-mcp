@@ -32,6 +32,14 @@ const SERVER_NAME = 'vibebrowser-mcp';
 const SERVER_VERSION = getPackageVersion();
 const STARTUP_TOOLS_REFRESH_TIMEOUT_MS = 4_000;
 const STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS = 1_500;
+/**
+ * Timeout for tool execution via the relay/extension pipeline.
+ * Page-interacting tools can take up to ~40s (CDP execution + post-action
+ * stabilization + page content extraction) and the relay adds forwarding
+ * latency.  120s provides headroom for heavy pages while still failing
+ * promptly on genuine hangs.
+ */
+const CALL_TOOL_TIMEOUT_MS = 120_000;
 const SET_REMOTE_TOOL: ToolDefinition = {
   name: 'set_remote',
   description: 'Reconnect this MCP server to a full Vibe remote websocket relay URL.',
@@ -284,7 +292,7 @@ export class VibeMcpServer {
         }
 
         const preparedArgs = this.withDefaultPageStateFormat(name, toRecord(args));
-        const result = await this.connection.callTool(name, preparedArgs);
+        const result = await this.connection.callTool(name, preparedArgs, CALL_TOOL_TIMEOUT_MS);
         const enriched = await this.withFallbackPageContent(name, preparedArgs, result);
 
         return {

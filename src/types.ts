@@ -45,7 +45,7 @@ export interface RelaySessionSummary {
  * Message from extension to MCP server
  */
 export interface ExtensionMessage {
-  type: 'connected' | 'disconnected' | 'tool_result' | 'tools_list' | 'error' | 'extension_status' | 'extension_disconnected' | 'sessions_list';
+  type: 'connected' | 'disconnected' | 'tool_result' | 'tool_progress' | 'tools_list' | 'error' | 'extension_status' | 'extension_disconnected' | 'sessions_list';
   requestId?: string;
   data?: unknown;
   error?: string;

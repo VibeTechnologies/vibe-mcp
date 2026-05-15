@@ -116,6 +116,7 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
+  timeoutMs: number;
 }
 
 /**
@@ -412,6 +413,18 @@ export class ExtensionConnection extends EventEmitter {
     if (message.requestId) {
       const pending = this.pendingRequests.get(message.requestId);
       if (pending) {
+        // Progress signals reset the timeout without completing the request.
+        // The extension sends these periodically for long-running tools so
+        // the client doesn't time out prematurely.
+        if (message.type === 'tool_progress') {
+          clearTimeout(pending.timeout);
+          pending.timeout = setTimeout(() => {
+            this.pendingRequests.delete(message.requestId!);
+            pending.reject(new Error(`Request timed out (progress-extended)`));
+          }, pending.timeoutMs);
+          return;
+        }
+
         clearTimeout(pending.timeout);
         this.pendingRequests.delete(message.requestId);
 
@@ -491,6 +504,7 @@ export class ExtensionConnection extends EventEmitter {
         resolve: resolve as (value: unknown) => void,
         reject,
         timeout,
+        timeoutMs,
       });
 
       const enrichedData = this.withSessionSelection(data);

@@ -47,7 +47,7 @@ const LOG_FILE = join(VIBE_DIR, 'relay.log');
  * Message from extension
  */
 interface ExtensionMessage {
-  type: 'connected' | 'disconnected' | 'tool_result' | 'tools_list' | 'error';
+  type: 'connected' | 'disconnected' | 'tool_result' | 'tool_progress' | 'tools_list' | 'error';
   requestId?: string;
   data?: unknown;
   error?: string;
@@ -332,6 +332,19 @@ export class RelayServer extends EventEmitter {
     if (message.requestId) {
       const pending = this.pendingRequests.get(message.requestId);
       if (pending) {
+        // Progress signals: forward to the agent but keep the pending entry.
+        if (message.type === 'tool_progress') {
+          const agent = this.agents.get(pending.agentId);
+          if (agent) {
+            agent.ws.send(JSON.stringify({
+              ...message,
+              sessionId: session.sessionId,
+              requestId: pending.originalRequestId,
+            }));
+          }
+          return;
+        }
+
         this.pendingRequests.delete(message.requestId);
 
         // Forward response to the requesting agent

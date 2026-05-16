@@ -242,8 +242,18 @@ export class VibeMcpServer {
                 if (normalizeToolName(name) === SET_REMOTE_TOOL.name) {
                     return await this.handleSetRemoteTool(toRecord(args));
                 }
+                // Validate tool exists before forwarding to extension
+                const availableTools = this.connection.getTools();
+                const matchedTool = this.findToolByName(name);
+                if (!matchedTool && availableTools.length > 0) {
+                    const toolNames = availableTools.map(t => t.name);
+                    return {
+                        content: [{ type: 'text', text: `Error: Tool '${name}' does not exist. Available tools: ${toolNames.join(', ')}` }],
+                        isError: true,
+                    };
+                }
                 const preparedArgs = this.withDefaultPageStateFormat(name, toRecord(args));
-                const result = await this.connection.callTool(name, preparedArgs, CALL_TOOL_TIMEOUT_MS);
+                const result = await this.connection.callTool(matchedTool?.name ?? name, preparedArgs, CALL_TOOL_TIMEOUT_MS);
                 const enriched = await this.withFallbackPageContent(name, preparedArgs, result);
                 return {
                     content: enriched.content,

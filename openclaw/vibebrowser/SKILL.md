@@ -113,7 +113,7 @@ If `jq` is unavailable, parse `.pages` from `tabs --json` directly and still pas
   npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id 2 click 7
   ```
 - Prefer `tabs` or `snapshot` before acting.
-- `snapshot` is tool-only and maps to extension snapshot tools (`take_md_snapshot` by default, `take_a11y_snapshot` for `--format aria`).
+- `snapshot` is tool-only and maps to the extension's `take_snapshot` tool (with `format` param for markdown vs aria).
 - Use `open <url>` to create a fresh page when possible.
 - Use `evaluate --fn ...` only for simple compatibility-safe expressions such as:
   - `() => 21 + 21`

@@ -204,6 +204,23 @@ Add to your Codex configuration:
 
 </details>
 
+### MCP command forms
+
+Use the shortest direct package invocation for the MCP server:
+
+```bash
+npx -y @vibebrowser/mcp@latest --help
+npx -y @vibebrowser/mcp@latest start --transport http
+npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID"
+```
+
+Backward-compatible aliases still work when you need explicit binaries:
+
+```bash
+npx -y -p @vibebrowser/mcp@latest vibebrowser-mcp --help
+npx -y -p @vibebrowser/mcp@latest vibe-mcp --help
+```
+
 ### 3. Connect the Extension
 
 1. Open Chrome with the Vibe extension installed
@@ -274,8 +291,8 @@ If your agent runs in the cloud but you want it to control the user's real local
 VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 
-npx -y --package @vibebrowser/mcp vibebrowser-mcp start --transport http --remote "$VIBE_REMOTE_UUID"
-npx -y --package @vibebrowser/mcp vibebrowser-mcp start --transport http --remote "$VIBE_REMOTE_URL"
+npx -y @vibebrowser/mcp@latest start --transport http --remote "$VIBE_REMOTE_UUID"
+npx -y @vibebrowser/mcp@latest start --transport http --remote "$VIBE_REMOTE_URL"
 ```
 
 This exposes a local MCP endpoint at `http://127.0.0.1:8788/mcp` by default.
@@ -287,8 +304,8 @@ VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 PUBLIC_MCP_URL="https://browser-bridge.example.com/mcp"
 
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_UUID" --public-url "$PUBLIC_MCP_URL"
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
+npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID" --public-url "$PUBLIC_MCP_URL"
+npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
 ```
 
 You can print the exact OpenClaw-friendly setup with:
@@ -297,8 +314,8 @@ You can print the exact OpenClaw-friendly setup with:
 VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_UUID"
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_URL"
+npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID"
+npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL"
 ```
 
 Use `--remote <uuid>` with the default public relay, or `--remote <full-ws-url>` when you need an explicit relay endpoint.
@@ -393,7 +410,7 @@ See [docs/openclaw-local-browser.md](docs/openclaw-local-browser.md) for the com
 Run a local LLM with one command — no cloud API keys required. Automatically installs [Ollama](https://ollama.com), downloads the model, and starts serving an OpenAI-compatible API.
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-mcp serve qwen3.5
+npx -y @vibebrowser/mcp@latest serve qwen3.5
 ```
 
 That's it. Works on **macOS**, **Linux**, and **Windows**.
@@ -408,16 +425,16 @@ That's it. Works on **macOS**, **Linux**, and **Windows**.
 ### Recommended models
 
 ```bash
-npx -y --package @vibebrowser/mcp vibebrowser-mcp serve qwen3.5      # Best overall for agentic tasks
-npx -y --package @vibebrowser/mcp vibebrowser-mcp serve llama4        # Strong general reasoning
-npx -y --package @vibebrowser/mcp vibebrowser-mcp serve deepseek-r1   # Reasoning chains
-npx -y --package @vibebrowser/mcp vibebrowser-mcp serve mistral       # Lightweight & fast (7B)
+npx -y @vibebrowser/mcp@latest serve qwen3.5      # Best overall for agentic tasks
+npx -y @vibebrowser/mcp@latest serve llama4        # Strong general reasoning
+npx -y @vibebrowser/mcp@latest serve deepseek-r1   # Reasoning chains
+npx -y @vibebrowser/mcp@latest serve mistral       # Lightweight & fast (7B)
 ```
 
 ### Options
 
 ```text
-npx -y --package @vibebrowser/mcp vibebrowser-mcp serve <model> [options]
+npx -y @vibebrowser/mcp@latest serve <model> [options]
 
 Options:
   -p, --port <number>  Ollama API port (default: 11434)
@@ -436,11 +453,11 @@ The extension connects to `http://localhost:11434/v1` automatically.
 ## CLI Options
 
 ```text
-npx -y --package @vibebrowser/mcp vibebrowser-mcp --help
+npx -y @vibebrowser/mcp@latest --help
 npx @vibebrowser/cli --help
 
 # MCP server (default)
-npx -y --package @vibebrowser/mcp vibebrowser-mcp [start] [options]
+npx -y @vibebrowser/mcp@latest [start] [options]
   -p, --port <number>  WebSocket port for local relay (agent) connection (default: 19888)
   -d, --debug          Enable debug logging
   --transport <mode>   MCP transport to expose: stdio or http (default: stdio)
@@ -462,8 +479,8 @@ The `set_remote` MCP server tool hot-reconnects the running MCP server to a diff
 VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 PUBLIC_MCP_URL="https://browser-bridge.example.com/mcp"
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_UUID" --public-url "$PUBLIC_MCP_URL"
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
+npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID" --public-url "$PUBLIC_MCP_URL"
+npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
 
 # OpenClaw-compatible browser CLI
 npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" status
@@ -476,7 +493,7 @@ npx @vibebrowser/cli --devtools tabs
 
 # Local LLM server
 MODEL="qwen3.5"
-npx -y --package @vibebrowser/mcp vibebrowser-mcp serve "$MODEL"
+npx -y @vibebrowser/mcp@latest serve "$MODEL"
   -p, --port <number>  Ollama API port (default: 11434)
   -y, --yes            Skip confirmation prompts
   -d, --debug          Enable debug logging
@@ -506,7 +523,7 @@ Enable debug logging to diagnose issues:
   "mcpServers": {
     "vibe": {
       "command": "npx",
-      "args": ["-y", "--package", "@vibebrowser/mcp", "vibebrowser-mcp", "--debug"]
+      "args": ["-y", "@vibebrowser/mcp", "--debug"]
     }
   }
 }

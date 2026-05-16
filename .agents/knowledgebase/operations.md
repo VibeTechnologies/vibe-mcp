@@ -7,7 +7,7 @@
 - TypeScript watch: `npm run dev`
 - Start local stdio MCP server from built output: `npm start`
 - Start HTTP MCP endpoint: `npm run build && node dist/cli.js start --transport http`
-- Print OpenClaw bridge config: `npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <uuid>` or `npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote <full-ws-url>`
+- Print OpenClaw bridge config: `npx -y @vibebrowser/mcp@latest openclaw --remote <uuid>` or `npx -y @vibebrowser/mcp@latest openclaw --remote <full-ws-url>`
 - Standalone CLI status: `npx @vibebrowser/cli --remote <uuid> --json status`
 - Standalone CLI tabs: `npx @vibebrowser/cli --remote <full-ws-url> --json tabs`
 - Prefer `--page-id <id>` for browser actions to avoid disrupting the user's active tab.
@@ -44,7 +44,7 @@ Pass signals from `docs/eval.md` and `AGENTS.md`:
 
 - `prepublishOnly` runs `npm run build`.
 - Published npm package includes `dist`, `openclaw`, `docs`, `README.md`, and `LICENSE`.
-- Current MCP package binaries are `vibebrowser-mcp`, `vibe-mcp`, and `vibebrowser-cli`; normal direct browser CLI docs use the separate `@vibebrowser/cli` package.
+- Current MCP package binaries are `mcp`, `vibebrowser-mcp`, `vibe-mcp`, and `vibebrowser-cli`; normal direct browser CLI docs use the separate `@vibebrowser/cli` package.
 - Package smoke check pattern: create a tarball with `npm pack --json --pack-destination <tmp>` and verify `vibebrowser-mcp --help` plus browser CLI help via the relevant package under test.
 - `docs/eval.md` records npm/publish verification history and should be updated when evaluation scope or pass criteria changes.
 

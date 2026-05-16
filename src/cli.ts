@@ -89,9 +89,7 @@ program
 
     const cliArgs = [
       '-y',
-      '--package',
-      '@vibebrowser/mcp',
-      'vibebrowser-mcp',
+      '@vibebrowser/mcp@latest',
       'start',
       '--transport',
       'http',

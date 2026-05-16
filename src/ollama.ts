@@ -2,7 +2,7 @@
  * Ollama integration — detect, install, pull, serve.
  *
  * Provides a cross-platform (macOS / Linux / Windows) one-liner experience:
- *   npx --yes --package @vibebrowser/mcp vibebrowser-mcp serve qwen3.5
+ *   npx -y @vibebrowser/mcp@latest serve qwen3.5
  */
 
 import { execSync, spawn, ChildProcess, execFileSync, SpawnOptions } from 'child_process';

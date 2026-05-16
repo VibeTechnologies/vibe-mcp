@@ -158,8 +158,8 @@ npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
 
 `snapshot` in `vibebrowser-cli` is tool-only and maps directly to extension snapshot tools:
 
-- default (`--format ai`) -> `take_md_snapshot`
-- ARIA (`--format aria`) -> `take_a11y_snapshot`
+- default (`--format ai`) -> `take_snapshot` (format: markdown)
+- ARIA (`--format aria`) -> `take_snapshot` (format: aria)
 
 Use `--page-id <id>` (or `--pageId <id>`) to target a specific tab without switching user focus.
 

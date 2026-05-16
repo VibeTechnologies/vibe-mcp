@@ -9,6 +9,7 @@
     "packages/*"
   ],
   "bin": {
+    "mcp": "./dist/cli.js",
     "vibebrowser-mcp": "./dist/cli.js",
     "vibe-mcp": "./dist/cli.js",
     "vibebrowser-cli": "./dist/browser-main.js"

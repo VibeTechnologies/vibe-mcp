@@ -6,7 +6,7 @@
 
 ## Main Entry Points
 
-- Package binaries from `package.json`: `vibebrowser-mcp`, legacy alias `vibe-mcp`, and standalone `vibebrowser-cli`.
+- Package binaries from `package.json`: `mcp` (direct package-exec entry), `vibebrowser-mcp`, legacy alias `vibe-mcp`, and standalone `vibebrowser-cli`.
 - `src/cli.ts`: MCP server CLI. Default command is `start`; supports stdio and streamable HTTP transports, local relay mode, remote relay mode, `--devtools`, and `openclaw` config printing.
 - `src/server.ts`: MCP protocol server. Exposes tool listing/calling over stdio or HTTP and delegates to an extension/relay connection or Chrome DevTools fallback.
 - `src/browser-main.ts` and `src/browser-cli.ts`: OpenClaw-compatible browser CLI surface for status, sessions, tabs, open/navigate, snapshots, clicks, typing, upload/drop, network, and evaluation helpers.

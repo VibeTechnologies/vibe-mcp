@@ -96,8 +96,8 @@ On the same machine where the browser extension is installed, run one of these r
 VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_UUID"
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_URL"
+npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID"
+npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL"
 ```
 
 This prints the exact commands and MCP URL you need.
@@ -109,8 +109,8 @@ VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 PUBLIC_MCP_URL="https://browser-bridge.example.com/mcp"
 
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_UUID" --public-url "$PUBLIC_MCP_URL"
-npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
+npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID" --public-url "$PUBLIC_MCP_URL"
+npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
 ```
 
 **Option B: Manual command**
@@ -119,8 +119,8 @@ npx -y --package @vibebrowser/mcp vibebrowser-mcp openclaw --remote "$VIBE_REMOT
 VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
 
-npx -y --package @vibebrowser/mcp vibebrowser-mcp start --transport http --remote "$VIBE_REMOTE_UUID"
-npx -y --package @vibebrowser/mcp vibebrowser-mcp start --transport http --remote "$VIBE_REMOTE_URL"
+npx -y @vibebrowser/mcp@latest start --transport http --remote "$VIBE_REMOTE_UUID"
+npx -y @vibebrowser/mcp@latest start --transport http --remote "$VIBE_REMOTE_URL"
 ```
 
 By default this starts a local MCP endpoint at:

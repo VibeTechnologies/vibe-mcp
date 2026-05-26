@@ -12,3 +12,5 @@
 - phase: 5-implemented
 - phase: 5b-loop-1
 - phase: 5b-code-fix-applied
+- phase: 5c-pass
+- phase: 5b-pass

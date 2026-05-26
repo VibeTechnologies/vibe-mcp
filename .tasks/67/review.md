@@ -1,2 +1,5 @@
-.tasks/67/plan.md:27: WARNING Previous code-level findings are fixed, but plan done-criteria for Tasks 4-5 are still not evidenced in this branch (`.tasks/67/test-report.md` and `.tasks/67/verify.md` are missing, and npm/npx verification is not recorded). Add the missing verification artifacts to close the issue against its success metric.
-VERDICT: fix-required.
+src/server.ts:42: INFO `set_remote` tool metadata now documents call-first behavior and accepts UUID or full relay URL inputs. Keep this copy aligned with runtime behavior.
+src/server.ts:113: INFO Local non-devtools startup errors are now caught, warned, and MCP startup continues without tools; remote/devtools paths still fail fast. Keep fallback scope restricted to local mode.
+src/connection.ts:85: INFO `set_remote` now accepts bare UUID and reuses current relay base (or default) while preserving full URL parsing. Keep UUID/URL validation centralized in this parser.
+scripts/e2e-local-startup-fallback.mjs:84: INFO Integration test now verifies fallback startup plus `set_remote` behavior for both full relay URL and bare UUID. Keep this script in release regression checks.
+VERDICT: pass

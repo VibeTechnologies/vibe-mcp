@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
@@ -7,6 +8,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { WebSocketServer } from 'ws';
 
 const HOST = '127.0.0.1';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -44,9 +46,13 @@ async function main() {
 
   const stateDir = mkdtempSync(join(tmpdir(), 'vibe-mcp-local-startup-fallback-'));
   const mismatchedAgentPort = await findFreePort();
+  const remoteRelayPort = await findFreePort();
   let client = null;
+  let remoteRelay = null;
 
   try {
+    remoteRelay = new WebSocketServer({ host: HOST, port: remoteRelayPort });
+
     const transport = new StdioClientTransport({
       command: process.execPath,
       args: [
@@ -78,6 +84,37 @@ async function main() {
       throw new Error(`Expected set_remote in tools list, got: ${JSON.stringify(toolNames)}`);
     }
 
+    const seedUuid = randomUUID();
+    const switchedUuid = randomUUID();
+    const remoteUrl = `ws://${HOST}:${remoteRelayPort}/${seedUuid}`;
+
+    const seedResult = await client.callTool({
+      name: 'set_remote',
+      arguments: { url: remoteUrl },
+    });
+
+    const seedPayload = seedResult.content.find((item) => item.type === 'text');
+    if (!seedPayload || !seedPayload.text) {
+      throw new Error(`Expected JSON response from set_remote with full URL, got: ${JSON.stringify(seedResult)}`);
+    }
+    const seedJson = JSON.parse(seedPayload.text);
+    if (!seedJson.ok || seedJson.uuid !== seedUuid || seedJson.relayUrl !== `ws://${HOST}:${remoteRelayPort}`) {
+      throw new Error(`Unexpected set_remote full URL payload: ${seedPayload.text}`);
+    }
+
+    const uuidResult = await client.callTool({
+      name: 'set_remote',
+      arguments: { url: switchedUuid },
+    });
+    const uuidPayload = uuidResult.content.find((item) => item.type === 'text');
+    if (!uuidPayload || !uuidPayload.text) {
+      throw new Error(`Expected JSON response from set_remote with UUID, got: ${JSON.stringify(uuidResult)}`);
+    }
+    const uuidJson = JSON.parse(uuidPayload.text);
+    if (!uuidJson.ok || uuidJson.uuid !== switchedUuid || uuidJson.relayUrl !== `ws://${HOST}:${remoteRelayPort}`) {
+      throw new Error(`Unexpected set_remote UUID payload: ${uuidPayload.text}`);
+    }
+
     console.log(PASS_MARKER);
   } finally {
     if (client) {
@@ -94,6 +131,18 @@ async function main() {
       } catch {
         // Ignore cleanup errors.
       }
+    }
+
+    if (remoteRelay) {
+      await new Promise((resolveClose, rejectClose) => {
+        remoteRelay.close((error) => {
+          if (error) {
+            rejectClose(error);
+            return;
+          }
+          resolveClose(undefined);
+        });
+      }).catch(() => {});
     }
 
     rmSync(stateDir, { recursive: true, force: true });

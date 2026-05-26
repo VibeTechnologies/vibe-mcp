@@ -119,6 +119,7 @@ export class VibeMcpServer {
       if (!this.config.remoteUuid && !this.config.devtools) {
         const message = error instanceof Error ? error.message : String(error);
         this.log(`Local extension startup failed; continuing without tools: ${message}`);
+        console.error(`[${SERVER_NAME}] Warning: local extension startup failed; continuing without tools: ${message}`);
       } else {
         throw error;
       }

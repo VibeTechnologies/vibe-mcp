@@ -36,6 +36,7 @@ const RELAY_CONNECT_TIMEOUT = 10000;
 const RELAY_RECONNECT_DELAY = 2000;
 
 const DEFAULT_RELAY_URL = 'wss://relay.api.vibebrowser.app';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * Remote relay configuration
@@ -81,6 +82,21 @@ export function parseRemoteRelayUrl(value: string): ParsedRemoteRelayUrl {
   return {
     relayUrl: parsed.toString().replace(/\/$/, ''),
     uuid,
+  };
+}
+
+function parseRemoteTarget(value: string, currentRelayUrl?: string): ParsedRemoteRelayUrl {
+  if (isRemoteRelayUrl(value)) {
+    return parseRemoteRelayUrl(value);
+  }
+
+  if (!UUID_PATTERN.test(value)) {
+    throw new Error('Invalid remote target: expected a UUID or ws(s) relay URL');
+  }
+
+  return {
+    relayUrl: (currentRelayUrl || DEFAULT_RELAY_URL).replace(/\/$/, ''),
+    uuid: value,
   };
 }
 
@@ -173,7 +189,7 @@ export class ExtensionConnection extends EventEmitter {
   }
 
   async setRemoteUrl(url: string): Promise<ParsedRemoteRelayUrl> {
-    const parsed = parseRemoteRelayUrl(url);
+    const parsed = parseRemoteTarget(url, this.remoteConfig?.relayUrl);
 
     this.stopping = true;
     this.clearReconnectTimer();

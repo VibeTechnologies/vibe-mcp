@@ -25,3 +25,17 @@
 - reasoning: Parallel group must avoid shared files; version bump already owned by task 3.
 - alternatives: Run tasks sequentially.
 - evidence: plan rule in skill: same parallel group must not touch same file.
+
+## Decision 5
+- question: Resolve set_remote review blocker by changing docs back or adding UUID support?
+- decision: Add real UUID support in `ExtensionConnection.setRemoteUrl`.
+- reasoning: design and UX both require UUID-first flow for agents; docs-only rollback keeps friction and violates stated fix intent.
+- alternatives: Revert description to URL-only.
+- evidence: review blocker line 1; issue goal is easier remote connect path when tools missing.
+
+## Decision 6
+- question: How to surface local startup fallback error in non-debug mode?
+- decision: Emit explicit `console.error` warning in fallback branch.
+- reasoning: `this.log` is debug-gated; degraded startup must be visible by default.
+- alternatives: Keep debug-only log.
+- evidence: review warning line 2.

@@ -14,3 +14,7 @@
 - phase: 5b-code-fix-applied
 - phase: 5c-pass
 - phase: 5b-pass
+- phase: 6-pr-open
+- pr: 68
+- phase: 6-ci-green
+- phase: 7-ship-recommended

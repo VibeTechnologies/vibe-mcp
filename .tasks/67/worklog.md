@@ -4,3 +4,5 @@
 - Cycle 4: Fixed review blockers by adding bare-UUID set_remote parsing and non-debug stderr warning for local startup fallback.
 - Cycle 5: Executed real stdio integration test plan; build + startup fallback e2e passed with URL/UUID set_remote assertions.
 - Cycle 6: Re-ran independent review with test evidence; verdict switched to pass.
+- Cycle 7: Pushed branch and opened PR #68; PR body malformed from shell interpolation and needs post-create correction via API-safe path.
+- Cycle 8: Corrected PR body via REST, CI passed, final independent PR review returned FINAL: ship.

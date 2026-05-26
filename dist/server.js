@@ -27,13 +27,13 @@ const STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS = 1_500;
 const CALL_TOOL_TIMEOUT_MS = 120_000;
 const SET_REMOTE_TOOL = {
     name: 'set_remote',
-    description: 'Reconnect this MCP server to a full Vibe remote websocket relay URL.',
+    description: 'Set the remote relay target for this MCP server. If browser tools are missing, call set_remote first to connect to a Vibe relay.',
     inputSchema: {
         type: 'object',
         properties: {
             url: {
                 type: 'string',
-                description: 'Full websocket relay URL, for example wss://relay.api.vibebrowser.app/<extension-uuid>',
+                description: 'Remote target as either an extension UUID or a full websocket relay URL (for example wss://relay.api.vibebrowser.app/<extension-uuid>). Call set_remote first when browser tools are unavailable.',
             },
         },
         required: ['url'],
@@ -81,7 +81,18 @@ export class VibeMcpServer {
      * Start the MCP server
      */
     async start() {
-        await this.connection.start();
+        try {
+            await this.connection.start();
+        }
+        catch (error) {
+            if (!this.config.remoteUuid && !this.config.devtools) {
+                const message = error instanceof Error ? error.message : String(error);
+                this.log(`Local extension startup failed; continuing without tools: ${message}`);
+            }
+            else {
+                throw error;
+            }
+        }
         if (this.config.devtools) {
             if (this.connection instanceof DevtoolsFallbackConnection && this.connection.isAvailable()) {
                 this.log('Connected to chrome-devtools backend');

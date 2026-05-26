@@ -1,0 +1,2 @@
+- Cycle 1: Created issue #67, wrote design + plan, set success metric to npm latest/npx verification parity.
+- Cycle 2: Implemented server startup fallback + set_remote description, added startup-fallback e2e script, bumped versions to 0.2.12.

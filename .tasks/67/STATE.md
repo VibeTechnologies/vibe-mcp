@@ -1,0 +1,11 @@
+# Task 67 - STATE
+- phase: 1-done
+- issue: #67
+- branch: own/66-publish-recent-mcp
+- started: 2026-05-26T00:00:00Z
+- supervisor: gpt-5.3-codex
+- phase: 2-done
+- phase: 3-done
+- phase: 4-approved
+- phase: 5-group-A-done
+- phase: 5-group-B-done

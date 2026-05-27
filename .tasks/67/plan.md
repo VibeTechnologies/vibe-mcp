@@ -29,3 +29,8 @@ Implement startup resilience + stronger `set_remote` guidance in `src/server.ts`
 
 ## Rollback Plan
 If regression found after merge, revert merge commit from `main`, unpublish not required (npm immutable). Ship follow-up patch restoring previous startup behavior and preserving compatible `set_remote` metadata.
+
+## Recovery Iteration (Post-merge verify fail)
+- Trigger: publish workflow run `26484844463` failed; npm latest stayed `0.2.11`.
+- Recovery task: harden `.github/workflows/publish.yml` token fallback logic to try all configured token sources after OIDC failure, preflight with `npm whoami`, and avoid rejecting valid non-`npm_` token formats.
+- Recovery done criterion: new PR merges, post-merge publish run succeeds, npm latest becomes `0.2.12`, and `npx -g @vibebrowser/mcp --version` returns `0.2.12`.

@@ -18,3 +18,14 @@
 - pr: 68
 - phase: 6-ci-green
 - phase: 7-ship-recommended
+- phase: 8-merged
+- merged-at: 2026-05-27T01:17:37Z
+- merge-commit: 94712f0c76487bee8cc42952292e1fa4f34e9ccf
+- phase: 9-prod-fail
+- phase: 5-recovery-iteration-1
+- phase: 5b-recovery-pass
+- phase: 5c-recovery-fail
+- phase: 6-pr-open
+- pr: 69
+- phase: 6-ci-green
+- phase: 7-ship-recommended

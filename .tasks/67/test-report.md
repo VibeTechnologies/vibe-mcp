@@ -18,3 +18,28 @@
 
 ## RESULT
 RESULT: pass
+
+---
+
+## Recovery iteration test (publish path)
+
+## Commands
+- `gh workflow run "Publish to npm" --ref own/67-publish-recovery`
+- `gh run watch 26485372331`
+- `gh run view 26485372331 --log-failed`
+
+## Results
+1. Workflow dispatch run `26485372331` - FAIL (expected for current credential state)
+   - OIDC attempt reached npm publish but returned:
+     - `npm error 404 Not Found - PUT https://registry.npmjs.org/@vibebrowser%2fmcp - Not found`
+   - Token fallback diagnostics now show per-source preflight:
+     - `Skipping token from NODE_AUTH_TOKEN: npm whoami failed`
+     - `Skipping token from NPM_TOKEN: npm whoami failed`
+     - `Skipping token from NODE_AUTH_TOKEN_FALLBACK: npm whoami failed`
+
+## Assertions Verified
+- New fallback logic tries all token sources.
+- New preflight diagnostics clearly identify token auth failure across all configured secrets.
+
+## RESULT (Recovery iteration)
+RESULT: fail (external npm credentials/ownership still invalid for publish)

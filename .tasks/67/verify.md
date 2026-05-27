@@ -19,3 +19,8 @@
 
 ## Result
 PROD: fail (release delivery blocked by npm publish auth/ownership mismatch; latest package not updated)
+
+## Recovery iteration evidence
+- Workflow dispatch run on recovery branch: `26485372331`
+- Outcome unchanged: OIDC publish returns npm `E404`, all token sources fail `npm whoami` preflight.
+- Conclusion unchanged: delivery blocked by external npm credential/ownership configuration.

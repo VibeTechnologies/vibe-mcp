@@ -24,3 +24,6 @@
 - phase: 9-prod-fail
 - phase: 5-recovery-iteration-1
 - phase: 5b-recovery-pass
+- phase: 5c-recovery-fail
+- phase: 6-pr-open
+- pr: 69

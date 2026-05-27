@@ -9,3 +9,5 @@
 - Cycle 9: PR merged as 94712f0; post-merge publish verification failed (run 26484844463, npm E404), latest remains 0.2.11.
 - Cycle 10: Reopened issue #67 after verify fail; started recovery iteration with publish workflow token fallback hardening.
 - Cycle 11: Recovery iteration review passed for publish token fallback changes.
+- Cycle 12: Ran workflow-dispatch real publish test (26485372331); diagnostics improved but publish still fails due invalid npm auth/ownership.
+- Cycle 13: Opened recovery PR #69 with workflow hardening and failure evidence.

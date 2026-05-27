@@ -6,3 +6,9 @@
 - Cycle 6: Re-ran independent review with test evidence; verdict switched to pass.
 - Cycle 7: Pushed branch and opened PR #68; PR body malformed from shell interpolation and needs post-create correction via API-safe path.
 - Cycle 8: Corrected PR body via REST, CI passed, final independent PR review returned FINAL: ship.
+- Cycle 9: PR merged as 94712f0; post-merge publish verification failed (run 26484844463, npm E404), latest remains 0.2.11.
+- Cycle 10: Reopened issue #67 after verify fail; started recovery iteration with publish workflow token fallback hardening.
+- Cycle 11: Recovery iteration review passed for publish token fallback changes.
+- Cycle 12: Ran workflow-dispatch real publish test (26485372331); diagnostics improved but publish still fails due invalid npm auth/ownership.
+- Cycle 13: Opened recovery PR #69 with workflow hardening and failure evidence.
+- Cycle 14: PR #69 CI green; final independent review returned FINAL: ship.

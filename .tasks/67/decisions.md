@@ -39,3 +39,17 @@
 - reasoning: `this.log` is debug-gated; degraded startup must be visible by default.
 - alternatives: Keep debug-only log.
 - evidence: review warning line 2.
+
+## Decision 7
+- question: How to continue after post-merge verify failed because npm publish did not deliver 0.2.12?
+- decision: Add follow-up workflow fix to token fallback selection and validation, then rerun publish via new PR.
+- reasoning: stop contract requires PROD pass; current failure is delivery path, not runtime code path. Fastest controllable fix is publish workflow token handling.
+- alternatives: Ask user for manual publish immediately.
+- evidence: run 26484844463 failed both OIDC and token fallback; logs show token source filtering/selection is fragile.
+
+## Decision 8
+- question: Can credential blocker be resolved without user intervention?
+- decision: No; continue with diagnostics hardening PR and escalate with concrete evidence instead of guessing secrets.
+- reasoning: local env tokens and repo token paths all fail `npm whoami`; Bitwarden has no npm credential item to rotate from.
+- alternatives: Keep retrying same publish command without new evidence.
+- evidence: `npm whoami` failed for `.env.d/npm.env` and `vibe/.env` tokens; workflow run 26485372331 shows all three token sources fail auth preflight.

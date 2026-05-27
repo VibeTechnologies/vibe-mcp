@@ -6,3 +6,5 @@
 - Cycle 6: Re-ran independent review with test evidence; verdict switched to pass.
 - Cycle 7: Pushed branch and opened PR #68; PR body malformed from shell interpolation and needs post-create correction via API-safe path.
 - Cycle 8: Corrected PR body via REST, CI passed, final independent PR review returned FINAL: ship.
+- Cycle 9: PR merged as 94712f0; post-merge publish verification failed (run 26484844463, npm E404), latest remains 0.2.11.
+- Cycle 10: Reopened issue #67 after verify fail; started recovery iteration with publish workflow token fallback hardening.

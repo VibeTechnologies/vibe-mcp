@@ -39,3 +39,10 @@
 - reasoning: `this.log` is debug-gated; degraded startup must be visible by default.
 - alternatives: Keep debug-only log.
 - evidence: review warning line 2.
+
+## Decision 7
+- question: How to continue after post-merge verify failed because npm publish did not deliver 0.2.12?
+- decision: Add follow-up workflow fix to token fallback selection and validation, then rerun publish via new PR.
+- reasoning: stop contract requires PROD pass; current failure is delivery path, not runtime code path. Fastest controllable fix is publish workflow token handling.
+- alternatives: Ask user for manual publish immediately.
+- evidence: run 26484844463 failed both OIDC and token fallback; logs show token source filtering/selection is fragile.

@@ -24,3 +24,18 @@ PROD: fail (release delivery blocked by npm publish auth/ownership mismatch; lat
 - Workflow dispatch run on recovery branch: `26485372331`
 - Outcome unchanged: OIDC publish returns npm `E404`, all token sources fail `npm whoami` preflight.
 - Conclusion unchanged: delivery blocked by external npm credential/ownership configuration.
+
+## Recovery iteration 2 evidence
+- Branch/workflow: `own/67-publish-recovery-2` / run `26488104816`
+- Workflow behavior change confirmed:
+  - Token preflight is diagnostic-only.
+  - Publish fallback attempts now run for `NODE_AUTH_TOKEN`, `NPM_TOKEN`, and `NODE_AUTH_TOKEN_FALLBACK` even when `npm whoami` fails.
+- Runtime outcome unchanged:
+  - OIDC attempt still fails with `404 Not Found - PUT https://registry.npmjs.org/@vibebrowser%2fmcp - Not found`.
+  - Token publish attempts for all three sources also fail with same npm `E404`.
+- Dist-tag check after run:
+  - `npm view @vibebrowser/mcp version` -> `0.2.11`
+  - `npm view @vibebrowser/cli version` -> `0.2.11`
+
+## Result (current)
+PROD: fail (workflow fallback behavior improved and verified; delivery still blocked by external npm publisher auth/ownership)

@@ -43,3 +43,32 @@ RESULT: pass
 
 ## RESULT (Recovery iteration)
 RESULT: fail (external npm credentials/ownership still invalid for publish)
+
+---
+
+## Recovery iteration 2 test (non-blocking token preflight)
+
+## Commands
+- `gh workflow run "Publish to npm" --ref own/67-publish-recovery-2`
+- `gh run watch 26488104816`
+- `gh run view 26488104816 --log-failed`
+
+## Results
+1. Workflow dispatch run `26488104816` - FAIL (expected while npm auth/ownership remains unresolved)
+   - OIDC attempt still fails with:
+     - `npm error 404 Not Found - PUT https://registry.npmjs.org/@vibebrowser%2fmcp - Not found`
+   - Token fallback now attempts publish for each configured source even after `npm whoami` preflight failure:
+     - `Token from NODE_AUTH_TOKEN failed npm whoami preflight; attempting publish anyway`
+     - `Trying token fallback from NODE_AUTH_TOKEN for @vibebrowser/mcp...`
+     - `Token from NPM_TOKEN failed npm whoami preflight; attempting publish anyway`
+     - `Trying token fallback from NPM_TOKEN for @vibebrowser/mcp...`
+     - `Token from NODE_AUTH_TOKEN_FALLBACK failed npm whoami preflight; attempting publish anyway`
+     - `Trying token fallback from NODE_AUTH_TOKEN_FALLBACK for @vibebrowser/mcp...`
+
+## Assertions Verified
+- `npm whoami` no longer gates/skips token publish attempts.
+- Publish fallback executes for all configured token sources.
+- External blocker unchanged: registry still rejects publish with npm `E404`.
+
+## RESULT (Recovery iteration 2)
+RESULT: fail (workflow behavior corrected; publish still blocked by external npm credential/ownership state)

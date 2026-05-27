@@ -5,3 +5,9 @@
 .tasks/67/test-report.md:32: INFO Recovery test correctly proves this PR does not solve external npm ownership/credential failure by itself; it improves failure observability. Keep this limitation explicit in task docs.
 CI(PR #69):1: INFO `build` check is passing and no CI failures are present for this change set. Keep CI green gate before merge.
 FINAL: ship
+
+## PR #70
+.github/workflows/publish.yml:154: INFO `npm whoami` is now diagnostic-only, and fallback still attempts publish per token source; this matches the recovery goal of not discarding potentially valid tokens due to preflight false negatives. Keep this behavior unless npm confirms `whoami` is a strict publish predictor for all token types.
+.github/workflows/publish.yml:157: INFO Logging includes only token source names, not token material, so no new secret exposure is introduced by this change. Keep source-only diagnostics.
+.github/workflows/publish.yml:166: INFO Failure path still exits non-zero after all token sources fail, preserving safe fail-closed behavior for publish automation. Keep explicit error guidance.
+FINAL: ship

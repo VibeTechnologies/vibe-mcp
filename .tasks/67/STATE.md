@@ -29,3 +29,11 @@
 - pr: 69
 - phase: 6-ci-green
 - phase: 7-ship-recommended
+- phase: 5-recovery-iteration-2
+- branch: own/67-publish-recovery-2
+- phase: 6-pr-open
+- pr: 70
+- phase: 6-ci-green
+- phase: 7-ship-recommended
+- phase: 5c-recovery2-fail
+- verify-run: 26488104816

@@ -53,3 +53,17 @@
 - reasoning: local env tokens and repo token paths all fail `npm whoami`; Bitwarden has no npm credential item to rotate from.
 - alternatives: Keep retrying same publish command without new evidence.
 - evidence: `npm whoami` failed for `.env.d/npm.env` and `vibe/.env` tokens; workflow run 26485372331 shows all three token sources fail auth preflight.
+
+## Decision 9
+- question: Should token fallback keep skipping publish when `npm whoami` fails?
+- decision: No; treat `npm whoami` as diagnostic only and still attempt `npm publish` for each configured token source.
+- reasoning: Existing evidence shows `whoami` alone is insufficient to conclude publish impossibility; skip behavior hides potentially valid token paths and blocks deeper diagnostics.
+- alternatives: Keep skip-on-preflight behavior.
+- evidence: recovery goal in plan requires exercising all token paths; run 26488104816 confirmed behavior change and produced complete source-by-source publish attempts.
+
+## Decision 10
+- question: Is there any local/Bitwarden credential path left to try autonomously?
+- decision: No further autonomous credential sources available; proceed with PR+evidence and request maintainer-side npm publisher credential or scope ownership fix.
+- reasoning: `.env.d/npm.env`, `vibe/.env`, repo secrets rotation attempts, and Bitwarden searches yielded no valid publish-capable credential for `@vibebrowser` scope.
+- alternatives: Continue looping same token set.
+- evidence: runs `26487643493`, `26487677942`, `26488104816` all fail with npm `E404` after token/OIDC attempts; Bitwarden search returned no npm items.

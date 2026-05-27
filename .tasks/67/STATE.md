@@ -27,3 +27,5 @@
 - phase: 5c-recovery-fail
 - phase: 6-pr-open
 - pr: 69
+- phase: 6-ci-green
+- phase: 7-ship-recommended

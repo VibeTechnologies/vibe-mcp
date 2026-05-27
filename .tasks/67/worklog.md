@@ -12,3 +12,6 @@
 - Cycle 12: Ran workflow-dispatch real publish test (26485372331); diagnostics improved but publish still fails due invalid npm auth/ownership.
 - Cycle 13: Opened recovery PR #69 with workflow hardening and failure evidence.
 - Cycle 14: PR #69 CI green; final independent review returned FINAL: ship.
+- Cycle 15: Implemented recovery iteration 2 on branch own/67-publish-recovery-2; changed workflow so token preflight is diagnostic-only and token publish attempts always run.
+- Cycle 16: Opened PR #70, CI green, and independent final review returned FINAL: ship.
+- Cycle 17: Ran real publish workflow on recovery branch (26488104816); confirmed all token sources now attempt publish, but every attempt still fails with npm E404 and npm latest remains 0.2.11.

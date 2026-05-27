@@ -128,11 +128,6 @@ jobs:
             token_values+=("$candidate")
           }
 
-          token_auth_works() {
-            local candidate="$1"
-            NODE_AUTH_TOKEN="$candidate" npm whoami >/dev/null 2>&1
-          }
-
           add_token_candidate "${NODE_AUTH_TOKEN:-}" "NODE_AUTH_TOKEN"
           add_token_candidate "${NPM_TOKEN:-}" "NPM_TOKEN"
           add_token_candidate "${NODE_AUTH_TOKEN_FALLBACK:-}" "NODE_AUTH_TOKEN_FALLBACK"
@@ -156,9 +151,10 @@ jobs:
                 token_value="${token_values[$idx]}"
                 token_source="${token_sources[$idx]}"
 
-                if ! token_auth_works "$token_value"; then
-                  echo "Skipping token from $token_source: npm whoami failed"
-                  continue
+                if NODE_AUTH_TOKEN="$token_value" npm whoami >/dev/null 2>&1; then
+                  echo "Token from $token_source passed npm whoami preflight"
+                else
+                  echo "Token from $token_source failed npm whoami preflight; attempting publish anyway"
                 fi
 
                 echo "Trying token fallback from $token_source for $package_name..."

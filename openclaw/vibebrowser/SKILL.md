@@ -60,6 +60,8 @@ export VIBE_REMOTE_URL="<uuid-or-full-ws-url>"
 # export VIBE_BROWSER_PROFILE="user"
 ```
 
+> **Warning:** if neither `--remote` nor one of these environment variables is set, the CLI silently falls back to *local* relay mode (it waits for an extension on a local WebSocket port) instead of failing with a clear error. When driving a remote browser, always confirm a remote value is in effect.
+
 ## Command form
 
 Prefer this exact command pattern:

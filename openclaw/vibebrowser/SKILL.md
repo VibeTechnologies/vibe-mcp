@@ -9,7 +9,6 @@ metadata:
         "requires":
           {
             "bins": ["npx"],
-            "env": ["VIBE_REMOTE_URL"],
           },
       },
   }
@@ -24,15 +23,12 @@ metadata:
    - Open extension Settings → MCP External
    - Enable Remote mode and copy either the extension UUID or full WebSocket relay URL
 
-2. **Set environment variables**:
+2. **Provide the remote value** (one of):
+   - Pass it directly on every command with `--remote <uuid-or-url>` — no environment variable needed.
+   - Or set it once as an environment variable so `--remote` can be omitted (the CLI picks it up automatically):
      ```bash
-     export VIBE_REMOTE_URL="<uuid>"
+     export VIBE_REMOTE_URL="<uuid-or-full-ws-url>"
      ```
-
-   Or target an explicit relay endpoint:
-       ```bash
-       export VIBE_REMOTE_URL="<full-ws-url>"
-       ```
 
 3. **Install the skill**:
    Copy this file to your OpenClaw skills directory (typically `~/.openclaw/skills/` or your project's `openclaw/skills/` folder).
@@ -48,29 +44,39 @@ Prefer this skill when the task depends on:
 
 Do not use this skill for OpenClaw tenant cloud browsing.
 
-## Required environment
+## Remote value
 
-The shell running OpenClaw must have:
+Every command needs a remote value: the extension UUID (uses the default public relay) or a full `ws(s)` relay URL (explicit relay endpoint).
+
+Pass it with `--remote <uuid-or-url>`. No environment variable is required when `--remote` is set.
+
+Optionally, set it once via environment instead — the CLI uses it as the default when `--remote` is omitted (checked in this order):
 
 ```bash
-export VIBE_REMOTE_URL="<uuid>"
-
-# Explicit relay endpoint:
-# export VIBE_REMOTE_URL="<full-ws-url>"
+export VIBE_REMOTE_URL="<uuid-or-full-ws-url>"
+# Also honored: VIBE_EXTENSION_UUID, VIBE_RELAY_UUID
 
 # Optional compatibility label. Vibe always targets the real local browser path.
 # export VIBE_BROWSER_PROFILE="user"
 ```
+
+> **Warning:** if neither `--remote` nor one of these environment variables is set, the CLI silently falls back to *local* relay mode (it waits for an extension on a local WebSocket port) instead of failing with a clear error. When driving a remote browser, always confirm a remote value is in effect.
 
 ## Command form
 
 Prefer this exact command pattern:
 
 ```bash
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
+npx @vibebrowser/cli --remote "<uuid-or-url>" --json status
 ```
 
 Pass only one of these remote forms: `--remote <uuid>` for the default public relay, or `--remote <full-ws-url>` for an explicit relay endpoint.
+
+The examples below use `$VIBE_REMOTE_URL` as a stand-in for the remote value — substitute the literal UUID/URL if no environment variable is set. If `VIBE_REMOTE_URL` (or `VIBE_EXTENSION_UUID` / `VIBE_RELAY_UUID`) is exported, `--remote` can be omitted entirely:
+
+```bash
+npx @vibebrowser/cli --json status
+```
 
 ## Deterministic runbook (default)
 

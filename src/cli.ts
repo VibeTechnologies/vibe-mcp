@@ -31,7 +31,7 @@ program
   .description('Start the MCP server (default)')
   .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
   .option('-d, --debug', 'Enable debug logging', false)
-  .option('--devtools', 'Use only chrome-devtools backend (bypasses extension relay)', false)
+  .option('--devtools', 'Drive your real running Chrome directly over the DevTools Protocol (bypasses the extension relay)', false)
   .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide the extension UUID or full ws(s) relay URL)')
   .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
   .option('--transport <mode>', 'MCP transport to expose: stdio or http', 'stdio')

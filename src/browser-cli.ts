@@ -3,7 +3,7 @@ import { basename, extname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
 import { ExtensionConnection } from './connection.js';
-import { DevtoolsFallbackConnection } from './devtools-fallback.js';
+import { ChromeUseConnection } from './chrome-use-connection.js';
 import { DEFAULT_WS_PORT, type RelaySessionSummary, type ToolDefinition, type ToolResult } from './types.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -116,7 +116,7 @@ function buildBrowserCommand(command: Command): Command {
     .option('--target <target>', 'OpenClaw compatibility target selector (accepted, not used by the Vibe browser CLI)')
     .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
     .option('-d, --debug', 'Enable debug logging', false)
-    .option('--devtools', 'Use only chrome-devtools backend (bypasses extension relay)', false)
+    .option('--devtools', 'Drive your real running Chrome directly over the DevTools Protocol (bypasses the extension relay)', false)
     .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide the extension UUID or full ws(s) relay URL)', DEFAULT_REMOTE)
     .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
     .option('--json', 'Emit machine-readable JSON output', false)
@@ -498,7 +498,7 @@ async function runBrowserCommand(
 }
 
 class BrowserCliContext {
-  private readonly connection: ExtensionConnection | DevtoolsFallbackConnection;
+  private readonly connection: ExtensionConnection | ChromeUseConnection;
   private readonly profile: string;
   private readonly json: boolean;
   private readonly timeoutMs: number;
@@ -515,7 +515,7 @@ class BrowserCliContext {
   constructor(init: CommandContextInit) {
     this.devtoolsOnly = init.devtools;
     this.connection = init.devtools
-      ? new DevtoolsFallbackConnection(init.debug)
+      ? new ChromeUseConnection(init.debug)
       : new ExtensionConnection(
         init.port,
         init.debug,
@@ -1416,7 +1416,7 @@ class BrowserCliContext {
     if (this.connection instanceof ExtensionConnection) {
       return this.connection.getConnectionErrorMessage();
     }
-    return this.connection.getUnavailableReason() || 'chrome-devtools backend unavailable';
+    return this.connection.getUnavailableReason() || 'chrome-use DevTools backend unavailable';
   }
 
   outputMode(): 'local' | 'remote' | 'devtools' {

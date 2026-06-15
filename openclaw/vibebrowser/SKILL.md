@@ -20,8 +20,10 @@ metadata:
 
 1. **Get the remote value**:
    - Install the Vibe extension in Chrome
-   - Open extension Settings → MCP External
-   - Enable Remote mode and copy either the extension UUID or full WebSocket relay URL
+   - Open extension Settings → **AI Agent Control**
+   - Toggle **Enable external AI agent control** to ON
+   - Set **Connection mode** to **Remote (internet)**
+   - Copy the relay URL from the **Relay access** section
 
 2. **Provide the remote value** (one of):
    - Pass it directly on every command with `--remote <uuid-or-url>` — no environment variable needed.

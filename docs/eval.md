@@ -296,6 +296,31 @@ Consequences:
 - the new `vibebrowser-mcp` / `vibebrowser-cli` binaries are published to npm and verified from the registry
 - the remaining non-green item is the real-extension agent eval, which still requires a live Vibe extension session on the relay path
 
+## Known root causes & regressions
+
+### `tools/list` startup timeout (#14)
+
+**Symptom:** Codex/OpenCode intermittently reported `MCP startup failed: timed out
+awaiting tools/list after 10s`, or showed `vibe-browser` enabled with 0 tools.
+
+**Root cause:** when the tool cache was empty at startup, the `tools/list` handler
+blocked on `refreshTools` (4s) **then** `waitForToolsUpdate` (1.5s) — up to ~5.5s
+of in-handler blocking. Stacked on top of relay/extension connection setup, a
+single `tools/list` could exceed the client's 10s startup budget, especially when
+the extension was connected but had not yet published its tools.
+
+**Fix:** the handler now bounds the whole wait with a single
+`STARTUP_TOOLS_LIST_BUDGET_MS` (3s) deadline (`src/server.ts`). Whatever is cached
+at the deadline is returned (always at least `set_remote`); tools that arrive later
+are pushed to the client via the `notifications/tools/list_changed` capability
+(already advertised). This caps handler latency well under any client budget
+regardless of connection state.
+
+**Regression test:** `npm run test:e2e:tools-list-budget`
+(`scripts/e2e-tools-list-startup-budget.mjs`) — a fake relay reports the extension
+connected but never answers `list_tools`; the test asserts `tools/list` returns in
+< 4.5s with `set_remote` present. Runs in CI via `npm run test:ci`.
+
 ## Tracking
 
 - Tracking issue: `VibeTechnologies/vibe-mcp#22`

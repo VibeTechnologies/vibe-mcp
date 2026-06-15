@@ -15,15 +15,17 @@
 ## Test And Eval Commands
 
 - Full local test script: `npm test`
+- CI gate (hermetic subset; excludes the pre-existing `browser-cli` failure): `npm run test:ci` — this is what `.github/workflows/ci.yml` runs after build + `tsc --noEmit`.
 - Relay race regression: `npm run test:e2e:relay-race`
 - Relay roundtrip: `npm run test:e2e:relay-roundtrip`
 - CLI relay: `npm run test:e2e:cli-relay`
 - Streamable HTTP MCP: `npm run test:e2e:http`
-- Browser CLI fake-extension harness: `npm run test:e2e:browser-cli`
-- Agent harness with real extension: `npm run test:e2e:agents`
+- `tools/list` startup-budget regression (#14): `npm run test:e2e:tools-list-budget`
+- Browser CLI fake-extension harness: `npm run test:e2e:browser-cli` (known pre-existing `navigate should include pageContent` failure; excluded from `test:ci`)
+- Agent harness with real extension (3 MiniWoB++ tasks via Codex + OpenCode): `npm run test:e2e:agents`
 - Debug agent harness: `E2E_DEBUG=1 npm run test:e2e:agents`
 - Live browser CLI regression: `npm run test:e2e:browser-cli-live`
-- DevTools flag harness: `npm run test:e2e:devtools-flag`
+- DevTools (chrome-use gateway) hermetic harness: `npm run test:e2e:devtools-flag`
 
 Pass signals from `docs/eval.md` and `AGENTS.md`:
 
@@ -47,6 +49,7 @@ Pass signals from `docs/eval.md` and `AGENTS.md`:
 - Current MCP package binaries are `mcp`, `vibebrowser-mcp`, `vibe-mcp`, and `vibebrowser-cli`; normal direct browser CLI docs use the separate `@vibebrowser/cli` package.
 - Package smoke check pattern: create a tarball with `npm pack --json --pack-destination <tmp>` and verify `vibebrowser-mcp --help` plus browser CLI help via the relevant package under test.
 - `docs/eval.md` records npm/publish verification history and should be updated when evaluation scope or pass criteria changes.
+- Publishing runs via `.github/workflows/publish.yml` (push to main on src/package.json paths, release, or `workflow_dispatch`): it upgrades npm to >= 11.5.1, then tries OIDC trusted publishing first and falls back to a token (`NODE_AUTH_TOKEN`/`NPM_TOKEN`). npm 404-on-PUT masks an auth failure — it means the token secret is expired, not a missing package. A monthly `npm-token-healthcheck.yml` runs `npm whoami` and opens/updates a `npm-token`-labelled issue when the fallback token dies, so expiry is caught before a release needs it.
 
 ## Docs And Skill Locations
 
@@ -62,4 +65,25 @@ Pass signals from `docs/eval.md` and `AGENTS.md`:
 - Use `E2E_DEBUG=1` to start relay daemon with debug logging in relevant harnesses.
 - Inspect relay logs around `call_tool` before changing agent prompts.
 - Fake extension harnesses should register message handlers before waiting on socket `open`, periodically announce `tools_list`, reconnect on socket close, and never treat stale `No connection` payloads as final success.
+
+## DevTools Gateway (`--devtools`)
+
+- Requires Chrome 144+ running with remote debugging allowed once at
+  `chrome://inspect/#remote-debugging` (native trust dialog — only the user can
+  click Allow; the approval persists for the Chrome session and the proxy lifetime).
+- Env: `VIBE_CHROME_CHANNEL` (`stable`/`canary`/`beta`/`dev`),
+  `VIBE_CHROME_USER_DATA_DIR` (target a specific profile),
+  `VIBE_CHROME_USE_SOCKET` (override the gateway socket path; tests use this to
+  isolate). Non-default channel/profile get their own per-profile socket.
+- The proxy is a detached daemon; it survives across CLI invocations. To force a
+  fresh approval, stop it: `node dist/cli.js` has no stop verb, so send `__stop`
+  to the socket or `pkill -f dist/chrome-use/proxy.js` and remove
+  `/tmp/vibe-chrome-use-*.sock`.
+- Symptoms: `CDP connect timed out after 300000ms` / `DevToolsActivePort not found`
+  mean Chrome isn't running or remote debugging wasn't approved — the error text
+  now points at `chrome://inspect/#remote-debugging`. Do NOT use
+  `--remote-debugging-port` or `curl http://localhost:<port>/json/version`;
+  autoConnect mode has no HTTP endpoint.
+- Hermetic coverage: `npm run test:e2e:devtools-flag` drives the browser-cli verb
+  -> tool dispatch and the connection against a fake CDP (no real Chrome).
 - If default `vibebrowser-cli snapshot` returns little content, retry with `snapshot --format aria --interactive`.

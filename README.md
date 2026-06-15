@@ -407,7 +407,7 @@ The skill is the npm package @vibebrowser/cli, run with npx (no global install n
 
   REMOTE = <REMOTE>
 
-Do each step and paste the exact output:
+Do each step and paste the exact output. If any command returns "Extension reconnecting", wait 3 seconds and retry it (up to 5 times):
 
 1. Install / sanity-check the CLI (first run downloads it):
    npx -y @vibebrowser/cli@latest --help
@@ -416,16 +416,19 @@ Do each step and paste the exact output:
    npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json status --wait-for-extension --wait-timeout 20000
    -> confirm "extensionConnected": true and report toolCount.
 
-3. List my open tabs and note a page id:
+3. List my open tabs:
    npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json tabs
 
-4. Drive the browser end to end (use a page id from step 3 as <ID>):
+4. Read the active page (proves control):
+   npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json snapshot --format aria
+
+5. Report back: did status show extensionConnected=true, and did the snapshot return real page content? Paste the snapshot text.
+
+Optional (changes browser state): pick a page id from step 3 and run
    npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json --page-id <ID> navigate https://example.com
-   npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json --page-id <ID> snapshot --format aria
+A navigation reloads the page and can briefly drop the relay, so retry on "Extension reconnecting".
 
-5. Report back: did status show extensionConnected=true, and did the snapshot return the real page content (it should contain "Example Domain")? Paste the snapshot text.
-
-If any step errors, paste the full error. If status shows extensionConnected=false, tell me so I can put the extension into Remote mode.
+If status shows extensionConnected=false, tell me so I can put the extension into Remote mode.
 ```
 
 For a deeper skill definition (when to prefer this over a managed browser, env-var setup, selector/snapshot guidance), install `openclaw/vibebrowser/SKILL.md` into the agent's skills directory.

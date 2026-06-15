@@ -25,3 +25,9 @@ jobs:
       
       - name: Check types
         run: npx tsc --noEmit
+
+      - name: E2E (hermetic)
+        # Reliable hermetic e2e gate. Excludes test:e2e:browser-cli, which has a
+        # pre-existing failure tracked separately. Includes the #14 tools/list
+        # startup-budget regression.
+        run: npm run test:ci

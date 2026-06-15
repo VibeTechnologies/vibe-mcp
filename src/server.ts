@@ -31,7 +31,14 @@ import { getPackageVersion } from './version.js';
 const SERVER_NAME = 'vibebrowser-mcp';
 const SERVER_VERSION = getPackageVersion();
 const STARTUP_TOOLS_REFRESH_TIMEOUT_MS = 4_000;
-const STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS = 1_500;
+/**
+ * Hard ceiling for how long a single `tools/list` request may block while waiting
+ * for the extension's tools to arrive. Kept well under typical MCP client startup
+ * budgets (Codex/OpenCode use 10s) so a slow or empty extension state can never
+ * blow the client timeout — late-arriving tools are pushed via the
+ * `notifications/tools/list_changed` capability instead. See #14.
+ */
+const STARTUP_TOOLS_LIST_BUDGET_MS = 3_000;
 /**
  * Timeout for tool execution via the relay/extension pipeline.
  * Page-interacting tools can take up to ~40s (CDP execution + post-action
@@ -271,18 +278,7 @@ export class VibeMcpServer {
 
     server.setRequestHandler(ListToolsRequestSchema, async () => {
       if (this.connection.getTools().length === 0) {
-        try {
-          await this.connection.refreshTools(STARTUP_TOOLS_REFRESH_TIMEOUT_MS);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          this.log(`tools/list refresh failed: ${message}`);
-        }
-      }
-
-      if (this.connection.getTools().length === 0) {
-        if (this.connection instanceof ExtensionConnection) {
-          await this.connection.waitForToolsUpdate(STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS);
-        }
+        await this.awaitStartupToolsWithinBudget(STARTUP_TOOLS_LIST_BUDGET_MS);
       }
 
       return {
@@ -637,6 +633,33 @@ export class VibeMcpServer {
       const message = error instanceof Error ? error.message : String(error);
       this.log(`Failed to send tools/list_changed: ${message}`);
     });
+  }
+
+  /**
+   * Try to populate the tool cache for an empty startup state, but never block the
+   * `tools/list` response past `budgetMs`. A bounded refresh runs first, then (for
+   * the extension backend) we wait out only the budget that remains. Whatever is
+   * cached at the deadline is returned; tools that arrive later are pushed to the
+   * client via `notifications/tools/list_changed`. This is the #14 hardening: the
+   * handler latency is capped regardless of relay/extension startup state, so it
+   * cannot exceed a client's tools/list startup timeout.
+   */
+  private async awaitStartupToolsWithinBudget(budgetMs: number): Promise<void> {
+    const deadline = Date.now() + budgetMs;
+
+    try {
+      await this.connection.refreshTools(Math.max(0, deadline - Date.now()));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.log(`tools/list refresh failed: ${message}`);
+    }
+
+    if (this.connection.getTools().length === 0 && this.connection instanceof ExtensionConnection) {
+      const remaining = deadline - Date.now();
+      if (remaining > 0) {
+        await this.connection.waitForToolsUpdate(remaining);
+      }
+    }
   }
 
   /**

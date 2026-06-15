@@ -652,7 +652,7 @@ class BrowserCliContext {
     const invocation = await this.callTool(
       'tabs',
       [
-        { names: ['list_pages', 'get_tabs'] },
+        { names: ['list_pages', 'get_tabs', 'list_tabs'] },
       ],
       {}
     );
@@ -673,7 +673,7 @@ class BrowserCliContext {
 
   async open(url?: string): Promise<CommandOutput> {
     if (!url) {
-      return this.callGenericCommand('open', [{ names: ['new_page', 'create_new_tab'] }], {});
+      return this.callGenericCommand('open', [{ names: ['new_page', 'create_new_tab', 'new_tab'] }], {});
     }
 
     try {
@@ -681,11 +681,11 @@ class BrowserCliContext {
         'open',
         [
           {
-            names: ['new_page', 'create_new_tab'],
+            names: ['new_page', 'create_new_tab', 'new_tab'],
             buildArgs: (tool) => withOpenArgs(tool, url),
           },
           {
-            names: ['navigate_page', 'navigate_to_url'],
+            names: ['navigate_page', 'navigate_to_url', 'navigate'],
             buildArgs: (tool) => withNavigateArgs(tool, url, this.timeoutMs),
           },
         ],
@@ -709,11 +709,11 @@ class BrowserCliContext {
         'navigate',
         [
           {
-            names: ['navigate_page', 'navigate_to_url'],
+            names: ['navigate_page', 'navigate_to_url', 'navigate'],
             buildArgs: (tool) => withNavigateArgs(tool, url, this.timeoutMs),
           },
           {
-            names: ['new_page', 'create_new_tab'],
+            names: ['new_page', 'create_new_tab', 'new_tab'],
             buildArgs: (tool) => withOpenArgs(tool, url),
           },
         ],
@@ -749,7 +749,7 @@ class BrowserCliContext {
       'focus',
       [
         {
-          names: ['switch_to_page', 'switch_to_tab', 'select_page', 'focus_tab'],
+          names: ['switch_to_page', 'switch_to_tab', 'select_page', 'focus_tab', 'select_tab'],
           buildArgs: (tool) => withPageArgs(tool, id),
         },
       ],
@@ -774,7 +774,7 @@ class BrowserCliContext {
       'snapshot',
       [
         {
-          names: ['take_snapshot'],
+          names: ['take_snapshot', 'snapshot'],
           buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
         },
       ],
@@ -1053,7 +1053,7 @@ class BrowserCliContext {
       'evaluate',
       [
         {
-          names: ['evaluate_script'],
+          names: ['evaluate_script', 'eval'],
           buildArgs: (tool) => withEvaluateArgs(tool, options.fn, options.ref, options.argsJson),
         },
       ],
@@ -2088,6 +2088,7 @@ function withSnapshotArgs(
   tool: ToolDefinition,
   options: {
     format: string;
+    interactive?: boolean;
     selector?: string;
     frame?: string;
     compact: boolean;
@@ -2098,6 +2099,8 @@ function withSnapshotArgs(
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   maybeAssign(args, tool, 'format', options.format);
+  // chrome-use `snapshot` tool: interactive-only flag.
+  maybeAssign(args, tool, 'interactive', options.interactive || undefined);
   maybeAssign(args, tool, 'selector', options.selector);
   maybeAssign(args, tool, 'frame', options.frame);
   maybeAssign(args, tool, 'compact', options.compact || undefined);
@@ -2311,6 +2314,8 @@ function withEvaluateArgs(
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   maybeAssign(args, tool, 'function', fn);
+  // chrome-use `eval` tool takes a bare expression rather than a function body.
+  maybeAssign(args, tool, 'expression', fn);
 
   const values: string[] = [];
   if (ref) {

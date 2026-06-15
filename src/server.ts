@@ -16,7 +16,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { ExtensionConnection, type RemoteConfig } from './connection.js';
-import { DevtoolsFallbackConnection } from './devtools-fallback.js';
+import { ChromeUseConnection } from './chrome-use-connection.js';
 import {
   DEFAULT_HTTP_PATH,
   DEFAULT_HTTP_PORT,
@@ -69,7 +69,7 @@ interface SessionState {
  * Exposes Vibe browser tools to MCP clients via stdio or streamable HTTP transport.
  */
 export class VibeMcpServer {
-  private readonly connection: ExtensionConnection | DevtoolsFallbackConnection;
+  private readonly connection: ExtensionConnection | ChromeUseConnection;
   private readonly config: ServerConfig;
   private readonly sessions = new Map<string, SessionState>();
   private stdioServer: Server | null = null;
@@ -93,7 +93,7 @@ export class VibeMcpServer {
     };
 
     if (this.config.devtools) {
-      this.connection = new DevtoolsFallbackConnection(this.config.debug);
+      this.connection = new ChromeUseConnection(this.config.debug);
     } else {
       const remoteConfig: RemoteConfig | undefined = this.config.remoteUuid
         ? { uuid: this.config.remoteUuid, relayUrl: this.config.remoteRelayUrl }
@@ -126,10 +126,10 @@ export class VibeMcpServer {
     }
 
     if (this.config.devtools) {
-      if (this.connection instanceof DevtoolsFallbackConnection && this.connection.isAvailable()) {
-        this.log('Connected to chrome-devtools backend');
+      if (this.connection instanceof ChromeUseConnection && this.connection.isAvailable()) {
+        this.log('Connected to Chrome via DevTools Protocol (chrome-use backend)');
       } else {
-        this.log('chrome-devtools backend unavailable; server started without tools');
+        this.log('chrome-use DevTools backend unavailable; server started without tools');
       }
     } else if (this.config.remoteUuid) {
       this.log(`Connected to remote relay for UUID ${this.config.remoteUuid}`);
@@ -216,16 +216,16 @@ export class VibeMcpServer {
    * Set up extension connection events
    */
   private setupConnectionEvents(): void {
-    if (this.connection instanceof DevtoolsFallbackConnection) {
+    if (this.connection instanceof ChromeUseConnection) {
       this.connection.on('connected', () => {
-        this.log('chrome-devtools backend connected');
+        this.log('chrome-use DevTools backend connected');
       });
       this.connection.on('unavailable', (reason: string) => {
         this.log(reason);
         this.notifyToolListChanged();
       });
       this.connection.on('tools_updated', (tools: ToolDefinition[]) => {
-        this.log(`Received ${tools.length} tools from chrome-devtools backend`);
+        this.log(`Received ${tools.length} tools from chrome-use DevTools backend`);
         this.notifyToolListChanged();
       });
       return;
@@ -336,7 +336,7 @@ export class VibeMcpServer {
   private async handleSetRemoteTool(args: Record<string, unknown>): Promise<{ content: ToolResult['content']; isError?: boolean }> {
     if (!(this.connection instanceof ExtensionConnection)) {
       return {
-        content: [{ type: 'text', text: 'Error: set_remote is not supported when using the chrome-devtools fallback backend' }],
+        content: [{ type: 'text', text: 'Error: set_remote is not supported when using the chrome-use DevTools backend' }],
         isError: true,
       };
     }
@@ -495,7 +495,7 @@ export class VibeMcpServer {
         version: SERVER_VERSION,
         transport: 'http',
         mcpPath: this.config.httpPath,
-        extensionConnected: this.connection instanceof DevtoolsFallbackConnection
+        extensionConnected: this.connection instanceof ChromeUseConnection
           ? this.connection.isAvailable()
           : this.connection.isExtensionConnected(),
         cachedTools: this.connection.getTools().length,

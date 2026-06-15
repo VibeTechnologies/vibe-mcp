@@ -47,7 +47,7 @@ Claude Desktop       Cursor          VS Code         OpenCode
 - **Fast & Local** - Automation happens on your machine, no cloud latency
 - **Private** - Your browsing data never leaves your device
 - **Stable** - Content script based, no flaky CDP connections
-- **Chrome DevTools Fallback** - Extension tools stay primary by default; use `--devtools` to force chrome-devtools-only mode
+- **Direct Chrome DevTools mode** - Extension tools stay primary by default; use `--devtools` to drive your real running Chrome directly over the DevTools Protocol (no extension required)
 
 ## Quick Start
 
@@ -232,10 +232,29 @@ If the extension is not connected, `vibebrowser-mcp` can optionally fall back to
 `chrome-devtools-mcp` (started in `--autoConnect` mode) when that package is installed.
 This fallback runs once in the shared local relay daemon (multi-agent safe), so
 both `vibebrowser-mcp` and `vibebrowser-cli` use the same backend instance.
-When extension is connected, extension tools are authoritative. Chrome DevTools
-fallback tools are exposed only when extension is unavailable/disconnected.
-Pass `--devtools` to either CLI to bypass relay/extension routing and use only
-the chrome-devtools backend.
+When extension is connected, extension tools are authoritative.
+
+### `--devtools` mode (drive your real Chrome over CDP)
+
+Pass `--devtools` to either CLI to bypass relay/extension routing entirely and
+drive your **real running Chrome** directly over the Chrome DevTools Protocol.
+This backend (ported from the `chrome-use` skill) reads Chrome's
+`DevToolsActivePort` file and autoConnects to your live profile — no extension,
+no external MCP server, zero extra dependencies. Requires Chrome 144+; the
+permission dialog fires once per profile.
+
+`--devtools` exposes a focused tool set: `navigate`, `snapshot` (accessibility
+tree with `@eN` refs), `click`, `fill`, `type`, `press_key`, `hover`, `scroll`,
+`screenshot`, `eval`, `get_text`, `get_url`, `get_title`, and tab management
+(`list_tabs`, `new_tab`, `select_tab`, `close_tab`). Use `snapshot` to get
+`@eN` element refs, then pass them as selectors to `click`/`fill`/`type`.
+
+Override the Chrome profile/channel with `VIBE_CHROME_USER_DATA_DIR` and
+`VIBE_CHROME_CHANNEL` (`stable` | `canary` | `beta` | `dev`).
+
+Not yet covered by `--devtools` v1 (addable later as more CDP domains are wired):
+network request inspection, console logs, performance traces, Lighthouse, memory
+snapshots, device emulation, dialog handling, file upload, and drag.
 
 ## Available Tools
 
@@ -466,7 +485,7 @@ npx -y @vibebrowser/mcp@latest [start] [options]
   --http-path <path>   Path for streamable HTTP MCP transport (default: /mcp)
   --allow-host <host>  Allowed host header for HTTP transport (repeatable)
   -r, --remote <uuid-or-url>  Extension UUID, or full ws(s) remote URL
-  --devtools           Use only chrome-devtools backend (bypasses extension relay)
+  --devtools           Drive your real running Chrome directly over the DevTools Protocol (bypasses the extension relay)
 
 # MCP server tool
 set_remote { "url": "wss://relay.api.vibebrowser.app/<extension-uuid>" }

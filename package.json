@@ -23,7 +23,7 @@
     "start": "node dist/cli.js",
     "prepublishOnly": "npm run build",
     "test": "npm run test:e2e:relay-race && npm run test:e2e:relay-roundtrip && npm run test:e2e:cli-relay && npm run test:e2e:http && npm run test:e2e:tools-list-budget && npm run test:e2e:browser-cli && npm run test:e2e:devtools-flag",
-    "test:ci": "npm run test:e2e:relay-race && npm run test:e2e:relay-roundtrip && npm run test:e2e:cli-relay && npm run test:e2e:http && npm run test:e2e:tools-list-budget && npm run test:e2e:devtools-flag",
+    "test:ci": "npm run test:e2e:relay-race && npm run test:e2e:relay-roundtrip && npm run test:e2e:cli-relay && npm run test:e2e:http && npm run test:e2e:tools-list-budget && npm run test:e2e:browser-cli && npm run test:e2e:devtools-flag",
     "test:e2e:tools-list-budget": "node scripts/e2e-tools-list-startup-budget.mjs",
     "test:e2e:browser-cli": "node scripts/e2e-browser-cli.mjs",
     "test:e2e:cli-relay": "node scripts/e2e-cli-relay.mjs",

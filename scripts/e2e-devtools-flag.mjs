@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocketServer } from 'ws';
 import { ChromeUseConnection } from '../dist/chrome-use-connection.js';
+import { BrowserCliContext } from '../dist/browser-cli.js';
 
 const HOST = '127.0.0.1';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -328,6 +329,41 @@ async function main() {
     assert(title.content[0].text === 'Example Domain', `get_title unexpected: ${JSON.stringify(title)}`);
 
     await live.stop();
+
+    // Regression for the chrome-use tool-name mapping: drive the *browser-cli
+    // command layer* (not callTool directly) against the fake CDP. Before the
+    // fix, the candidate name lists only knew chrome-devtools-mcp names
+    // (navigate_page, take_snapshot, evaluate_script), so navigate/snapshot/
+    // evaluate threw "No compatible browser tool found" against the chrome-use
+    // backend (navigate/snapshot/eval). This proves the CLI verb -> tool wiring.
+    const cliCtx = new BrowserCliContext({
+      port: 0,
+      debug: false,
+      devtools: true,
+      profile: 'user',
+      json: true,
+      timeoutMs: 10_000,
+      chromeUseConnector: { connect: async () => makeFakeCdp() },
+    });
+    await cliCtx.connect();
+    try {
+      const navOut = await cliCtx.navigate('example.com');
+      assert(navOut.ok !== false, `cli navigate failed: ${JSON.stringify(navOut)}`);
+
+      const snapOut = await cliCtx.snapshot({
+        format: 'ai',
+        interactive: true,
+        compact: false,
+        efficient: false,
+        labels: false,
+      });
+      assert(snapOut.ok !== false, `cli snapshot failed: ${JSON.stringify(snapOut)}`);
+
+      const evalOut = await cliCtx.evaluate({ fn: 'document.title' });
+      assert(evalOut.ok !== false, `cli evaluate failed: ${JSON.stringify(evalOut)}`);
+    } finally {
+      await cliCtx.shutdown();
+    }
 
     console.log('devtools flag e2e ok');
   } finally {

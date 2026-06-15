@@ -10,15 +10,29 @@
  * Adapted from the chrome-use skill (scripts/cli.ts ensureProxy/proxyAlive).
  */
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { ProxyClient } from './proxy-client.js';
+import type { Channel } from './devtools-port.js';
 
-/** Unix socket the proxy listens on. Namespaced to vibe so it never collides with
- * the standalone chrome-use skill's own proxy. Overridable for tests. */
-export function getSocketPath(): string {
-  return process.env.VIBE_CHROME_USE_SOCKET ?? `/tmp/vibe-chrome-use-${os.userInfo().uid}.sock`;
+/**
+ * Unix socket the proxy listens on. Namespaced to vibe so it never collides with
+ * the standalone chrome-use skill's own proxy. Overridable for tests via
+ * VIBE_CHROME_USE_SOCKET.
+ *
+ * A non-default channel/profile gets its OWN socket (and therefore its own proxy)
+ * so a proxy already running for one profile is never silently reused to drive a
+ * different one. The default stable profile keeps the bare socket name for back
+ * compat. (#80)
+ */
+export function getSocketPath(channel: Channel = 'stable', userDataDir?: string): string {
+  if (process.env.VIBE_CHROME_USE_SOCKET) return process.env.VIBE_CHROME_USE_SOCKET;
+  const base = `/tmp/vibe-chrome-use-${os.userInfo().uid}`;
+  if (channel === 'stable' && !userDataDir) return `${base}.sock`;
+  const tag = crypto.createHash('sha1').update(`${channel}:${userDataDir ?? ''}`).digest('hex').slice(0, 10);
+  return `${base}-${tag}.sock`;
 }
 
 /** Absolute path to the compiled proxy entry (dist/chrome-use/proxy.js). */

@@ -42,7 +42,8 @@ function checkAlreadyRunning(): Promise<boolean> {
     const timer = setTimeout(() => {
       socket.destroy();
       resolve(false);
-    }, 1000);
+    }, 3000); // generous: a busy proxy mid Chrome-connect must still be detected so
+    // we don't unlink its socket and start a second instance.
     socket.on('connect', () => socket.write(JSON.stringify({ id: 0, method: '__status' }) + '\n'));
     socket.on('data', (chunk) => {
       clearTimeout(timer);
@@ -78,11 +79,17 @@ function ensureConnected(): Promise<void> {
     cdp = await Cdp.connect(ws, 300_000);
     const v = await cdp.send<{ product?: string }>('Browser.getVersion');
     log(`Connected. ${v?.product ?? 'Chrome'}`);
-  })().catch((err) => {
-    connecting = null;
-    cdp = null;
-    throw err;
-  });
+  })()
+    .then(() => {
+      // Clear the in-flight lock so a later Chrome drop (cdp.connected → false)
+      // triggers a fresh reconnect instead of returning this stale resolved promise.
+      connecting = null;
+    })
+    .catch((err) => {
+      connecting = null;
+      cdp = null;
+      throw err;
+    });
   return connecting;
 }
 
@@ -161,7 +168,17 @@ function startServer(): void {
     socket.on('error', () => {});
   });
 
-  server.listen(SOCKET_PATH, () => log(`Listening on ${SOCKET_PATH}`));
+  server.listen(SOCKET_PATH, () => {
+    // Restrict the socket to the owner so another local UID can't connect and drive
+    // the victim's Chrome (the relay grants full CDP control). Defends against a
+    // permissive umask making the socket group/world-accessible.
+    try {
+      fs.chmodSync(SOCKET_PATH, 0o600);
+    } catch {
+      /* best effort */
+    }
+    log(`Listening on ${SOCKET_PATH}`);
+  });
   server.on('error', (err) => {
     log('Server error:', err.message);
     process.exit(1);

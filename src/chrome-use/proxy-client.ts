@@ -119,8 +119,11 @@ export class ProxyClient implements CdpClient {
 
   close(): void {
     this.isClosed = true;
+    // Clear any pending request timers so they can't keep a one-shot CLI's event
+    // loop alive after the socket is torn down.
+    for (const { timer } of this.pending.values()) clearTimeout(timer);
+    this.pending.clear();
     try {
-      this.socket.end();
       this.socket.destroy();
     } catch {
       /* ignore */

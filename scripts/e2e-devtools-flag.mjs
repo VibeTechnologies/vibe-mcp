@@ -63,9 +63,13 @@ async function waitForPort(port, timeoutMs = 10_000) {
 // Point Chrome discovery at a directory with no DevToolsActivePort so the
 // chrome-use backend reports unavailable fast — keeps the test hermetic (no
 // live browser), mirroring how the relay tests fake the extension.
+// Isolate the chrome-use proxy on a throwaway socket so the real CLI subprocesses
+// spawned below never start or reuse the user's default gateway daemon.
+const HERMETIC_SOCKET = join(tmpdir(), `vibe-chrome-use-test-${process.pid}.sock`);
 const HERMETIC_ENV = {
   ...process.env,
   VIBE_CHROME_USER_DATA_DIR: join(tmpdir(), `vibe-no-chrome-${process.pid}`),
+  VIBE_CHROME_USE_SOCKET: HERMETIC_SOCKET,
 };
 
 function runJsonCli(scriptPath, args, timeoutMs = 10_000) {
@@ -371,6 +375,15 @@ async function main() {
     if (serverProcess) {
       serverProcess.kill('SIGTERM');
     }
+    // Stop the throwaway proxy the real CLI subprocesses may have started.
+    await new Promise((done) => {
+      const sock = net.createConnection({ path: HERMETIC_SOCKET });
+      const finish = () => { try { sock.destroy(); } catch { /* ignore */ } done(); };
+      sock.on('connect', () => sock.write(JSON.stringify({ id: 1, method: '__stop' }) + '\n'));
+      sock.on('data', finish);
+      sock.on('error', finish);
+      setTimeout(finish, 1500);
+    });
   }
 }
 

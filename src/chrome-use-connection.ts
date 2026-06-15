@@ -12,8 +12,9 @@
  * interchangeably in `--devtools` mode.
  */
 import { EventEmitter } from 'node:events';
-import { Cdp, type WebSocketFactory } from './chrome-use/cdp.js';
-import { buildWsEndpoint, type Channel } from './chrome-use/devtools-port.js';
+import { type Channel } from './chrome-use/devtools-port.js';
+import { ProxyClient } from './chrome-use/proxy-client.js';
+import { ensureProxy, getSocketPath } from './chrome-use/proxy-launcher.js';
 import { SessionManager } from './chrome-use/session.js';
 import { resolve as resolveSelector } from './chrome-use/selectors.js';
 import { takeSnapshot } from './chrome-use/snapshot.js';
@@ -36,26 +37,35 @@ export interface CdpConnector {
 }
 
 /**
- * Default connector: autoConnect to the user's real Chrome via DevToolsActivePort.
+ * Default connector: route through the long-lived chrome-use proxy (gateway).
+ *
+ * Instead of opening a fresh CDP WebSocket per request (which re-triggers Chrome's
+ * "Allow remote debugging?" dialog every time and starves the single autoConnect
+ * debugger slot), this auto-starts a background proxy that holds ONE approved CDP
+ * connection and relays frames over a Unix socket. The dialog fires once per proxy
+ * lifetime, and the same proxy is shared by the `--devtools` MCP server and every
+ * one-shot `browser --devtools` CLI invocation.
  *
  * The profile directory and release channel can be overridden via
  * `VIBE_CHROME_USER_DATA_DIR` / `VIBE_CHROME_CHANNEL` (e.g. to target Chrome
- * Canary, a custom profile, or — in tests — a path with no DevToolsActivePort so
- * discovery fails fast and the backend reports unavailable without a live browser).
+ * Canary or a custom profile); they are forwarded to the proxy process.
  */
 class AutoConnectCdpConnector implements CdpConnector {
   private readonly channel: Channel;
   private readonly userDataDir?: string;
 
-  constructor(channel?: Channel, userDataDir?: string, private readonly wsFactory?: WebSocketFactory) {
+  constructor(channel?: Channel, userDataDir?: string) {
     const envChannel = process.env.VIBE_CHROME_CHANNEL as Channel | undefined;
     this.channel = channel ?? (envChannel || 'stable');
     this.userDataDir = userDataDir ?? process.env.VIBE_CHROME_USER_DATA_DIR ?? undefined;
   }
 
   async connect(): Promise<CdpClient> {
-    const endpoint = buildWsEndpoint(this.channel, this.userDataDir);
-    return Cdp.connect(endpoint, 10_000, this.wsFactory);
+    const socketPath = getSocketPath();
+    const extraEnv: Record<string, string> = { VIBE_CHROME_CHANNEL: this.channel };
+    if (this.userDataDir) extraEnv.VIBE_CHROME_USER_DATA_DIR = this.userDataDir;
+    await ensureProxy(socketPath, undefined, extraEnv);
+    return ProxyClient.open(socketPath, 320_000);
   }
 }
 
@@ -264,7 +274,11 @@ export class ChromeUseConnection extends EventEmitter {
       this.cdp = await this.connector.connect();
       this.session = new SessionManager(this.cdp);
       // Probe the connection so we fail fast with a clear reason if Chrome is gone.
-      await this.cdp.send('Browser.getVersion');
+      // But do NOT block startup on the one-time "Allow remote debugging?" approval:
+      // if the probe is still pending after a short window, the proxy is up and the
+      // dialog is showing — mark available now and let the first real command await
+      // approval. This keeps MCP tools/list responsive (no startup hang).
+      await this.probeConnection();
       this.available = true;
       this.unavailableReason = undefined;
       this.emit('connected');
@@ -273,10 +287,42 @@ export class ChromeUseConnection extends EventEmitter {
       const message = error instanceof Error ? error.message : String(error);
       this.unavailableReason = `${UNAVAILABLE_PREFIX}: ${message}`;
       this.available = false;
+      // Close the client transport (proxy socket / WS) so it doesn't keep the
+      // Node event loop alive and hang a one-shot CLI after it prints output.
+      if (this.cdp) {
+        try {
+          this.cdp.close();
+        } catch {
+          /* ignore */
+        }
+      }
       this.cdp = null;
       this.session = null;
       this.log(this.unavailableReason);
       this.emit('unavailable', this.unavailableReason);
+    }
+  }
+
+  /**
+   * Probe Browser.getVersion to detect a dead/absent Chrome, but cap the wait so a
+   * pending approval dialog never blocks startup. Resolves on success; rethrows if
+   * the probe fails fast (Chrome gone); resolves as "deferred" if still pending.
+   */
+  private async probeConnection(timeoutMs = 4000): Promise<void> {
+    const probe = (this.cdp as CdpClient).send('Browser.getVersion');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const pending = new Promise<'pending'>((resolveRace) => {
+      timer = setTimeout(() => resolveRace('pending'), timeoutMs);
+    });
+    try {
+      const outcome = await Promise.race([probe.then(() => 'ok' as const), pending]);
+      if (outcome === 'pending') {
+        // Approval likely in progress: don't fail, don't await it here. Swallow the
+        // probe's eventual settling so it can't raise an unhandled rejection.
+        probe.catch(() => {});
+      }
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 

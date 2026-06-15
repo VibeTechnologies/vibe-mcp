@@ -776,7 +776,11 @@ export class BrowserCliContext {
       'snapshot',
       [
         {
-          names: ['take_snapshot', 'snapshot'],
+          // Extension/relay exposes take_md_snapshot (markdown) and
+          // take_a11y_snapshot (aria); the chrome-use --devtools backend exposes
+          // `snapshot`. Prefer the format-specific extension tool, then fall back
+          // to legacy take_snapshot / the chrome-use `snapshot`.
+          names: [wantsAria ? 'take_a11y_snapshot' : 'take_md_snapshot', 'take_snapshot', 'snapshot'],
           buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
         },
       ],
@@ -1246,7 +1250,7 @@ export class BrowserCliContext {
     return {
       ...output,
       pageContent: fallback.content,
-      pageContentSource: 'take_snapshot',
+      pageContentSource: 'take_md_snapshot',
       ...(fallback.pageId !== targetPageId ? { pageId: fallback.pageId } : {}),
     };
   }
@@ -1285,7 +1289,7 @@ export class BrowserCliContext {
       sessionId: this.currentSessionId(),
       requestedSessionId: this.requestedSessionId,
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
-      tool: 'take_snapshot',
+      tool: 'take_md_snapshot',
       recoveredFromTimeout: true,
       pageId: fallback.pageId,
       url,
@@ -1346,7 +1350,14 @@ export class BrowserCliContext {
 
   private async takeMarkdownSnapshotForPage(pageId: number, timeoutMs: number = this.timeoutMs): Promise<string | undefined> {
     await this.ensureToolsLoaded();
-    const snapshotTool = this.tools.find((tool) => normalizeName(tool.name) === 'take_snapshot');
+    // The markdown snapshot tool is `take_md_snapshot` (extension/relay) — there is
+    // no `take_snapshot` tool, so looking for that name silently disabled the
+    // post-navigate/open pageContent fallback. Match the real name, keeping the old
+    // name as a compatibility fallback.
+    const snapshotTool = this.tools.find((tool) => {
+      const normalized = normalizeName(tool.name);
+      return normalized === 'take_md_snapshot' || normalized === 'take_snapshot';
+    });
     if (!snapshotTool) {
       return undefined;
     }

@@ -1,0 +1,112 @@
+name: npm token healthcheck
+
+# Safety net for the emergency NPM_TOKEN fallback used by publish.yml.
+# Primary publishing uses OIDC trusted publishing (no long-lived token), but the
+# NPM_TOKEN secret remains as an emergency fallback. npm automation tokens expire
+# in <= 90 days. This workflow proactively verifies the fallback token is still
+# valid (monthly) so its death is caught BEFORE a release actually needs it.
+
+on:
+  schedule:
+    # 09:00 UTC on the 1st of every month
+    - cron: '0 9 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  healthcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify npm fallback token (npm whoami)
+        id: whoami
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN secret is not configured." >&2
+            echo "result=missing" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          if user=$(npm whoami --registry=https://registry.npmjs.org 2>/tmp/whoami.err); then
+            echo "npm whoami OK: authenticated as '$user'"
+            echo "result=ok" >> "$GITHUB_OUTPUT"
+            echo "whoami_user=$user" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm whoami FAILED. The fallback NPM_TOKEN is expired or invalid." >&2
+            cat /tmp/whoami.err >&2 || true
+            echo "result=invalid" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Open or update tracking issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'npm publish token expired/invalid';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              '## npm fallback token healthcheck failed',
+              '',
+              'The monthly `npm-token-healthcheck` workflow could not authenticate to',
+              'registry.npmjs.org using the `NPM_TOKEN` secret. This token is the',
+              '**emergency fallback** for `publish.yml` (primary path is OIDC trusted',
+              'publishing).',
+              '',
+              '### Action required',
+              '1. Generate a new npm **automation** token for an account with publish',
+              '   rights to `@vibebrowser/mcp` and `@vibebrowser/cli`.',
+              '2. Update the `NPM_TOKEN` repository secret.',
+              '3. Re-run this workflow (`workflow_dispatch`) to confirm it is green.',
+              '',
+              '> Note: with OIDC trusted publishing enabled on npmjs.com, releases',
+              '> should still succeed without this token. Fixing it restores the',
+              '> emergency fallback.',
+              '',
+              `Failing run: ${runUrl}`,
+              '',
+              `_Last checked: ${new Date().toISOString()}_`,
+            ].join('\n');
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'npm-token',
+              per_page: 100,
+            });
+
+            const match = existing.data.find(i => i.title === title);
+
+            if (match) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: match.number,
+                state: 'open',
+                body,
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: match.number,
+                body: `Healthcheck failed again on ${new Date().toISOString()}. See ${runUrl}`,
+              });
+              core.notice(`Updated existing issue #${match.number}`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['npm-token'],
+              });
+              core.notice(`Opened issue #${created.data.number}`);
+            }

@@ -5,6 +5,31 @@
 
 MCP server for [Vibe AI Browser](https://vibebrowser.app) - the **only browser automation tool that supports multiple AI agents simultaneously**.
 
+## Install prompt for AI agents (OpenClaw / Hermes)
+
+Copy-paste this into an OpenClaw or Hermes agent to install, configure, and remember the Vibe Browser CLI so it can drive your real Chrome. Replace the last line with your remote value (a UUID or a `wss://relay.api.vibebrowser.app/<uuid>` URL from the Vibe extension's **Settings → AI Agent Control → Remote (internet) → Relay access**):
+
+```text
+You can control my real Chrome with the Vibe Browser CLI. Install, configure, and remember it:
+
+1) Install (on demand, no global install): the tool is the npm package @vibebrowser/cli, run with `npx -y @vibebrowser/cli@latest`.
+
+2) Remember my remote connection so I only give it to you once. Save the remote value and reuse it on every command without asking again:
+   - If you have a memory tool, store it under the key `vibebrowser_remote`.
+   - Otherwise write it to a file `vibebrowser-cli.md` as a line `remote: <value>` and read it back on later turns.
+   - OpenClaw: you may also set it in `~/.openclaw/openclaw.json` under `skills.entries."vibebrowser-cli".env.VIBE_REMOTE_URL`, or export `VIBE_REMOTE_URL`.
+   - Hermes: you may also store it under `skills.config` key `vibebrowser.remote_url` (e.g. `hermes skills config vibebrowser-cli`).
+
+3) Verify and use it (retry on "Extension reconnecting": wait 3s, up to 5x):
+   npx -y @vibebrowser/cli@latest --remote "<remembered value>" --json status --wait-for-extension --wait-timeout 20000   # expect "extensionConnected": true
+   npx -y @vibebrowser/cli@latest --remote "<remembered value>" --json tabs
+   npx -y @vibebrowser/cli@latest --remote "<remembered value>" --json snapshot --format aria   # returns the live page content
+
+Report whether status showed extensionConnected=true and whether the snapshot returned real page content.
+
+My remote value: <PASTE YOUR UUID OR wss:// URL HERE>
+```
+
 ## Why Vibe MCP?
 
 | Feature | Vibe MCP | Playwright MCP | BrowserMCP |

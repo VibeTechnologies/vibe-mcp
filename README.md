@@ -386,8 +386,8 @@ Local-session selection:
 
 Snapshot behavior is tool-only (no legacy snapshot RPC shortcut):
 
-- `snapshot` (default, `--format ai`) resolves via `take_snapshot` with `format: 'markdown'` — uses the content script's in-page markdown extractor. Fast and readable, but **may return empty for background tabs or complex SPAs** (Notion, Gmail) where the content script is unreachable or layout is not computed.
-- `snapshot --format aria` resolves via `take_snapshot` with `format: 'aria'` — uses Chrome DevTools Protocol `Accessibility.getFullAXTree` directly. **Reliable for all tabs including background tabs and SPAs.** Use this as a fallback when the default format returns empty or only a page title.
+- `snapshot` (default, `--format ai`) resolves via the `take_md_snapshot` tool — uses the content script's in-page markdown extractor. Fast and readable, but **may return empty for background tabs or complex SPAs** (Notion, Gmail) where the content script is unreachable or layout is not computed.
+- `snapshot --format aria` resolves via the `take_a11y_snapshot` tool — uses Chrome DevTools Protocol `Accessibility.getFullAXTree` directly. **Reliable for all tabs including background tabs and SPAs.** Use this as a fallback when the default format returns empty or only a page title.
 
 This keeps CLI behavior aligned with extension-supported tools and ensures page targeting works consistently with `--page-id`/`--pageId`.
 
@@ -395,6 +395,40 @@ For navigation-style operations, responses now include page content when page st
 
 - CLI `open` / `navigate` include `pageContent` in JSON output.
 - MCP tool calls for navigation-style tools return text content that includes current page state (with snapshot fallback when needed).
+
+### Install Prompt for AI Agents (OpenClaw / Hermes)
+
+Copy-paste the block below into an agent (e.g. OpenClaw or Hermes) to install and set up the Vibe Browser CLI skill via `npx -y` and prove it can control the browser. Replace `<REMOTE>` with your extension's remote value — the extension UUID or the full `wss://relay.api.vibebrowser.app/<uuid>` URL from the Vibe extension's **Settings → AI Agent Control → Remote (internet) → Relay access**.
+
+```text
+Install and test the "Vibe Browser CLI" skill so you can control my real Chrome browser.
+
+The skill is the npm package @vibebrowser/cli, run with npx (no global install needed). My browser runs the Vibe extension in Remote mode; reach it via the public relay using this remote value:
+
+  REMOTE = <REMOTE>
+
+Do each step and paste the exact output:
+
+1. Install / sanity-check the CLI (first run downloads it):
+   npx -y @vibebrowser/cli@latest --help
+
+2. Confirm you can reach my browser (wait for the extension):
+   npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json status --wait-for-extension --wait-timeout 20000
+   -> confirm "extensionConnected": true and report toolCount.
+
+3. List my open tabs and note a page id:
+   npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json tabs
+
+4. Drive the browser end to end (use a page id from step 3 as <ID>):
+   npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json --page-id <ID> navigate https://example.com
+   npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json --page-id <ID> snapshot --format aria
+
+5. Report back: did status show extensionConnected=true, and did the snapshot return the real page content (it should contain "Example Domain")? Paste the snapshot text.
+
+If any step errors, paste the full error. If status shows extensionConnected=false, tell me so I can put the extension into Remote mode.
+```
+
+For a deeper skill definition (when to prefer this over a managed browser, env-var setup, selector/snapshot guidance), install `openclaw/vibebrowser/SKILL.md` into the agent's skills directory.
 
 ### OpenClaw Integration
 

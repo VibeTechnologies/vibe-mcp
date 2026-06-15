@@ -15,13 +15,13 @@
 ## Test And Eval Commands
 
 - Full local test script: `npm test`
-- CI gate (hermetic subset; excludes the pre-existing `browser-cli` failure): `npm run test:ci` — this is what `.github/workflows/ci.yml` runs after build + `tsc --noEmit`.
+- CI gate (hermetic suite): `npm run test:ci` — this is what `.github/workflows/ci.yml` runs after build + `tsc --noEmit`.
 - Relay race regression: `npm run test:e2e:relay-race`
 - Relay roundtrip: `npm run test:e2e:relay-roundtrip`
 - CLI relay: `npm run test:e2e:cli-relay`
 - Streamable HTTP MCP: `npm run test:e2e:http`
 - `tools/list` startup-budget regression (#14): `npm run test:e2e:tools-list-budget`
-- Browser CLI fake-extension harness: `npm run test:e2e:browser-cli` (known pre-existing `navigate should include pageContent` failure; excluded from `test:ci`)
+- Browser CLI fake-extension harness: `npm run test:e2e:browser-cli` (in `test:ci`)
 - Agent harness with real extension (3 MiniWoB++ tasks via Codex + OpenCode): `npm run test:e2e:agents`
 - Debug agent harness: `E2E_DEBUG=1 npm run test:e2e:agents`
 - Live browser CLI regression: `npm run test:e2e:browser-cli-live`

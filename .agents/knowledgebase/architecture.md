@@ -8,7 +8,7 @@
 
 - Package binaries from `package.json`: `mcp` (direct package-exec entry), `vibebrowser-mcp`, legacy alias `vibe-mcp`, and standalone `vibebrowser-cli`.
 - `src/cli.ts`: MCP server CLI. Default command is `start`; supports stdio and streamable HTTP transports, local relay mode, remote relay mode, `--devtools`, and `openclaw` config printing.
-- `src/server.ts`: MCP protocol server. Exposes tool listing/calling over stdio or HTTP and delegates to an extension/relay connection or Chrome DevTools fallback.
+- `src/server.ts`: MCP protocol server. Exposes tool listing/calling over stdio or HTTP and delegates to either an extension/relay connection or, with `--devtools`, the chrome-use CDP gateway (`src/chrome-use-connection.ts`).
 - `src/browser-main.ts` and `src/browser-cli.ts`: OpenClaw-compatible browser CLI surface for status, sessions, tabs, open/navigate, snapshots, clicks, typing, upload/drop, network, and evaluation helpers.
 - `src/relay-daemon.ts` starts the local relay daemon; `src/relay.ts` implements relay multiplexing.
 
@@ -62,8 +62,39 @@ Use this split from `docs/openclaw-local-browser.md`:
 - Tenant browser in cloud: use the tenant `/browser` stack.
 - User's real local browser: use Vibe extension + relay + `vibebrowser-mcp` HTTP bridge or `@vibebrowser/cli`.
 
-## Chrome DevTools Fallback
+## `--devtools` Mode: chrome-use CDP Gateway
 
-- `chrome-devtools-mcp` is an optional dependency.
-- `--devtools` bypasses extension/relay routing and uses only the Chrome DevTools backend.
-- In normal local relay mode, fallback tools are used only when the extension is unavailable/disconnected; extension tools are authoritative when connected.
+`--devtools` bypasses the extension/relay entirely and drives the user's **real
+running Chrome** directly over the Chrome DevTools Protocol. Source lives under
+`src/chrome-use/` plus `src/chrome-use-connection.ts` (a fixed catalog of tools:
+navigate, snapshot, click, fill, type, press_key, hover, scroll, screenshot, eval,
+get_text/url/title, list/new/select/close tab). It connects via Chrome 144+
+autoConnect (the `DevToolsActivePort` file), **not** `--remote-debugging-port`.
+
+Gateway model (the key design point):
+
+```text
+Chrome (real profile) <-CDP/WS- proxy daemon (holds the ONE approved connection)
+                                    ^ Unix socket /tmp/vibe-chrome-use-<uid>.sock
+            --devtools MCP server + every `browser --devtools` one-shot CLI
+```
+
+- A background proxy (`src/chrome-use/proxy.ts`, auto-started via
+  `proxy-launcher.ts`) holds a single approved CDP connection; `ProxyClient`
+  relays raw frames over the socket. Chrome's "Allow remote debugging?" dialog
+  therefore fires **once per proxy lifetime**, shared by the server and all CLI
+  one-shots — never once per request.
+- The socket is `0600` and per-profile (non-default channel/`VIBE_CHROME_USER_DATA_DIR`
+  get their own socket, so one profile's proxy is never reused for another).
+- `tools/list` never blocks past `STARTUP_TOOLS_LIST_BUDGET_MS` (3s); late tools
+  arrive via `notifications/tools/list_changed`.
+- This replaced the old buggy path that proxied the external `chrome-devtools-mcp`
+  for `--devtools` (issue #47 / PR #75).
+
+## Relay Internal Fallback (separate from `--devtools`)
+
+- `chrome-devtools-mcp` remains an optional dependency, used only by the **relay's**
+  shared `DevtoolsFallbackConnection` (`src/relay.ts`) — see "Local Relay Model".
+- In local relay mode, fallback tools are used only when the extension is
+  unavailable/disconnected; extension tools are authoritative when connected.
+- This is independent of the `--devtools` flag above.

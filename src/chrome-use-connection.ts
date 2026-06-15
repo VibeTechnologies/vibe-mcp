@@ -36,6 +36,20 @@ const UNAVAILABLE_PREFIX = 'chrome-use DevTools backend unavailable';
  * call via callTool(..., timeoutMs) (e.g. the CLI --timeout flag). */
 const DEFAULT_CDP_TIMEOUT_MS = 320_000;
 
+const APPROVAL_HINT =
+  'open chrome://inspect/#remote-debugging in Chrome and click Allow to grant remote-debugging access';
+
+/** Turn opaque CDP connect/timeout errors into an actionable approval message (#79). */
+function friendlyChromeError(message: string): string {
+  if (/DevToolsActivePort not found/i.test(message)) {
+    return `${message}. Make sure Chrome 144+ is running, then ${APPROVAL_HINT}.`;
+  }
+  if (/connect timed out|request timed out|Browser\.getVersion/i.test(message)) {
+    return `${message}. Chrome did not grant remote-debugging access in time — ${APPROVAL_HINT}, then retry.`;
+  }
+  return message;
+}
+
 /** How a CDP connection is established. Injectable so tests can supply a fake. */
 export interface CdpConnector {
   connect(): Promise<CdpClient>;
@@ -66,7 +80,8 @@ class AutoConnectCdpConnector implements CdpConnector {
   }
 
   async connect(): Promise<CdpClient> {
-    const socketPath = getSocketPath();
+    // Profile-specific socket so a proxy for one profile is never reused for another (#80).
+    const socketPath = getSocketPath(this.channel, this.userDataDir);
     const extraEnv: Record<string, string> = { VIBE_CHROME_CHANNEL: this.channel };
     if (this.userDataDir) extraEnv.VIBE_CHROME_USER_DATA_DIR = this.userDataDir;
     await ensureProxy(socketPath, undefined, extraEnv);
@@ -290,7 +305,7 @@ export class ChromeUseConnection extends EventEmitter {
       this.emit('tools_updated', this.getTools());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.unavailableReason = `${UNAVAILABLE_PREFIX}: ${message}`;
+      this.unavailableReason = `${UNAVAILABLE_PREFIX}: ${friendlyChromeError(message)}`;
       this.available = false;
       // Close the client transport (proxy socket / WS) so it doesn't keep the
       // Node event loop alive and hang a one-shot CLI after it prints output.
@@ -323,7 +338,9 @@ export class ChromeUseConnection extends EventEmitter {
       const outcome = await Promise.race([probe.then(() => 'ok' as const), pending]);
       if (outcome === 'pending') {
         // Approval likely in progress: don't fail, don't await it here. Swallow the
-        // probe's eventual settling so it can't raise an unhandled rejection.
+        // probe's eventual settling so it can't raise an unhandled rejection. Surface
+        // a hint so the operator knows why the first command may pause (#79).
+        this.log(`Waiting for Chrome remote-debugging approval — ${APPROVAL_HINT}. Tools are exposed; the first command will wait for approval.`);
         probe.catch(() => {});
       }
     } finally {
@@ -386,6 +403,12 @@ export class ChromeUseConnection extends EventEmitter {
     }
     try {
       return await this.dispatchTool(name, args);
+    } catch (error) {
+      // Rewrite opaque CDP connect/timeout failures into an actionable approval
+      // message so the operator knows to allow remote debugging (#79).
+      const message = error instanceof Error ? error.message : String(error);
+      const friendly = friendlyChromeError(message);
+      throw friendly === message ? error : new Error(friendly);
     } finally {
       if (setTimeoutFn && typeof timeoutMs === 'number' && timeoutMs > 0) {
         setTimeoutFn(DEFAULT_CDP_TIMEOUT_MS);

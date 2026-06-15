@@ -28,7 +28,7 @@ export class ProxyClient implements CdpClient {
   private readonly pending = new Map<number, Pending>();
   private readonly ready: Promise<void>;
   private isClosed = false;
-  private readonly defaultTimeout: number;
+  private defaultTimeout: number;
 
   private constructor(socket: net.Socket, defaultTimeout: number) {
     this.socket = socket;
@@ -62,6 +62,11 @@ export class ProxyClient implements CdpClient {
 
   get connected(): boolean {
     return !this.isClosed;
+  }
+
+  /** Set the per-request timeout used by subsequent send()s. */
+  setDefaultTimeout(ms: number): void {
+    if (Number.isFinite(ms) && ms > 0) this.defaultTimeout = ms;
   }
 
   /** The proxy relays request/response only; no CDP events are delivered. Nothing

@@ -58,7 +58,14 @@ export class Cdp implements CdpClient {
     const make = wsFactory ?? ((url: string) => new WebSocket(url) as unknown as WebSocketLike);
     const ws = make(wsEndpoint);
     const client = new Cdp(ws);
-    await withTimeout(client.openPromise, timeoutMs, `CDP connect timed out after ${timeoutMs}ms`);
+    try {
+      await withTimeout(client.openPromise, timeoutMs, `CDP connect timed out after ${timeoutMs}ms`);
+    } catch (err) {
+      // Close the dangling socket so it stops keeping the Node event loop alive
+      // (otherwise the one-shot CLI hangs after printing the error).
+      client.close();
+      throw err;
+    }
     return client;
   }
 

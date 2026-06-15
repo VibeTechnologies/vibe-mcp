@@ -31,6 +31,11 @@ import type { ToolDefinition, ToolResult, ToolResultContent } from './types.js';
 
 const UNAVAILABLE_PREFIX = 'chrome-use DevTools backend unavailable';
 
+/** Default per-request CDP timeout. Generous because the first request through a
+ * fresh proxy may block on the one-time Chrome approval dialog. Overridable per
+ * call via callTool(..., timeoutMs) (e.g. the CLI --timeout flag). */
+const DEFAULT_CDP_TIMEOUT_MS = 320_000;
+
 /** How a CDP connection is established. Injectable so tests can supply a fake. */
 export interface CdpConnector {
   connect(): Promise<CdpClient>;
@@ -65,7 +70,7 @@ class AutoConnectCdpConnector implements CdpConnector {
     const extraEnv: Record<string, string> = { VIBE_CHROME_CHANNEL: this.channel };
     if (this.userDataDir) extraEnv.VIBE_CHROME_USER_DATA_DIR = this.userDataDir;
     await ensureProxy(socketPath, undefined, extraEnv);
-    return ProxyClient.open(socketPath, 320_000);
+    return ProxyClient.open(socketPath, DEFAULT_CDP_TIMEOUT_MS);
   }
 }
 
@@ -368,10 +373,27 @@ export class ChromeUseConnection extends EventEmitter {
     return this.unavailableReason;
   }
 
-  async callTool(name: string, args: Record<string, unknown>, _timeoutMs?: number): Promise<ToolResult> {
+  async callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<ToolResult> {
     if (!this.available || !this.cdp || !this.session) {
       throw new Error(this.unavailableReason || UNAVAILABLE_PREFIX);
     }
+    // Honor a caller-supplied timeout (e.g. CLI --timeout) for the CDP requests in
+    // this call, restoring the default afterwards. Tool calls are serialized over
+    // the single Chrome connection, so the transient default change is safe.
+    const setTimeoutFn = this.cdp.setDefaultTimeout?.bind(this.cdp);
+    if (setTimeoutFn && typeof timeoutMs === 'number' && timeoutMs > 0) {
+      setTimeoutFn(timeoutMs);
+    }
+    try {
+      return await this.dispatchTool(name, args);
+    } finally {
+      if (setTimeoutFn && typeof timeoutMs === 'number' && timeoutMs > 0) {
+        setTimeoutFn(DEFAULT_CDP_TIMEOUT_MS);
+      }
+    }
+  }
+
+  private async dispatchTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const tool = normalizeToolName(name);
 
     switch (tool) {
@@ -416,7 +438,10 @@ export class ChromeUseConnection extends EventEmitter {
 
   // ── Tool implementations ───────────────────────────────────────────────────
 
-  private async waitForLoad(tab: TabSession, timeoutMs = 15_000): Promise<void> {
+  /** Poll readyState until 'complete'. Returns true if the page loaded within the
+   * window, false if it timed out (so the caller can flag a still-loading page
+   * rather than silently report success). */
+  private async waitForLoad(tab: TabSession, timeoutMs = 15_000): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
     await sleep(150);
     while (Date.now() < deadline) {
@@ -426,12 +451,13 @@ export class ChromeUseConnection extends EventEmitter {
           { expression: 'document.readyState', returnByValue: true },
           tab.sessionId,
         );
-        if (res?.result?.value === 'complete') return;
+        if (res?.result?.value === 'complete') return true;
       } catch {
         /* page may be mid-navigation; keep polling */
       }
       await sleep(150);
     }
+    return false;
   }
 
   private normalizeUrl(raw: string): string {
@@ -451,7 +477,7 @@ export class ChromeUseConnection extends EventEmitter {
     const url = this.normalizeUrl(raw);
     const tab = await this.session!.getActiveTab();
     await this.cdp!.send('Page.navigate', { url }, tab.sessionId);
-    await this.waitForLoad(tab);
+    const loaded = await this.waitForLoad(tab);
     try {
       const res = await this.cdp!.send<{ result?: { value?: unknown } }>(
         'Runtime.evaluate',
@@ -462,7 +488,11 @@ export class ChromeUseConnection extends EventEmitter {
     } catch {
       tab.url = url;
     }
-    return ok(`Opened ${tab.url}`);
+    return ok(
+      loaded
+        ? `Opened ${tab.url}`
+        : `Opened ${tab.url} (page did not reach readyState=complete within 15s; it may still be loading)`,
+    );
   }
 
   private async snapshot(args: Record<string, unknown>): Promise<ToolResult> {

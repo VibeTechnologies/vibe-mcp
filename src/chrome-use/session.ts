@@ -29,6 +29,9 @@ export class SessionManager {
   activeTargetId: string | null = null;
   /** Sessions attached this connection, detached on dispose() to keep Chrome clean. */
   private readonly attached = new Set<string>();
+  /** Monotonic counter for stable tab ids — a target keeps its id for the whole
+   * connection so a cached `tN` never silently points at a different tab. */
+  private tabSeq = 0;
 
   constructor(cdp: CdpClient) {
     this.cdp = cdp;
@@ -64,14 +67,13 @@ export class SessionManager {
   async syncTabs(): Promise<void> {
     const pages = await this.pages();
     const seen = new Set<string>();
-    let i = 0;
     for (const p of pages) {
-      i++;
       seen.add(p.targetId);
       const existing = this.tabs.get(p.targetId);
       if (existing) {
+        // Keep the existing tabId stable — only refresh the URL. Renumbering by
+        // enumeration order here would shift ids when Chrome reorders/closes tabs.
         existing.url = p.url;
-        existing.tabId = 't' + i;
         continue;
       }
       const sessionId = await this.attach(p.targetId);
@@ -79,7 +81,7 @@ export class SessionManager {
         targetId: p.targetId,
         sessionId,
         url: p.url,
-        tabId: 't' + i,
+        tabId: 't' + ++this.tabSeq,
         refRegistry: new Map(),
       });
     }
@@ -120,7 +122,7 @@ export class SessionManager {
       targetId,
       sessionId,
       url: url || 'about:blank',
-      tabId: 't' + (this.tabs.size + 1),
+      tabId: 't' + ++this.tabSeq,
       refRegistry: new Map(),
     };
     this.tabs.set(targetId, tab);

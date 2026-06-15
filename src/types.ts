@@ -120,7 +120,7 @@ export interface ServerConfig {
   port: number;
   host: string;
   debug: boolean;
-  /** Use chrome-devtools-mcp directly and bypass relay/extension routing. */
+  /** Drive the real Chrome directly over CDP (chrome-use backend), bypassing relay/extension routing. */
   devtools?: boolean;
   transport: ServerTransportMode;
   httpPort: number;

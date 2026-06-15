@@ -31,6 +31,7 @@ metadata:
      ```bash
      export VIBE_REMOTE_URL="<uuid-or-full-ws-url>"
      ```
+   - **Preferred: save it for the session** — see [## Remembering the remote connection](#remembering-the-remote-connection) below.
 
 3. **Install the skill**:
    Copy this file to your OpenClaw skills directory (typically `~/.openclaw/skills/` or your project's `openclaw/skills/` folder).
@@ -63,6 +64,69 @@ export VIBE_REMOTE_URL="<uuid-or-full-ws-url>"
 ```
 
 > **Warning:** if neither `--remote` nor one of these environment variables is set, the CLI silently falls back to *local* relay mode (it waits for an extension on a local WebSocket port) instead of failing with a clear error. When driving a remote browser, always confirm a remote value is in effect.
+
+## Remembering the remote connection
+
+The user should only have to provide their remote value once. After receiving it, save it immediately and reuse it on every subsequent browser command without asking again.
+
+### What counts as a "remote value"
+
+Either of these forms is valid for `--remote`:
+
+- A bare UUID: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
+- A full relay URL: `wss://relay.api.vibebrowser.app/<uuid>`
+
+### How to save it (priority order)
+
+**Option A — Memory tool (preferred):** If the agent runtime provides a memory or "remember" tool, store the value under the key `vibebrowser_remote`:
+
+```
+remember("vibebrowser_remote", "<uuid-or-wss-url>")
+```
+
+On later turns, recall it before running any browser command:
+
+```
+recall("vibebrowser_remote")  # → use as --remote value
+```
+
+**Option B — Local context file (fallback):** If no memory tool is available, write the value to a file named `vibebrowser-cli.md` in the agent's working directory. Use this exact format so it can be machine-read back:
+
+```markdown
+# VibeBrowser CLI context
+remote: <uuid-or-wss-url>
+```
+
+At the start of any browser task, check whether `vibebrowser-cli.md` exists and read the `remote:` line to recover the value. Create or overwrite the file when the value is first provided or updated.
+
+### Rules for using the remembered value
+
+1. **On every browser command**, load the remembered remote (from memory or `vibebrowser-cli.md`) and pass it as `--remote "<remembered-value>"`.
+2. **Only ask the user** for the remote if none is remembered and the user did not provide one in the current message.
+3. **If the remembered remote stops working** — for example, `status` returns `extensionConnected: false`, or commands repeatedly fail — tell the user clearly and offer to update the saved value (then overwrite memory / `vibebrowser-cli.md` with the new one).
+
+### Example: first use
+
+User: "Open google.com in my browser. My remote is `abc12345-...`."
+
+Agent actions:
+1. Save `abc12345-...` to memory under key `vibebrowser_remote` (or write to `vibebrowser-cli.md`).
+2. Run:
+   ```bash
+   npx @vibebrowser/cli --remote "abc12345-..." --json status --wait-for-extension --wait-timeout 10000
+   npx @vibebrowser/cli --remote "abc12345-..." --json open https://google.com
+   ```
+
+### Example: subsequent use (same or later session)
+
+User: "Now open github.com."
+
+Agent actions:
+1. Recall `vibebrowser_remote` from memory (or read `vibebrowser-cli.md` → `remote:` line).
+2. Run without asking the user:
+   ```bash
+   npx @vibebrowser/cli --remote "<remembered-value>" --json open https://github.com
+   ```
 
 ## Command form
 

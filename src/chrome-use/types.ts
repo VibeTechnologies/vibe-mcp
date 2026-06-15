@@ -21,6 +21,9 @@ export interface CdpClient {
   readonly connected: boolean;
   /** Close the socket. */
   close(): void;
+  /** Optional: set the per-request timeout (ms) used by subsequent send()s.
+   * Lets a caller honor a command-level timeout (e.g. the CLI `--timeout` flag). */
+  setDefaultTimeout?(ms: number): void;
 }
 
 /** Per-tab (per CDP target) session. */

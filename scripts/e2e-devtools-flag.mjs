@@ -2,11 +2,13 @@
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import process from 'node:process';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocketServer } from 'ws';
-import { DevtoolsFallbackConnection } from '../dist/devtools-fallback.js';
+import { ChromeUseConnection } from '../dist/chrome-use-connection.js';
+import { BrowserCliContext } from '../dist/browser-cli.js';
 
 const HOST = '127.0.0.1';
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -58,11 +60,24 @@ async function waitForPort(port, timeoutMs = 10_000) {
   throw new Error(`Timed out waiting for port ${port}`);
 }
 
+// Point Chrome discovery at a directory with no DevToolsActivePort so the
+// chrome-use backend reports unavailable fast — keeps the test hermetic (no
+// live browser), mirroring how the relay tests fake the extension.
+// Isolate the chrome-use proxy on a throwaway socket so the real CLI subprocesses
+// spawned below never start or reuse the user's default gateway daemon.
+const HERMETIC_SOCKET = join(tmpdir(), `vibe-chrome-use-test-${process.pid}.sock`);
+const HERMETIC_ENV = {
+  ...process.env,
+  VIBE_CHROME_USER_DATA_DIR: join(tmpdir(), `vibe-no-chrome-${process.pid}`),
+  VIBE_CHROME_USE_SOCKET: HERMETIC_SOCKET,
+};
+
 function runJsonCli(scriptPath, args, timeoutMs = 10_000) {
   return new Promise((resolveResult, reject) => {
     const child = spawn(process.execPath, [scriptPath, '--json', ...args], {
       cwd: PACKAGE_ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: HERMETIC_ENV,
     });
     let stdout = '';
     let stderr = '';
@@ -98,6 +113,7 @@ function runCliText(scriptPath, args, timeoutMs = 10_000) {
     const child = spawn(process.execPath, [scriptPath, ...args], {
       cwd: PACKAGE_ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: HERMETIC_ENV,
     });
     let stdout = '';
     let stderr = '';
@@ -122,6 +138,68 @@ function runCliText(scriptPath, args, timeoutMs = 10_000) {
       resolveResult(`${stdout}\n${stderr}`);
     });
   });
+}
+
+/**
+ * A minimal in-memory fake of the CDP client used by ChromeUseConnection. It
+ * answers just enough of the protocol to drive the tool dispatch path (one page
+ * tab, a snapshot with a single button ref, a clickable element) without a real
+ * browser — mirroring how the relay e2e tests fake the extension.
+ */
+function makeFakeCdp() {
+  const state = {
+    connected: true,
+    clicked: false,
+    close() { state.connected = false; },
+    on() { return () => {}; },
+    async send(method, params = {}) {
+      switch (method) {
+        case 'Browser.getVersion':
+          return { product: 'HeadlessChrome/144.0.0' };
+        case 'Target.getTargets':
+          return { targetInfos: [{ targetId: 'T1', type: 'page', url: 'https://example.com/' }] };
+        case 'Target.attachToTarget':
+          return { sessionId: 'S1' };
+        case 'Target.detachFromTarget':
+        case 'Target.closeTarget':
+        case 'Page.navigate':
+        case 'DOM.focus':
+        case 'Input.insertText':
+        case 'Input.dispatchKeyEvent':
+          return {};
+        case 'Target.createTarget':
+          return { targetId: 'T2' };
+        case 'Input.dispatchMouseEvent':
+          if (params.type === 'mousePressed') state.clicked = true;
+          return {};
+        case 'DOM.getBoxModel':
+          return { model: { content: [0, 0, 10, 0, 10, 10, 0, 10] } };
+        case 'Page.captureScreenshot':
+          return { data: 'ZmFrZQ==' };
+        case 'Runtime.callFunctionOn':
+          return { result: { value: 'Example Domain' } };
+        case 'Runtime.evaluate': {
+          const expr = String(params.expression || '');
+          if (expr.includes('document.readyState')) return { result: { value: 'complete' } };
+          if (expr.includes('location.href')) return { result: { value: 'https://example.com/' } };
+          if (expr.includes('document.title')) return { result: { value: 'Example Domain' } };
+          if (expr.includes('document.body.innerText')) return { result: { value: 'Example body text' } };
+          if (expr.includes('window.__chromeUseRefs = []')) {
+            // Snapshot walker IIFE: pretend one interactive button was found.
+            return { result: { value: { nodes: [{ ref: 'e1', role: 'button', name: 'Submit', backendNodeId: 0, depth: 0 }] } } };
+          }
+          if (expr.includes('__chromeUseRefs')) {
+            // Ref resolution: return a remote objectId for @e1.
+            return { result: { type: 'object', objectId: 'OBJ-e1' } };
+          }
+          return { result: { value: null } };
+        }
+        default:
+          return {};
+      }
+    },
+  };
+  return state;
 }
 
 async function main() {
@@ -174,6 +252,7 @@ async function main() {
       {
         cwd: PACKAGE_ROOT,
         stdio: ['ignore', 'pipe', 'pipe'],
+        env: HERMETIC_ENV,
       },
     );
 
@@ -191,28 +270,103 @@ async function main() {
     assert(payload.transport === 'http', `Unexpected health payload: ${JSON.stringify(payload)}`);
     assert(typeof payload.cachedTools === 'number', `Expected cachedTools number: ${JSON.stringify(payload)}`);
 
-    const originalResolveBinaryPath = DevtoolsFallbackConnection.prototype.resolveBinaryPath;
-    // eslint-disable-next-line no-param-reassign
-    DevtoolsFallbackConnection.prototype.resolveBinaryPath = function () {
-      return undefined;
+    // When Chrome cannot be reached, the chrome-use DevTools backend reports
+    // unavailable (it never throws on start) and callTool surfaces that reason.
+    const failingConnector = {
+      connect() {
+        return Promise.reject(new Error('DevToolsActivePort not found'));
+      },
     };
+    const unavailable = new ChromeUseConnection(false, { connector: failingConnector });
+    let sawUnavailable = false;
+    unavailable.on('unavailable', () => { sawUnavailable = true; });
+    await unavailable.start();
+    assert(unavailable.isAvailable() === false, 'Expected backend to be unavailable when Chrome is unreachable');
+    assert(sawUnavailable, 'Expected an "unavailable" event when Chrome is unreachable');
+    assert(unavailable.getTools().length === 0, 'Unavailable backend must expose no tools');
+    assert(
+      /DevToolsActivePort not found/.test(unavailable.getUnavailableReason() ?? ''),
+      `Unexpected unavailable reason: ${unavailable.getUnavailableReason()}`,
+    );
     try {
-      const unavailable = new DevtoolsFallbackConnection(false);
-      await unavailable.start();
-      try {
-        await unavailable.callTool('list_pages', {});
-        throw new Error('Expected callTool to fail when backend is unavailable');
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        assert(
-          message === 'chrome-devtools backend unavailable: chrome-devtools-mcp is not installed',
-          `Unexpected unavailable error message: ${message}`,
-        );
-      } finally {
-        await unavailable.stop();
-      }
+      await unavailable.callTool('navigate', { url: 'https://example.com' });
+      throw new Error('Expected callTool to fail when backend is unavailable');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      assert(
+        message.includes('chrome-use DevTools backend unavailable'),
+        `Unexpected unavailable error message: ${message}`,
+      );
     } finally {
-      DevtoolsFallbackConnection.prototype.resolveBinaryPath = originalResolveBinaryPath;
+      await unavailable.stop();
+    }
+
+    // A fake CDP transport lets us exercise the real tool dispatch (navigate →
+    // snapshot → click) without a live browser, the way the relay e2e fakes the
+    // extension. This proves tool wiring end-to-end through ChromeUseConnection.
+    const fakeCdp = makeFakeCdp();
+    const live = new ChromeUseConnection(false, { connector: { connect: async () => fakeCdp } });
+    await live.start();
+    assert(live.isAvailable(), 'Expected fake-CDP backend to be available');
+    const toolNames = live.getTools().map((t) => t.name);
+    for (const required of ['navigate', 'snapshot', 'click', 'fill', 'type', 'screenshot', 'eval', 'get_text', 'get_url', 'get_title']) {
+      assert(toolNames.includes(required), `Missing tool: ${required}`);
+    }
+
+    const nav = await live.callTool('navigate', { url: 'example.com' });
+    assert(!nav.isError, `navigate failed: ${JSON.stringify(nav)}`);
+    assert(/example\.com/.test(nav.content[0].text), `navigate text unexpected: ${JSON.stringify(nav)}`);
+
+    const snap = await live.callTool('snapshot', { interactive: true });
+    assert(!snap.isError, `snapshot failed: ${JSON.stringify(snap)}`);
+    assert(/@e1 \[button\]/.test(snap.content[0].text), `snapshot text unexpected: ${JSON.stringify(snap)}`);
+
+    const click = await live.callTool('click', { selector: '@e1' });
+    assert(!click.isError, `click failed: ${JSON.stringify(click)}`);
+    assert(fakeCdp.clicked, 'Expected a trusted mouse press/release to be dispatched on click');
+
+    const shot = await live.callTool('screenshot', {});
+    assert(shot.content[0].type === 'image', `screenshot should return an image: ${JSON.stringify(shot)}`);
+    assert(shot.content[0].data === 'ZmFrZQ==', 'screenshot should return the fake base64 image data');
+
+    const title = await live.callTool('get_title', {});
+    assert(title.content[0].text === 'Example Domain', `get_title unexpected: ${JSON.stringify(title)}`);
+
+    await live.stop();
+
+    // Regression for the chrome-use tool-name mapping: drive the *browser-cli
+    // command layer* (not callTool directly) against the fake CDP. Before the
+    // fix, the candidate name lists only knew chrome-devtools-mcp names
+    // (navigate_page, take_snapshot, evaluate_script), so navigate/snapshot/
+    // evaluate threw "No compatible browser tool found" against the chrome-use
+    // backend (navigate/snapshot/eval). This proves the CLI verb -> tool wiring.
+    const cliCtx = new BrowserCliContext({
+      port: 0,
+      debug: false,
+      devtools: true,
+      profile: 'user',
+      json: true,
+      timeoutMs: 10_000,
+      chromeUseConnector: { connect: async () => makeFakeCdp() },
+    });
+    await cliCtx.connect();
+    try {
+      const navOut = await cliCtx.navigate('example.com');
+      assert(navOut.ok !== false, `cli navigate failed: ${JSON.stringify(navOut)}`);
+
+      const snapOut = await cliCtx.snapshot({
+        format: 'ai',
+        interactive: true,
+        compact: false,
+        efficient: false,
+        labels: false,
+      });
+      assert(snapOut.ok !== false, `cli snapshot failed: ${JSON.stringify(snapOut)}`);
+
+      const evalOut = await cliCtx.evaluate({ fn: 'document.title' });
+      assert(evalOut.ok !== false, `cli evaluate failed: ${JSON.stringify(evalOut)}`);
+    } finally {
+      await cliCtx.shutdown();
     }
 
     console.log('devtools flag e2e ok');
@@ -221,6 +375,15 @@ async function main() {
     if (serverProcess) {
       serverProcess.kill('SIGTERM');
     }
+    // Stop the throwaway proxy the real CLI subprocesses may have started.
+    await new Promise((done) => {
+      const sock = net.createConnection({ path: HERMETIC_SOCKET });
+      const finish = () => { try { sock.destroy(); } catch { /* ignore */ } done(); };
+      sock.on('connect', () => sock.write(JSON.stringify({ id: 1, method: '__stop' }) + '\n'));
+      sock.on('data', finish);
+      sock.on('error', finish);
+      setTimeout(finish, 1500);
+    });
   }
 }
 

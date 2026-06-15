@@ -3,7 +3,7 @@ import { basename, extname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
 import { ExtensionConnection } from './connection.js';
-import { DevtoolsFallbackConnection } from './devtools-fallback.js';
+import { ChromeUseConnection, type CdpConnector } from './chrome-use-connection.js';
 import { DEFAULT_WS_PORT, type RelaySessionSummary, type ToolDefinition, type ToolResult } from './types.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -90,6 +90,8 @@ interface CommandContextInit {
   timeoutMs: number;
   target?: string;
   pageId?: number;
+  /** Test-only: inject a fake CDP connector for the chrome-use (--devtools) backend. */
+  chromeUseConnector?: CdpConnector;
 }
 
 interface RefTarget {
@@ -116,7 +118,7 @@ function buildBrowserCommand(command: Command): Command {
     .option('--target <target>', 'OpenClaw compatibility target selector (accepted, not used by the Vibe browser CLI)')
     .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
     .option('-d, --debug', 'Enable debug logging', false)
-    .option('--devtools', 'Use only chrome-devtools backend (bypasses extension relay)', false)
+    .option('--devtools', 'Drive your real running Chrome directly over the DevTools Protocol (bypasses the extension relay)', false)
     .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide the extension UUID or full ws(s) relay URL)', DEFAULT_REMOTE)
     .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
     .option('--json', 'Emit machine-readable JSON output', false)
@@ -497,8 +499,8 @@ async function runBrowserCommand(
   }
 }
 
-class BrowserCliContext {
-  private readonly connection: ExtensionConnection | DevtoolsFallbackConnection;
+export class BrowserCliContext {
+  private readonly connection: ExtensionConnection | ChromeUseConnection;
   private readonly profile: string;
   private readonly json: boolean;
   private readonly timeoutMs: number;
@@ -515,7 +517,7 @@ class BrowserCliContext {
   constructor(init: CommandContextInit) {
     this.devtoolsOnly = init.devtools;
     this.connection = init.devtools
-      ? new DevtoolsFallbackConnection(init.debug)
+      ? new ChromeUseConnection(init.debug, init.chromeUseConnector ? { connector: init.chromeUseConnector } : undefined)
       : new ExtensionConnection(
         init.port,
         init.debug,
@@ -652,7 +654,7 @@ class BrowserCliContext {
     const invocation = await this.callTool(
       'tabs',
       [
-        { names: ['list_pages', 'get_tabs'] },
+        { names: ['list_pages', 'get_tabs', 'list_tabs'] },
       ],
       {}
     );
@@ -673,7 +675,7 @@ class BrowserCliContext {
 
   async open(url?: string): Promise<CommandOutput> {
     if (!url) {
-      return this.callGenericCommand('open', [{ names: ['new_page', 'create_new_tab'] }], {});
+      return this.callGenericCommand('open', [{ names: ['new_page', 'create_new_tab', 'new_tab'] }], {});
     }
 
     try {
@@ -681,11 +683,11 @@ class BrowserCliContext {
         'open',
         [
           {
-            names: ['new_page', 'create_new_tab'],
+            names: ['new_page', 'create_new_tab', 'new_tab'],
             buildArgs: (tool) => withOpenArgs(tool, url),
           },
           {
-            names: ['navigate_page', 'navigate_to_url'],
+            names: ['navigate_page', 'navigate_to_url', 'navigate'],
             buildArgs: (tool) => withNavigateArgs(tool, url, this.timeoutMs),
           },
         ],
@@ -709,11 +711,11 @@ class BrowserCliContext {
         'navigate',
         [
           {
-            names: ['navigate_page', 'navigate_to_url'],
+            names: ['navigate_page', 'navigate_to_url', 'navigate'],
             buildArgs: (tool) => withNavigateArgs(tool, url, this.timeoutMs),
           },
           {
-            names: ['new_page', 'create_new_tab'],
+            names: ['new_page', 'create_new_tab', 'new_tab'],
             buildArgs: (tool) => withOpenArgs(tool, url),
           },
         ],
@@ -749,7 +751,7 @@ class BrowserCliContext {
       'focus',
       [
         {
-          names: ['switch_to_page', 'switch_to_tab', 'select_page', 'focus_tab'],
+          names: ['switch_to_page', 'switch_to_tab', 'select_page', 'focus_tab', 'select_tab'],
           buildArgs: (tool) => withPageArgs(tool, id),
         },
       ],
@@ -774,7 +776,7 @@ class BrowserCliContext {
       'snapshot',
       [
         {
-          names: ['take_snapshot'],
+          names: ['take_snapshot', 'snapshot'],
           buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
         },
       ],
@@ -1053,7 +1055,7 @@ class BrowserCliContext {
       'evaluate',
       [
         {
-          names: ['evaluate_script'],
+          names: ['evaluate_script', 'eval'],
           buildArgs: (tool) => withEvaluateArgs(tool, options.fn, options.ref, options.argsJson),
         },
       ],
@@ -1416,7 +1418,7 @@ class BrowserCliContext {
     if (this.connection instanceof ExtensionConnection) {
       return this.connection.getConnectionErrorMessage();
     }
-    return this.connection.getUnavailableReason() || 'chrome-devtools backend unavailable';
+    return this.connection.getUnavailableReason() || 'chrome-use DevTools backend unavailable';
   }
 
   outputMode(): 'local' | 'remote' | 'devtools' {
@@ -2088,6 +2090,7 @@ function withSnapshotArgs(
   tool: ToolDefinition,
   options: {
     format: string;
+    interactive?: boolean;
     selector?: string;
     frame?: string;
     compact: boolean;
@@ -2098,6 +2101,8 @@ function withSnapshotArgs(
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   maybeAssign(args, tool, 'format', options.format);
+  // chrome-use `snapshot` tool: interactive-only flag.
+  maybeAssign(args, tool, 'interactive', options.interactive || undefined);
   maybeAssign(args, tool, 'selector', options.selector);
   maybeAssign(args, tool, 'frame', options.frame);
   maybeAssign(args, tool, 'compact', options.compact || undefined);
@@ -2311,6 +2316,8 @@ function withEvaluateArgs(
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   maybeAssign(args, tool, 'function', fn);
+  // chrome-use `eval` tool takes a bare expression rather than a function body.
+  maybeAssign(args, tool, 'expression', fn);
 
   const values: string[] = [];
   if (ref) {

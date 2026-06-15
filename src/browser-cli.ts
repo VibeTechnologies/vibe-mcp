@@ -3,7 +3,7 @@ import { basename, extname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
 import { ExtensionConnection } from './connection.js';
-import { ChromeUseConnection } from './chrome-use-connection.js';
+import { ChromeUseConnection, type CdpConnector } from './chrome-use-connection.js';
 import { DEFAULT_WS_PORT, type RelaySessionSummary, type ToolDefinition, type ToolResult } from './types.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -90,6 +90,8 @@ interface CommandContextInit {
   timeoutMs: number;
   target?: string;
   pageId?: number;
+  /** Test-only: inject a fake CDP connector for the chrome-use (--devtools) backend. */
+  chromeUseConnector?: CdpConnector;
 }
 
 interface RefTarget {
@@ -497,7 +499,7 @@ async function runBrowserCommand(
   }
 }
 
-class BrowserCliContext {
+export class BrowserCliContext {
   private readonly connection: ExtensionConnection | ChromeUseConnection;
   private readonly profile: string;
   private readonly json: boolean;
@@ -515,7 +517,7 @@ class BrowserCliContext {
   constructor(init: CommandContextInit) {
     this.devtoolsOnly = init.devtools;
     this.connection = init.devtools
-      ? new ChromeUseConnection(init.debug)
+      ? new ChromeUseConnection(init.debug, init.chromeUseConnector ? { connector: init.chromeUseConnector } : undefined)
       : new ExtensionConnection(
         init.port,
         init.debug,

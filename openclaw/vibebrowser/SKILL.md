@@ -16,6 +16,30 @@ metadata:
 
 # Vibe Local Browser
 
+## FIRST, EVERY TIME: load the saved remote before asking for it
+
+The user gives their remote value **once**. On **every** browser task — including the
+first message of a brand-new conversation — recover it yourself before doing anything
+else. Do **not** ask the user for the remote until you have checked **both** stores and
+found nothing.
+
+At the very start of any browser task, in this order:
+
+1. **Recall from memory.** If your runtime has a memory/recall tool, read the key
+   `vibebrowser_remote`. If it returns a value, use it as `--remote` and continue
+   silently — do not mention it.
+2. **Read the file fallback.** Check `~/.vibebrowser-cli.md` (and, for backward
+   compatibility, `./vibebrowser-cli.md` in the working dir) for a `remote:` line.
+   If present, use it.
+3. **Only if both are empty** may you ask the user for the remote. When they give it,
+   immediately save it to **both** stores (memory key `vibebrowser_remote` **and**
+   `~/.vibebrowser-cli.md`) so the next conversation never has to ask again.
+
+> If you find yourself about to say "I need your Vibe remote value first," STOP — you
+> almost certainly skipped step 1/2. A returning user has already provided it; recall it.
+
+Full details and examples: [## Remembering the remote connection](#remembering-the-remote-connection).
+
 ## Installation
 
 1. **Get the remote value**:
@@ -96,19 +120,25 @@ On later turns, recall it before running any browser command:
 recall("vibebrowser_remote")  # → use as --remote value
 ```
 
-**Option B — Local context file (fallback):** If no memory tool is available, write the value to a file named `vibebrowser-cli.md` in the agent's working directory. Use this exact format so it can be machine-read back:
+**Option B — Local context file (fallback / belt-and-suspenders):** Write the value to
+`~/.vibebrowser-cli.md` (home directory — **not** the working dir, which changes between
+conversations and would lose the value). Use this exact format so it can be machine-read back:
 
 ```markdown
 # VibeBrowser CLI context
 remote: <uuid-or-wss-url>
 ```
 
-At the start of any browser task, check whether `vibebrowser-cli.md` exists and read the `remote:` line to recover the value. Create or overwrite the file when the value is first provided or updated.
+Save to this file **even when a memory tool is available** — runtimes whose memory does
+not persist across conversations will still recover the remote from the file. At the start
+of any browser task, read `~/.vibebrowser-cli.md` (then `./vibebrowser-cli.md` for older
+saves) and use the `remote:` line. Create or overwrite the file when the value is first
+provided or updated.
 
 ### Rules for using the remembered value
 
-1. **On every browser command**, load the remembered remote (from memory or `vibebrowser-cli.md`) and pass it as `--remote "<remembered-value>"`.
-2. **Only ask the user** for the remote if none is remembered and the user did not provide one in the current message.
+1. **On every browser command**, load the remembered remote (recall memory key `vibebrowser_remote`, else read `~/.vibebrowser-cli.md`) and pass it as `--remote "<remembered-value>"`. Do this on the first message of every new conversation, not just within one session.
+2. **Only ask the user** for the remote if none is remembered in **either** store and the user did not provide one in the current message.
 3. **If the remembered remote stops working** — for example, `status` returns `extensionConnected: false`, or commands repeatedly fail — tell the user clearly and offer to update the saved value (then overwrite memory / `vibebrowser-cli.md` with the new one).
 
 ### Example: first use
@@ -116,7 +146,7 @@ At the start of any browser task, check whether `vibebrowser-cli.md` exists and 
 User: "Open google.com in my browser. My remote is `abc12345-...`."
 
 Agent actions:
-1. Save `abc12345-...` to memory under key `vibebrowser_remote` (or write to `vibebrowser-cli.md`).
+1. Save `abc12345-...` to memory under key `vibebrowser_remote` **and** write it to `~/.vibebrowser-cli.md`.
 2. Run:
    ```bash
    npx @vibebrowser/cli --remote "abc12345-..." --json status --wait-for-extension --wait-timeout 10000
@@ -128,7 +158,7 @@ Agent actions:
 User: "Now open github.com."
 
 Agent actions:
-1. Recall `vibebrowser_remote` from memory (or read `vibebrowser-cli.md` → `remote:` line).
+1. Recall `vibebrowser_remote` from memory (or read `~/.vibebrowser-cli.md` → `remote:` line).
 2. Run without asking the user:
    ```bash
    npx @vibebrowser/cli --remote "<remembered-value>" --json open https://github.com

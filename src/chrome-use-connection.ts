@@ -369,7 +369,20 @@ export class ChromeUseConnection extends EventEmitter {
   }
 
   /** Tool catalog is static; refresh just re-confirms availability. */
-  async refreshTools(_timeoutMs?: number): Promise<ToolDefinition[]> {
+  async refreshTools(timeoutMs?: number): Promise<ToolDefinition[]> {
+    const delay = timeoutMs !== undefined ? Math.min(timeoutMs, 50) : 50;
+    await sleep(delay);
+    return this.getTools();
+  }
+
+  /**
+   * Wait for tools to be updated, with a timeout.
+   * Resolves with current tools after a brief tick (min(timeoutMs, 50)).
+   * Ensures budget waiting logic in awaitStartupToolsWithinBudget() works for --devtools mode.
+   */
+  async waitForToolsUpdate(timeoutMs: number): Promise<ToolDefinition[]> {
+    const delay = Math.min(timeoutMs, 50);
+    await sleep(delay);
     return this.getTools();
   }
 

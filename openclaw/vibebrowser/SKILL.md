@@ -1,6 +1,6 @@
 ---
 name: vibebrowser
-description: Control the user's local browser through the Vibe Browser CLI bridge. Use for ANY task against the user's real Vibe-connected browser — tabs, cookies, sessions, extensions, opening pages, snapshots, clicks. ALWAYS load this skill before responding to a browser request: it tells you how to recover the user's saved connection (the "remote") from memory/workspace so you never re-ask for it.
+description: Control the user's real local browser through the Vibe Browser CLI bridge. Use for ANY task against the user's own Vibe-connected browser — their tabs, cookies, logged-in sessions, extensions, opening pages, snapshots, clicks. ALWAYS load this skill before responding to a browser request, so you can recover the user's saved connection (the remote) from memory or workspace and never re-ask for it.
 metadata:
   {
     "openclaw":

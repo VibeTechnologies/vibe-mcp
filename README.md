@@ -7,38 +7,26 @@ MCP server for [Vibe AI Browser](https://vibebrowser.app) - the **only browser a
 
 ## Install prompt for AI agents (OpenClaw / Hermes)
 
-Copy-paste this into an OpenClaw or Hermes agent to install the **vibebrowser skill**, install/configure the Vibe Browser **CLI**, and remember your remote so it can drive your real Chrome. Replace the last line with your remote value (a UUID or a `wss://relay.api.vibebrowser.app/<uuid>` URL from the Vibe extension's **Settings → AI Agent Control → Remote (internet) → Relay access**):
+Paste the block below into your **OpenClaw** or **Hermes** agent. Replace the last line with your remote value — a UUID or a `wss://relay.api.vibebrowser.app/<uuid>` URL from the Vibe extension's **Settings → AI Agent Control → Remote (internet) → Relay access**. That's the only edit you make.
 
 ```text
-You can control my real Chrome with Vibe Browser. Install the skill, install the CLI, remember my remote, then verify:
+You are setting yourself up to control my real Chrome through Vibe Browser. Work through the steps in order, and after each step confirm it worked before moving on. Do not claim a step is done until you have proven it.
 
-1) Install the vibebrowser SKILL (persistent capability). Run the line for YOUR agent, then the matching confirm:
-   - OpenClaw:
-       npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -a openclaw -g -y --copy --dangerously-accept-openclaw-risks
-       openclaw skills list            # expect a "🌐 vibebrowser ... ✓ ready" row
-     (--copy is required: a symlinked install escapes the workspace root and OpenClaw skips it. --dangerously-accept-openclaw-risks is needed because this skill isn't ClawHub-verified yet.)
-   - Hermes:
-       npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -y
-       npx -y skills list              # expect a "vibebrowser" row
-   If your runner can't reach the registry, fetch the SKILL.md straight into your OpenClaw skills dir instead:
-   mkdir -p ~/.openclaw/skills/vibebrowser && curl -fsSL https://raw.githubusercontent.com/VibeTechnologies/vibe-mcp/main/openclaw/vibebrowser/SKILL.md -o ~/.openclaw/skills/vibebrowser/SKILL.md
+1. Install the "vibebrowser" skill for your runtime, then confirm it is listed:
+   - OpenClaw:  npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -a openclaw -g -y --copy --dangerously-accept-openclaw-risks
+                then run `openclaw skills list` and confirm a "vibebrowser" row shows "ready".
+   - Hermes:    npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -y
+                then run `npx -y skills list` and confirm a "vibebrowser" row.
 
-2) The skill drives the CLI: the npm package @vibebrowser/cli, run on demand with `npx -y @vibebrowser/cli@latest` (no global install).
+2. Remember my remote so I only give it to you once. Save it under the key `vibebrowser_remote` (your memory tool) or in a file `vibebrowser-cli.md` as a line `remote: <value>`, and reuse it on every command without asking me again.
 
-3) Remember my remote connection so I only give it to you once. Save the remote value and reuse it on every command without asking again:
-   - If you have a memory tool, store it under the key `vibebrowser_remote`.
-   - Otherwise write it to a file `vibebrowser-cli.md` as a line `remote: <value>` and read it back on later turns.
-   - OpenClaw: you may also set it in `~/.openclaw/openclaw.json` under `skills.entries."vibebrowser".env.VIBE_REMOTE_URL`, or export `VIBE_REMOTE_URL`.
-   - Hermes: you may also store it under `skills.config` key `vibebrowser.remote_url` (e.g. `hermes skills config vibebrowser`).
+3. Confirm you can control my Chrome, retrying on "Extension reconnecting" (wait 3s, up to 5x):
+   npx -y @vibebrowser/cli@latest --remote "<my remote>" --json status --wait-for-extension --wait-timeout 20000
+   npx -y @vibebrowser/cli@latest --remote "<my remote>" --json snapshot --format aria
 
-4) Verify and use it (retry on "Extension reconnecting": wait 3s, up to 5x):
-   npx -y @vibebrowser/cli@latest --remote "<remembered value>" --json status --wait-for-extension --wait-timeout 20000   # expect "extensionConnected": true
-   npx -y @vibebrowser/cli@latest --remote "<remembered value>" --json tabs
-   npx -y @vibebrowser/cli@latest --remote "<remembered value>" --json snapshot --format aria   # returns the live page content
+Then report: (1) is vibebrowser listed, (2) is extensionConnected true, (3) did the snapshot return my real page content?
 
-Report: (a) did `skills list` show a vibebrowser entry, (b) did status show extensionConnected=true, (c) did the snapshot return real page content?
-
-My remote value: <PASTE YOUR UUID OR wss:// URL HERE>
+My remote: <PASTE YOUR UUID OR wss:// URL HERE>
 ```
 
 ## Why Vibe MCP?

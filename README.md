@@ -18,9 +18,11 @@ You are setting yourself up to control my real Chrome through Vibe Browser. Work
    - Hermes:    npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -y
                 then run `npx -y skills list` and confirm a "vibebrowser" row.
 
-2. Remember my remote so I only give it to you once. Save it in BOTH places: under the key `vibebrowser_remote` (your memory tool) AND in a file `vibebrowser-cli.md` in your persistent agent workspace root (the directory that holds your skills/ and memory/ — not the shell's working dir, not $HOME unless they are the same), as a line `remote: <value>`. On every later command — including the first message of a new conversation — load it back from there and reuse it without asking me again.
+2. Remember my remote so I only give it to you once. Save it to a file `vibebrowser-cli.md` in your persistent agent workspace root (the directory that holds your `memory/` folder — not the shell's working dir, not $HOME unless they are the same) as a line `remote: <value>`; if your runtime can also write memory keys, additionally store it under `vibebrowser_remote`. On every later command — including the first message of a new conversation — load it back from that file and reuse it without asking me again.
 
-3. Confirm you can control my Chrome, retrying on "Extension reconnecting" (wait 3s, up to 5x):
+3. Record a standing rule so you route correctly later: whenever I ask you to do anything in MY browser / MY Chrome / MY tabs / the page I'm on, use this vibebrowser skill (`@vibebrowser/cli` with my saved remote) to drive my REAL browser — never your built-in, headless, or in-pod browser, and never web-fetch instead. Save this rule wherever your standing instructions/memory live so it applies in future conversations.
+
+4. Confirm you can control my Chrome, retrying on "Extension reconnecting" (wait 3s, up to 5x):
    npx -y @vibebrowser/cli@latest --remote "<my remote>" --json status --wait-for-extension --wait-timeout 20000
    npx -y @vibebrowser/cli@latest --remote "<my remote>" --json snapshot --format aria
 
@@ -422,40 +424,12 @@ For navigation-style operations, responses now include page content when page st
 
 ### Install Prompt for AI Agents (OpenClaw / Hermes)
 
-Copy-paste the block below into an agent (e.g. OpenClaw or Hermes) to install and set up the Vibe Browser CLI skill via `npx -y` and prove it can control the browser. Replace `<REMOTE>` with your extension's remote value — the extension UUID or the full `wss://relay.api.vibebrowser.app/<uuid>` URL from the Vibe extension's **Settings → AI Agent Control → Remote (internet) → Relay access**.
+Use the single canonical copy-paste prompt at the top of this README:
+**[Install prompt for AI agents (OpenClaw / Hermes)](#install-prompt-for-ai-agents-openclaw--hermes)**.
+It installs the `vibebrowser` skill, saves your remote so you only give it once, and proves
+control of your real Chrome.
 
-```text
-Install and test the "Vibe Browser CLI" skill so you can control my real Chrome browser.
-
-The skill is the npm package @vibebrowser/cli, run with npx (no global install needed). My browser runs the Vibe extension in Remote mode; reach it via the public relay using this remote value:
-
-  REMOTE = <REMOTE>
-
-Do each step and paste the exact output. If any command returns "Extension reconnecting", wait 3 seconds and retry it (up to 5 times):
-
-1. Install / sanity-check the CLI (first run downloads it):
-   npx -y @vibebrowser/cli@latest --help
-
-2. Confirm you can reach my browser (wait for the extension):
-   npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json status --wait-for-extension --wait-timeout 20000
-   -> confirm "extensionConnected": true and report toolCount.
-
-3. List my open tabs:
-   npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json tabs
-
-4. Read the active page (proves control):
-   npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json snapshot --format aria
-
-5. Report back: did status show extensionConnected=true, and did the snapshot return real page content? Paste the snapshot text.
-
-Optional (changes browser state): pick a page id from step 3 and run
-   npx -y @vibebrowser/cli@latest --remote "$REMOTE" --json --page-id <ID> navigate https://example.com
-A navigation reloads the page and can briefly drop the relay, so retry on "Extension reconnecting".
-
-If status shows extensionConnected=false, tell me so I can put the extension into Remote mode.
-```
-
-For a deeper skill definition (when to prefer this over a managed browser, env-var setup, selector/snapshot guidance), install `openclaw/vibebrowser/SKILL.md` into the agent's skills directory.
+For a deeper skill definition (when to prefer this over a managed/headless browser, the remote-recall rules, selector/snapshot guidance), install `openclaw/vibebrowser/SKILL.md` into the agent's skills directory.
 
 ### OpenClaw Integration
 

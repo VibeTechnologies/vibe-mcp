@@ -377,8 +377,8 @@ export class ChromeUseConnection extends EventEmitter {
    * Wait for tools to be updated.
    *
    * ChromeUseConnection has a static tool catalog (discovered at connection time).
-   * This method exists to satisfy the ToolProvider interface for uniform budget
-   * handling in `awaitStartupToolsWithinBudget()`. For a static backend it simply
+   * This method exists so `awaitStartupToolsWithinBudget()` can call it
+   * uniformly on both connection backends. For a static backend it simply
    * returns the current tool list immediately — there is no dynamic update to wait for.
    */
   async waitForToolsUpdate(_timeoutMs: number): Promise<ToolDefinition[]> {

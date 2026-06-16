@@ -295,7 +295,15 @@ export class VibeMcpServer {
 
       // Handle set_remote FIRST — it's a meta-tool not in connection's tool list
       if (normalizeToolName(name) === SET_REMOTE_TOOL.name) {
-        return await this.handleSetRemoteTool(toRecord(args));
+        try {
+          return await this.handleSetRemoteTool(toRecord(args));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            content: [{ type: 'text', text: `Error: ${message}` }],
+            isError: true,
+          };
+        }
       }
 
       try {

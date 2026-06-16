@@ -293,11 +293,12 @@ export class VibeMcpServer {
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: args } = request.params;
 
-      try {
-        if (normalizeToolName(name) === SET_REMOTE_TOOL.name) {
-          return await this.handleSetRemoteTool(toRecord(args));
-        }
+      // Handle set_remote FIRST — it's a meta-tool not in connection's tool list
+      if (normalizeToolName(name) === SET_REMOTE_TOOL.name) {
+        return await this.handleSetRemoteTool(toRecord(args));
+      }
 
+      try {
         // Validate tool exists before forwarding to extension
         const availableTools = this.connection.getTools();
         const matchedTool = this.findToolByName(name);

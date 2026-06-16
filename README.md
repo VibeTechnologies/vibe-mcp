@@ -12,12 +12,15 @@ Copy-paste this into an OpenClaw or Hermes agent to install the **vibebrowser sk
 ```text
 You can control my real Chrome with Vibe Browser. Install the skill, install the CLI, remember my remote, then verify:
 
-1) Install the vibebrowser SKILL (persistent capability, auto-resolves the right agent):
-   npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -y
-   Confirm it registered:
-   - OpenClaw: `openclaw skills list` (or `node openclaw.mjs skills list`) — expect a `vibebrowser` entry.
-   - Hermes:   `npx -y skills list` (or `hermes skills list`) — expect a `vibebrowser` entry.
-   If your runner can't reach the registry, instead fetch the SKILL.md directly into your skills dir:
+1) Install the vibebrowser SKILL (persistent capability). Run the line for YOUR agent, then the matching confirm:
+   - OpenClaw:
+       npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -a openclaw -g -y --copy --dangerously-accept-openclaw-risks
+       openclaw skills list            # expect a "🌐 vibebrowser ... ✓ ready" row
+     (--copy is required: a symlinked install escapes the workspace root and OpenClaw skips it. --dangerously-accept-openclaw-risks is needed because this skill isn't ClawHub-verified yet.)
+   - Hermes:
+       npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -y
+       npx -y skills list              # expect a "vibebrowser" row
+   If your runner can't reach the registry, fetch the SKILL.md straight into your OpenClaw skills dir instead:
    mkdir -p ~/.openclaw/skills/vibebrowser && curl -fsSL https://raw.githubusercontent.com/VibeTechnologies/vibe-mcp/main/openclaw/vibebrowser/SKILL.md -o ~/.openclaw/skills/vibebrowser/SKILL.md
 
 2) The skill drives the CLI: the npm package @vibebrowser/cli, run on demand with `npx -y @vibebrowser/cli@latest` (no global install).

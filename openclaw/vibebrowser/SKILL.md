@@ -33,11 +33,14 @@ metadata:
      ```
    - **Preferred: save it for the session** — see [## Remembering the remote connection](#remembering-the-remote-connection) below.
 
-3. **Install the skill** (one command, auto-resolves the agent format):
+3. **Install the skill** (run the line for your agent):
    ```bash
+   # OpenClaw (--copy is required, else the symlink escapes the workspace root and is skipped):
+   npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -a openclaw -g -y --copy --dangerously-accept-openclaw-risks
+   # Hermes:
    npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -y
    ```
-   Verify it registered with `openclaw skills list` (OpenClaw) or `npx -y skills list` (Hermes) — expect a `vibebrowser` entry. Offline/registry-blocked fallback: copy this file to `~/.openclaw/skills/vibebrowser/SKILL.md` (or your project's `openclaw/skills/` folder).
+   Verify it registered with `openclaw skills list` (expect a `🌐 vibebrowser … ✓ ready` row) or `npx -y skills list` (Hermes). Installs to `~/.openclaw/skills/vibebrowser/SKILL.md`. Offline/registry-blocked fallback: copy this file there directly.
 
 Use the `@vibebrowser/cli` command when the user wants OpenClaw to drive their real local browser through the Vibe extension.
 

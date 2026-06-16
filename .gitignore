@@ -4,5 +4,9 @@ dist/
 .DS_Store
 tmp/
 
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/*.cjs
 .tasks/

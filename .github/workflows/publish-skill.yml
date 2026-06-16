@@ -27,12 +27,7 @@ jobs:
           echo "Skill file validated"
 
       - name: Validate SKILL.md frontmatter
-        run: |
-          head -1 openclaw/vibebrowser/SKILL.md | grep -q '^---' || {
-            echo "ERROR: SKILL.md missing frontmatter"
-            exit 1
-          }
-          echo "Frontmatter validated"
+        run: node scripts/validate-skill.mjs openclaw/vibebrowser/SKILL.md
 
       - name: Index skill on skills.sh
         run: |

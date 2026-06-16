@@ -368,21 +368,20 @@ export class ChromeUseConnection extends EventEmitter {
     }
   }
 
-  /** Tool catalog is static; refresh just re-confirms availability. */
-  async refreshTools(timeoutMs?: number): Promise<ToolDefinition[]> {
-    const delay = timeoutMs !== undefined ? Math.min(timeoutMs, 50) : 50;
-    await sleep(delay);
+  /** Tool catalog is static — refresh is a no-op that returns current tools. */
+  async refreshTools(_timeoutMs?: number): Promise<ToolDefinition[]> {
     return this.getTools();
   }
 
   /**
-   * Wait for tools to be updated, with a timeout.
-   * Resolves with current tools after a brief tick (min(timeoutMs, 50)).
-   * Ensures budget waiting logic in awaitStartupToolsWithinBudget() works for --devtools mode.
+   * Wait for tools to be updated.
+   *
+   * ChromeUseConnection has a static tool catalog (discovered at connection time).
+   * This method exists to satisfy the ToolProvider interface for uniform budget
+   * handling in `awaitStartupToolsWithinBudget()`. For a static backend it simply
+   * returns the current tool list immediately — there is no dynamic update to wait for.
    */
-  async waitForToolsUpdate(timeoutMs: number): Promise<ToolDefinition[]> {
-    const delay = Math.min(timeoutMs, 50);
-    await sleep(delay);
+  async waitForToolsUpdate(_timeoutMs: number): Promise<ToolDefinition[]> {
     return this.getTools();
   }
 

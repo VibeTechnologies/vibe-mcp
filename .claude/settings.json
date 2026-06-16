@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/task-readiness-check.cjs",
+            "command": "node .claude/hooks/task-readiness-check.cjs",
             "timeout": 570
           }
         ]

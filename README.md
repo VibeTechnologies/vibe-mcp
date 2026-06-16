@@ -18,7 +18,7 @@ You are setting yourself up to control my real Chrome through Vibe Browser. Work
    - Hermes:    npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -y
                 then run `npx -y skills list` and confirm a "vibebrowser" row.
 
-2. Remember my remote so I only give it to you once. Save it in BOTH places: under the key `vibebrowser_remote` (your memory tool) AND in the file `~/.vibebrowser-cli.md` as a line `remote: <value>`. On every later command — including the first message of a new conversation — load it back from there and reuse it without asking me again.
+2. Remember my remote so I only give it to you once. Save it in BOTH places: under the key `vibebrowser_remote` (your memory tool) AND in a file `vibebrowser-cli.md` in your persistent agent workspace root (the directory that holds your skills/ and memory/ — not the shell's working dir, not $HOME unless they are the same), as a line `remote: <value>`. On every later command — including the first message of a new conversation — load it back from there and reuse it without asking me again.
 
 3. Confirm you can control my Chrome, retrying on "Extension reconnecting" (wait 3s, up to 5x):
    npx -y @vibebrowser/cli@latest --remote "<my remote>" --json status --wait-for-extension --wait-timeout 20000

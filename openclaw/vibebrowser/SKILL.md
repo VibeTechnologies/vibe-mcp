@@ -28,12 +28,12 @@ At the very start of any browser task, in this order:
 1. **Recall from memory.** If your runtime has a memory/recall tool, read the key
    `vibebrowser_remote`. If it returns a value, use it as `--remote` and continue
    silently — do not mention it.
-2. **Read the file fallback.** Check `~/.vibebrowser-cli.md` (and, for backward
-   compatibility, `./vibebrowser-cli.md` in the working dir) for a `remote:` line.
-   If present, use it.
+2. **Read the workspace file.** Read `vibebrowser-cli.md` from your **agent workspace
+   root** (see ["Where to save it"](#where-to-save-it) — NOT the shell's current
+   directory, NOT `$HOME` unless they are the same dir) and use its `remote:` line.
 3. **Only if both are empty** may you ask the user for the remote. When they give it,
    immediately save it to **both** stores (memory key `vibebrowser_remote` **and**
-   `~/.vibebrowser-cli.md`) so the next conversation never has to ask again.
+   the workspace-root `vibebrowser-cli.md`) so the next conversation never has to ask again.
 
 > If you find yourself about to say "I need your Vibe remote value first," STOP — you
 > almost certainly skipped step 1/2. A returning user has already provided it; recall it.
@@ -120,9 +120,10 @@ On later turns, recall it before running any browser command:
 recall("vibebrowser_remote")  # → use as --remote value
 ```
 
-**Option B — Local context file (fallback / belt-and-suspenders):** Write the value to
-`~/.vibebrowser-cli.md` (home directory — **not** the working dir, which changes between
-conversations and would lose the value). Use this exact format so it can be machine-read back:
+**Option B — Workspace context file (fallback / belt-and-suspenders):** Write the value to
+a file named `vibebrowser-cli.md` in your **agent workspace root** (see
+["Where to save it"](#where-to-save-it) below). Use this exact format so it can be
+machine-read back:
 
 ```markdown
 # VibeBrowser CLI context
@@ -130,14 +131,28 @@ remote: <uuid-or-wss-url>
 ```
 
 Save to this file **even when a memory tool is available** — runtimes whose memory does
-not persist across conversations will still recover the remote from the file. At the start
-of any browser task, read `~/.vibebrowser-cli.md` (then `./vibebrowser-cli.md` for older
-saves) and use the `remote:` line. Create or overwrite the file when the value is first
-provided or updated.
+not persist across conversations (e.g. OpenClaw, which has no tool to write memory keys)
+still recover the remote from the file. At the start of any browser task, read it back and
+use the `remote:` line. Create or overwrite the file when the value is first provided or updated.
+
+#### Where to save it
+
+The file MUST live in your **persistent agent workspace root** — the directory that
+survives across conversations and holds your `skills/` and `memory/`. This is **not** the
+shell's current working directory (often `/` or a temp dir — ephemeral) and **not
+necessarily** `$HOME`:
+
+| Runtime  | Workspace root (save `vibebrowser-cli.md` here)        | Note |
+|----------|--------------------------------------------------------|------|
+| OpenClaw | `~/.openclaw/workspace/<agent>/` (e.g. `.../claw/`)    | `$HOME` is `/home/node`, a parent **outside** the persistent root — do not use it. |
+| Hermes   | `$HOME` (e.g. `/root`)                                 | Here `$HOME` *is* the workspace root, so `~/vibebrowser-cli.md` is correct. |
+
+If unsure, resolve the directory that contains your `skills/` (and `memory/`) folder and
+write the file there. Verify after writing with an absolute-path read-back.
 
 ### Rules for using the remembered value
 
-1. **On every browser command**, load the remembered remote (recall memory key `vibebrowser_remote`, else read `~/.vibebrowser-cli.md`) and pass it as `--remote "<remembered-value>"`. Do this on the first message of every new conversation, not just within one session.
+1. **On every browser command**, load the remembered remote (recall memory key `vibebrowser_remote`, else read the workspace-root `vibebrowser-cli.md`) and pass it as `--remote "<remembered-value>"`. Do this on the first message of every new conversation, not just within one session.
 2. **Only ask the user** for the remote if none is remembered in **either** store and the user did not provide one in the current message.
 3. **If the remembered remote stops working** — for example, `status` returns `extensionConnected: false`, or commands repeatedly fail — tell the user clearly and offer to update the saved value (then overwrite memory / `vibebrowser-cli.md` with the new one).
 
@@ -146,7 +161,7 @@ provided or updated.
 User: "Open google.com in my browser. My remote is `abc12345-...`."
 
 Agent actions:
-1. Save `abc12345-...` to memory under key `vibebrowser_remote` **and** write it to `~/.vibebrowser-cli.md`.
+1. Save `abc12345-...` to memory under key `vibebrowser_remote` **and** write it to `vibebrowser-cli.md` in your agent workspace root.
 2. Run:
    ```bash
    npx @vibebrowser/cli --remote "abc12345-..." --json status --wait-for-extension --wait-timeout 10000
@@ -158,7 +173,7 @@ Agent actions:
 User: "Now open github.com."
 
 Agent actions:
-1. Recall `vibebrowser_remote` from memory (or read `~/.vibebrowser-cli.md` → `remote:` line).
+1. Recall `vibebrowser_remote` from memory (or read the workspace-root `vibebrowser-cli.md` → `remote:` line).
 2. Run without asking the user:
    ```bash
    npx @vibebrowser/cli --remote "<remembered-value>" --json open https://github.com

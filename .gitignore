@@ -10,3 +10,16 @@ tmp/
 .claude/hooks/*
 !.claude/hooks/*.cjs
 .tasks/
+
+# Dev artifacts — never commit
+.env
+.env.*
+.env.local
+.env.*.local
+
+# Agent/supervisor internal dirs
+.supervisor/
+.agents/
+memory/
+MEMORY.md
+REVIEW.md

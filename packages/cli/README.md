@@ -3,8 +3,8 @@
 Standalone CLI for controlling a Vibe-connected browser session.
 
 ```bash
-VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 
 npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json status
 npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json tabs

@@ -86,7 +86,8 @@
   "files": [
     "dist",
     "openclaw",
-    "docs",
+    "docs/openclaw-local-browser.md",
+    "docs/chrome-devtools-relay.md",
     "README.md",
     "LICENSE"
   ]

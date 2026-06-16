@@ -82,7 +82,7 @@ The user needs three pieces:
 3. Go to **Settings** (gear icon)
 4. Find **MCP External** (or "MCP External Control")
 5. Enable it and select **Remote** mode
-6. Copy either the extension UUID or the full WebSocket relay URL shown, for example `wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84`
+6. Copy either the extension UUID or the full WebSocket relay URL shown, for example `wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID`
 
 > **Note**: `--remote <uuid>` uses the default public relay. `--remote <full-ws-url>` targets an explicit relay endpoint.
 
@@ -93,8 +93,8 @@ On the same machine where the browser extension is installed, run one of these r
 **Option A: Using the helper command (recommended)**
 
 ```bash
-VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID"
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL"
@@ -105,8 +105,8 @@ This prints the exact commands and MCP URL you need.
 If OpenClaw is running on another machine (for example in the cloud), provide a reachable URL:
 
 ```bash
-VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 PUBLIC_MCP_URL="https://browser-bridge.example.com/mcp"
 
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID" --public-url "$PUBLIC_MCP_URL"
@@ -116,8 +116,8 @@ npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL" --public-url
 **Option B: Manual command**
 
 ```bash
-VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 
 npx -y @vibebrowser/mcp@latest start --transport http --remote "$VIBE_REMOTE_UUID"
 npx -y @vibebrowser/mcp@latest start --transport http --remote "$VIBE_REMOTE_URL"
@@ -137,8 +137,8 @@ For operator workflows and OpenClaw skills, you can also use the OpenClaw-compat
 
 ```bash
 npx @vibebrowser/cli sessions
-VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" status
 npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" tabs
 npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" snapshot --json
@@ -147,8 +147,8 @@ npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" snapshot --json
 The CLI accepts only these remote forms:
 
 ```bash
-VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 
 npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json status
 npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
@@ -212,8 +212,8 @@ Copy `openclaw/vibebrowser/SKILL.md` from this package to your OpenClaw skills d
 Use either remote form in commands:
 
 ```bash
-VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 
 npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json status
 npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
@@ -223,8 +223,8 @@ npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
 
 ```bash
 # Check status
-VIBE_REMOTE_UUID="2d2f60a1-2031-4279-aa25-358f2c5b6f84"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/2d2f60a1-2031-4279-aa25-358f2c5b6f84"
+VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json status
 
 # List tabs

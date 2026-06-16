@@ -613,25 +613,32 @@ export class ExtensionConnection extends EventEmitter {
       return this.tools;
     }
 
-    return new Promise((resolve) => {
-      const onToolsUpdated = (tools: ToolDefinition[]) => {
-        cleanup();
-        resolve(tools);
-      };
-      const onExtensionDisconnected = () => {
-        cleanup();
-        resolve(this.tools);
-      };
-      const timer = setTimeout(() => {
-        cleanup();
-        resolve(this.tools);
-      }, timeoutMs);
+    let resolved = false;
 
+    return new Promise((resolve) => {
       const cleanup = () => {
         clearTimeout(timer);
         this.off('tools_updated', onToolsUpdated);
         this.off('extension_disconnected', onExtensionDisconnected);
       };
+      const onToolsUpdated = (tools: ToolDefinition[]) => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        resolve(tools);
+      };
+      const onExtensionDisconnected = () => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        resolve(this.tools);
+      };
+      const timer = setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+        resolve(this.tools);
+      }, timeoutMs);
 
       this.on('tools_updated', onToolsUpdated);
       this.on('extension_disconnected', onExtensionDisconnected);

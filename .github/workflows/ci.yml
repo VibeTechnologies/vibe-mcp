@@ -26,6 +26,9 @@ jobs:
       - name: Check types
         run: npx tsc --noEmit
 
+      - name: Validate skill frontmatter
+        run: npm run validate:skill
+
       - name: E2E (hermetic)
         # Hermetic e2e gate: relay, http, CLI-relay, the #14 tools/list
         # startup-budget regression, browser-cli, and the chrome-use devtools flag.

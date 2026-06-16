@@ -263,7 +263,7 @@ If `jq` is unavailable, parse `.pages` from `tabs --json` directly and still pas
   ```
 - Prefer `tabs` or `snapshot` before acting.
 - `snapshot` is tool-only and maps to the extension's `take_snapshot` tool (with `format` param for markdown vs aria).
-- Use `open <url>` to create a fresh page when possible.
+- Use `open <url>` to create a fresh page when possible. It opens a **background** tab and returns the new page id (`... (ID: <n>) ...`); pass that id as `--page-id` to any follow-up snapshot/evaluate/click — a bare follow-up reads the old active tab, not the page you just opened.
 - Use `evaluate --fn ...` only for simple compatibility-safe expressions such as:
   - `() => 21 + 21`
   - `() => document.title`
@@ -288,16 +288,27 @@ List pages:
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json tabs
 ```
 
-Open a new page:
+Open a new page **and then read it** — `open` creates a **background** tab and does NOT
+change the active tab, so a bare `snapshot`/`evaluate` afterwards would read the *old*
+active tab, not the page you just opened. Capture the new page id from the `open` output
+and pass it with `--page-id` to every follow-up command:
 
 ```bash
-npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json open https://example.com
+# open returns: raw.content[].text = "Successfully created new background page (ID: 12345) ..."
+OPEN_JSON="$(npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json open https://example.com)"
+PAGE_ID="$(printf '%s' "$OPEN_JSON" | grep -oE 'ID: [0-9]+' | grep -oE '[0-9]+' | head -n1)"
+# now read THAT page, not the active tab:
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" snapshot --format aria --interactive
 ```
 
-Take the default AI snapshot:
+If you instead want to read the tab the user is currently looking at, get its id from
+`tabs` (the `active: true` page) and pass that as `--page-id`. Never assume a bare
+`snapshot` after `open` shows the page you opened.
+
+Take the default AI snapshot (of a specific page — substitute the id you captured):
 
 ```bash
-npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json snapshot
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" snapshot
 ```
 
 Take the ARIA / interactive snapshot:

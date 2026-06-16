@@ -21,6 +21,7 @@
     "build": "tsc && node scripts/prepare-cli-package.mjs",
     "dev": "tsc --watch",
     "start": "node dist/cli.js",
+    "validate:skill": "node scripts/validate-skill.mjs openclaw/vibebrowser/SKILL.md",
     "prepublishOnly": "npm run build",
     "test": "npm run test:e2e:relay-race && npm run test:e2e:relay-roundtrip && npm run test:e2e:cli-relay && npm run test:e2e:http && npm run test:e2e:tools-list-budget && npm run test:e2e:browser-cli && npm run test:e2e:devtools-flag",
     "test:ci": "npm run test:e2e:relay-race && npm run test:e2e:relay-roundtrip && npm run test:e2e:cli-relay && npm run test:e2e:http && npm run test:e2e:tools-list-budget && npm run test:e2e:browser-cli && npm run test:e2e:devtools-flag",

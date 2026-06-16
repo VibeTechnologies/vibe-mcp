@@ -10,13 +10,20 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, isInitializeRequest, ListToolsRequestSchema, } from '@modelcontextprotocol/sdk/types.js';
 import { ExtensionConnection } from './connection.js';
-import { DevtoolsFallbackConnection } from './devtools-fallback.js';
+import { ChromeUseConnection } from './chrome-use-connection.js';
 import { DEFAULT_HTTP_PATH, DEFAULT_HTTP_PORT, DEFAULT_WS_PORT, } from './types.js';
 import { getPackageVersion } from './version.js';
 const SERVER_NAME = 'vibebrowser-mcp';
 const SERVER_VERSION = getPackageVersion();
 const STARTUP_TOOLS_REFRESH_TIMEOUT_MS = 4_000;
-const STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS = 1_500;
+/**
+ * Hard ceiling for how long a single `tools/list` request may block while waiting
+ * for the extension's tools to arrive. Kept well under typical MCP client startup
+ * budgets (Codex/OpenCode use 10s) so a slow or empty extension state can never
+ * blow the client timeout — late-arriving tools are pushed via the
+ * `notifications/tools/list_changed` capability instead. See #14.
+ */
+const STARTUP_TOOLS_LIST_BUDGET_MS = 3_000;
 /**
  * Timeout for tool execution via the relay/extension pipeline.
  * Page-interacting tools can take up to ~40s (CDP execution + post-action
@@ -67,7 +74,7 @@ export class VibeMcpServer {
             remoteRelayUrl: config.remoteRelayUrl,
         };
         if (this.config.devtools) {
-            this.connection = new DevtoolsFallbackConnection(this.config.debug);
+            this.connection = new ChromeUseConnection(this.config.debug);
         }
         else {
             const remoteConfig = this.config.remoteUuid
@@ -95,11 +102,11 @@ export class VibeMcpServer {
             }
         }
         if (this.config.devtools) {
-            if (this.connection instanceof DevtoolsFallbackConnection && this.connection.isAvailable()) {
-                this.log('Connected to chrome-devtools backend');
+            if (this.connection instanceof ChromeUseConnection && this.connection.isAvailable()) {
+                this.log('Connected to Chrome via DevTools Protocol (chrome-use backend)');
             }
             else {
-                this.log('chrome-devtools backend unavailable; server started without tools');
+                this.log('chrome-use DevTools backend unavailable; server started without tools');
             }
         }
         else if (this.config.remoteUuid) {
@@ -181,16 +188,16 @@ export class VibeMcpServer {
      * Set up extension connection events
      */
     setupConnectionEvents() {
-        if (this.connection instanceof DevtoolsFallbackConnection) {
+        if (this.connection instanceof ChromeUseConnection) {
             this.connection.on('connected', () => {
-                this.log('chrome-devtools backend connected');
+                this.log('chrome-use DevTools backend connected');
             });
             this.connection.on('unavailable', (reason) => {
                 this.log(reason);
                 this.notifyToolListChanged();
             });
             this.connection.on('tools_updated', (tools) => {
-                this.log(`Received ${tools.length} tools from chrome-devtools backend`);
+                this.log(`Received ${tools.length} tools from chrome-use DevTools backend`);
                 this.notifyToolListChanged();
             });
             return;
@@ -227,18 +234,7 @@ export class VibeMcpServer {
         });
         server.setRequestHandler(ListToolsRequestSchema, async () => {
             if (this.connection.getTools().length === 0) {
-                try {
-                    await this.connection.refreshTools(STARTUP_TOOLS_REFRESH_TIMEOUT_MS);
-                }
-                catch (error) {
-                    const message = error instanceof Error ? error.message : String(error);
-                    this.log(`tools/list refresh failed: ${message}`);
-                }
-            }
-            if (this.connection.getTools().length === 0) {
-                if (this.connection instanceof ExtensionConnection) {
-                    await this.connection.waitForToolsUpdate(STARTUP_TOOLS_EVENT_WAIT_TIMEOUT_MS);
-                }
+                await this.awaitStartupToolsWithinBudget(STARTUP_TOOLS_LIST_BUDGET_MS);
             }
             return {
                 tools: [SET_REMOTE_TOOL, ...this.connection.getTools()].map((tool) => ({
@@ -285,7 +281,7 @@ export class VibeMcpServer {
     async handleSetRemoteTool(args) {
         if (!(this.connection instanceof ExtensionConnection)) {
             return {
-                content: [{ type: 'text', text: 'Error: set_remote is not supported when using the chrome-devtools fallback backend' }],
+                content: [{ type: 'text', text: 'Error: set_remote is not supported when using the chrome-use DevTools backend' }],
                 isError: true,
             };
         }
@@ -423,7 +419,7 @@ export class VibeMcpServer {
                 version: SERVER_VERSION,
                 transport: 'http',
                 mcpPath: this.config.httpPath,
-                extensionConnected: this.connection instanceof DevtoolsFallbackConnection
+                extensionConnected: this.connection instanceof ChromeUseConnection
                     ? this.connection.isAvailable()
                     : this.connection.isExtensionConnected(),
                 cachedTools: this.connection.getTools().length,
@@ -541,6 +537,31 @@ export class VibeMcpServer {
             const message = error instanceof Error ? error.message : String(error);
             this.log(`Failed to send tools/list_changed: ${message}`);
         });
+    }
+    /**
+     * Try to populate the tool cache for an empty startup state, but never block the
+     * `tools/list` response past `budgetMs`. A bounded refresh runs first, then (for
+     * the extension backend) we wait out only the budget that remains. Whatever is
+     * cached at the deadline is returned; tools that arrive later are pushed to the
+     * client via `notifications/tools/list_changed`. This is the #14 hardening: the
+     * handler latency is capped regardless of relay/extension startup state, so it
+     * cannot exceed a client's tools/list startup timeout.
+     */
+    async awaitStartupToolsWithinBudget(budgetMs) {
+        const deadline = Date.now() + budgetMs;
+        try {
+            await this.connection.refreshTools(Math.max(0, deadline - Date.now()));
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            this.log(`tools/list refresh failed: ${message}`);
+        }
+        if (this.connection.getTools().length === 0 && this.connection instanceof ExtensionConnection) {
+            const remaining = deadline - Date.now();
+            if (remaining > 0) {
+                await this.connection.waitForToolsUpdate(remaining);
+            }
+        }
     }
     /**
      * Handle process termination.

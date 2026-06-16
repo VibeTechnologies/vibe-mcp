@@ -368,8 +368,20 @@ export class ChromeUseConnection extends EventEmitter {
     }
   }
 
-  /** Tool catalog is static; refresh just re-confirms availability. */
+  /** Tool catalog is static — refresh is a no-op that returns current tools. */
   async refreshTools(_timeoutMs?: number): Promise<ToolDefinition[]> {
+    return this.getTools();
+  }
+
+  /**
+   * Wait for tools to be updated.
+   *
+   * ChromeUseConnection has a static tool catalog (discovered at connection time).
+   * This method exists to satisfy the ToolProvider interface for uniform budget
+   * handling in `awaitStartupToolsWithinBudget()`. For a static backend it simply
+   * returns the current tool list immediately — there is no dynamic update to wait for.
+   */
+  async waitForToolsUpdate(_timeoutMs: number): Promise<ToolDefinition[]> {
     return this.getTools();
   }
 

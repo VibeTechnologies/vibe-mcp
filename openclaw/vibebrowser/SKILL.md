@@ -1,6 +1,6 @@
 ---
 name: vibebrowser
-description: Control the user's local browser through the Vibe Browser CLI bridge. Use this when the task must run against the user's real Vibe-connected browser session, tabs, cookies, or installed extensions.
+description: Control the user's local browser through the Vibe Browser CLI bridge. Use for ANY task against the user's real Vibe-connected browser — tabs, cookies, sessions, extensions, opening pages, snapshots, clicks. ALWAYS load this skill before responding to a browser request: it tells you how to recover the user's saved connection (the "remote") from memory/workspace so you never re-ask for it.
 metadata:
   {
     "openclaw":
@@ -25,20 +25,47 @@ found nothing.
 
 At the very start of any browser task, in this order:
 
-1. **Recall from memory.** If your runtime has a memory/recall tool, read the key
-   `vibebrowser_remote`. If it returns a value, use it as `--remote` and continue
-   silently — do not mention it.
-2. **Read the workspace file.** Read `vibebrowser-cli.md` from your **agent workspace
-   root** (see ["Where to save it"](#where-to-save-it) — NOT the shell's current
-   directory, NOT `$HOME` unless they are the same dir) and use its `remote:` line.
+1. **Read the workspace file (canonical source).** Read `vibebrowser-cli.md` from your
+   **agent workspace root** (see ["Where to save it"](#where-to-save-it) — NOT the shell's
+   current directory, NOT `$HOME` unless they are the same dir). If it has a valid
+   `remote:` line, use that value as `--remote` and continue silently. The file is the
+   durable store that survives across conversations and works on every runtime.
+2. **Else recall from memory.** If the file is missing/empty and your runtime has a
+   memory/recall tool, read the key `vibebrowser_remote` and use it.
 3. **Only if both are empty** may you ask the user for the remote. When they give it,
-   immediately save it to **both** stores (memory key `vibebrowser_remote` **and**
-   the workspace-root `vibebrowser-cli.md`) so the next conversation never has to ask again.
+   immediately write it to the workspace-root `vibebrowser-cli.md` (mandatory) **and**,
+   *if your runtime has a tool to write memory keys*, also store it under
+   `vibebrowser_remote`. (Some runtimes — e.g. OpenClaw — can read but not write memory
+   keys; the file alone is sufficient.) Then the next conversation never has to ask again.
 
 > If you find yourself about to say "I need your Vibe remote value first," STOP — you
 > almost certainly skipped step 1/2. A returning user has already provided it; recall it.
 
 Full details and examples: [## Remembering the remote connection](#remembering-the-remote-connection).
+
+## Use THIS for the user's own browser — not your built-in browser
+
+Many runtimes (OpenClaw, Hermes, etc.) ship a **separate built-in/headless/in-pod browser
+tool** (names like `browser_navigate`, `browser`, an in-pod Chrome on `127.0.0.1:9222`,
+a generic `web_fetch`). That browser is **empty** — it does not have the user's logins,
+cookies, tabs, or extensions.
+
+When the user refers to **their own browser** — phrases like "my browser", "my Chrome",
+"my tab(s)", "the page I'm on", "my logged-in session", "open … for me" — they mean their
+**real** browser, reachable **only** through this skill (`@vibebrowser/cli` + the saved
+remote). For those requests:
+
+- **Use this skill.** Run `vibebrowser-cli` with the recovered remote. Do **not** use the
+  built-in/headless browser or `web_fetch` — they hit a different, empty browser and will
+  silently give wrong results (you may even fabricate a title/snapshot you never fetched).
+- Only use the built-in browser when the user explicitly asks for a throwaway/sandbox
+  browser that is *not* their own.
+- If you are unsure which browser a request means, default to **this** skill (the user's
+  real browser) and confirm with one short question only if truly ambiguous.
+
+> Self-check before answering any browse/open/click/snapshot request: "Am I about to use
+> my built-in browser for something the user means to happen in THEIR browser?" If yes,
+> switch to `vibebrowser-cli` with the saved remote.
 
 ## Installation
 
@@ -106,21 +133,9 @@ Either of these forms is valid for `--remote`:
 - A bare UUID: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
 - A full relay URL: `wss://relay.api.vibebrowser.app/<uuid>`
 
-### How to save it (priority order)
+### How to save it
 
-**Option A — Memory tool (preferred):** If the agent runtime provides a memory or "remember" tool, store the value under the key `vibebrowser_remote`:
-
-```
-remember("vibebrowser_remote", "<uuid-or-wss-url>")
-```
-
-On later turns, recall it before running any browser command:
-
-```
-recall("vibebrowser_remote")  # → use as --remote value
-```
-
-**Option B — Workspace context file (fallback / belt-and-suspenders):** Write the value to
+**Primary — Workspace context file (works on every runtime):** Write the value to
 a file named `vibebrowser-cli.md` in your **agent workspace root** (see
 ["Where to save it"](#where-to-save-it) below). Use this exact format so it can be
 machine-read back:
@@ -130,31 +145,42 @@ machine-read back:
 remote: <uuid-or-wss-url>
 ```
 
-Save to this file **even when a memory tool is available** — runtimes whose memory does
-not persist across conversations (e.g. OpenClaw, which has no tool to write memory keys)
-still recover the remote from the file. At the start of any browser task, read it back and
-use the `remote:` line. Create or overwrite the file when the value is first provided or updated.
+This file is the canonical store: it persists across conversations and works even on
+runtimes whose memory does not persist or cannot be written (e.g. OpenClaw can read but
+**not** write memory keys). Create or overwrite it whenever the value is provided or updated.
+
+**Secondary — Memory key (only if your runtime can WRITE memory):** If, and only if, your
+runtime provides a tool to write memory keys, also store the value under `vibebrowser_remote`
+as a convenience cache. Do **not** assume this tool exists — if you cannot write memory keys,
+skip this; the file above is sufficient. Never fabricate a `remember(...)` call.
 
 #### Where to save it
 
-The file MUST live in your **persistent agent workspace root** — the directory that
-survives across conversations and holds your `skills/` and `memory/`. This is **not** the
-shell's current working directory (often `/` or a temp dir — ephemeral) and **not
-necessarily** `$HOME`:
+The file MUST live in your **persistent agent workspace root** — the single directory that
+(a) survives across conversations and (b) contains your **`memory/`** folder. (`memory/` is
+the reliable anchor; a `skills/` folder may also exist *globally* outside the workspace root,
+so do not key off `skills/` alone.) It is **not** the shell's current working directory
+(often `/` or a temp dir — ephemeral) and **not necessarily** `$HOME`:
 
 | Runtime  | Workspace root (save `vibebrowser-cli.md` here)        | Note |
 |----------|--------------------------------------------------------|------|
-| OpenClaw | `~/.openclaw/workspace/<agent>/` (e.g. `.../claw/`)    | `$HOME` is `/home/node`, a parent **outside** the persistent root — do not use it. |
+| OpenClaw | `~/.openclaw/workspace/<your-agent>/`                  | `$HOME` is `/home/node`, a parent **outside** the persistent root — do not use it. The global `~/.openclaw/skills/` is NOT the workspace root. |
 | Hermes   | `$HOME` (e.g. `/root`)                                 | Here `$HOME` *is* the workspace root, so `~/vibebrowser-cli.md` is correct. |
 
-If unsure, resolve the directory that contains your `skills/` (and `memory/`) folder and
-write the file there. Verify after writing with an absolute-path read-back.
+If your runtime is not in the table, resolve the directory that contains your **`memory/`**
+folder and write the file there. Always verify after writing with an **absolute-path**
+read-back (`cat <abs>/vibebrowser-cli.md`) and confirm the value matches.
+
+**Robust read-back:** when loading, accept the first line matching `remote:` followed by a
+UUID or `wss://` URL; ignore surrounding markdown/comments. If the file exists but has no
+valid `remote:` line, treat it as empty and fall through to the next store. If memory and
+file disagree, **prefer the file** (it is the user-updated canonical store).
 
 ### Rules for using the remembered value
 
-1. **On every browser command**, load the remembered remote (recall memory key `vibebrowser_remote`, else read the workspace-root `vibebrowser-cli.md`) and pass it as `--remote "<remembered-value>"`. Do this on the first message of every new conversation, not just within one session.
-2. **Only ask the user** for the remote if none is remembered in **either** store and the user did not provide one in the current message.
-3. **If the remembered remote stops working** — for example, `status` returns `extensionConnected: false`, or commands repeatedly fail — tell the user clearly and offer to update the saved value (then overwrite memory / `vibebrowser-cli.md` with the new one).
+1. **On every browser command**, load the remembered remote (read the workspace-root `vibebrowser-cli.md` first, else recall memory key `vibebrowser_remote`) and pass it as `--remote "<remembered-value>"`. Do this on the first message of every new conversation, not just within one session.
+2. **Only ask the user** for the remote if none is remembered in **either** store and the user did not provide one in the current message. Treat the remote as a secret — never echo it back in summaries, logs, screenshots, or commits.
+3. **If the remembered remote stops working** — for example, `status` returns `extensionConnected: false`, or commands repeatedly fail — tell the user clearly and offer to update the saved value (then overwrite the workspace-root `vibebrowser-cli.md`, and memory if writable, with the new one). Do not silently fall back to local relay mode.
 
 ### Example: first use
 
@@ -164,8 +190,8 @@ Agent actions:
 1. Save `abc12345-...` to memory under key `vibebrowser_remote` **and** write it to `vibebrowser-cli.md` in your agent workspace root.
 2. Run:
    ```bash
-   npx @vibebrowser/cli --remote "abc12345-..." --json status --wait-for-extension --wait-timeout 10000
-   npx @vibebrowser/cli --remote "abc12345-..." --json open https://google.com
+   npx -y @vibebrowser/cli@latest --remote "abc12345-..." --json status --wait-for-extension --wait-timeout 10000
+   npx -y @vibebrowser/cli@latest --remote "abc12345-..." --json open https://google.com
    ```
 
 ### Example: subsequent use (same or later session)
@@ -176,7 +202,7 @@ Agent actions:
 1. Recall `vibebrowser_remote` from memory (or read the workspace-root `vibebrowser-cli.md` → `remote:` line).
 2. Run without asking the user:
    ```bash
-   npx @vibebrowser/cli --remote "<remembered-value>" --json open https://github.com
+   npx -y @vibebrowser/cli@latest --remote "<remembered-value>" --json open https://github.com
    ```
 
 ## Command form
@@ -184,7 +210,7 @@ Agent actions:
 Prefer this exact command pattern:
 
 ```bash
-npx @vibebrowser/cli --remote "<uuid-or-url>" --json status
+npx -y @vibebrowser/cli@latest --remote "<uuid-or-url>" --json status
 ```
 
 Pass only one of these remote forms: `--remote <uuid>` for the default public relay, or `--remote <full-ws-url>` for an explicit relay endpoint.
@@ -192,7 +218,7 @@ Pass only one of these remote forms: `--remote <uuid>` for the default public re
 The examples below use `$VIBE_REMOTE_URL` as a stand-in for the remote value — substitute the literal UUID/URL if no environment variable is set. If `VIBE_REMOTE_URL` (or `VIBE_EXTENSION_UUID` / `VIBE_RELAY_UUID`) is exported, `--remote` can be omitted entirely:
 
 ```bash
-npx @vibebrowser/cli --json status
+npx -y @vibebrowser/cli@latest --json status
 ```
 
 ## Deterministic runbook (default)
@@ -201,29 +227,29 @@ Use this sequence when the task needs reliable, repeatable control:
 
 1. Verify connection:
    ```bash
-   npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status --wait-for-extension --wait-timeout 10000
+   npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json status --wait-for-extension --wait-timeout 10000
    ```
 2. Resolve a target page id without changing focus:
    ```bash
    PAGE_ID="$(
-      npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json tabs \
+      npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json tabs \
      | jq -r '.pages[] | select(.active == true) | .id' \
      | head -n1
    )"
    ```
 3. Snapshot that page before acting:
    ```bash
-   npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" snapshot --format aria --interactive
+   npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" snapshot --format aria --interactive
    ```
    If the aria snapshot is too verbose, try the default first and fall back:
    ```bash
-   npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" snapshot
+   npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" snapshot
    # If empty or only title returned, retry with aria:
-   npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" snapshot --format aria --interactive
+   npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" snapshot --format aria --interactive
    ```
 4. Perform action on the same page id:
    ```bash
-   npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" click 12
+   npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json --page-id "$PAGE_ID" click 12
    ```
 
 If `jq` is unavailable, parse `.pages` from `tabs --json` directly and still pass `--page-id <id>` on every action.
@@ -232,8 +258,8 @@ If `jq` is unavailable, parse `.pages` from `tabs --json` directly and still pas
 
 - **Never use `focus` or `tab select` unless explicitly asked.** The user may be actively working in the browser — switching their active tab is disruptive. Instead, pass `--page-id <id>` (or `--pageId <id>`) to target a specific tab without switching focus. Get the page ID from `tabs` output, then use it on any command:
   ```bash
-  npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id 2 snapshot
-  npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json --page-id 2 click 7
+  npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json --page-id 2 snapshot
+  npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json --page-id 2 click 7
   ```
 - Prefer `tabs` or `snapshot` before acting.
 - `snapshot` is tool-only and maps to the extension's `take_snapshot` tool (with `format` param for markdown vs aria).
@@ -253,44 +279,44 @@ If `jq` is unavailable, parse `.pages` from `tabs --json` directly and still pas
 Status:
 
 ```bash
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json status
 ```
 
 List pages:
 
 ```bash
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json tabs
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json tabs
 ```
 
 Open a new page:
 
 ```bash
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json open https://example.com
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json open https://example.com
 ```
 
 Take the default AI snapshot:
 
 ```bash
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json snapshot
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json snapshot
 ```
 
 Take the ARIA / interactive snapshot:
 
 ```bash
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json snapshot --format aria --interactive
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json snapshot --format aria --interactive
 ```
 
 Click and type using OpenClaw-style refs:
 
 ```bash
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json click 12
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json type 23 "hello" --submit
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json click 12
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json type 23 "hello" --submit
 ```
 
 Evaluate JavaScript:
 
 ```bash
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json evaluate --fn '() => document.title'
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json evaluate --fn '() => document.title'
 ```
 
 ## Snapshot format: `ai` vs `aria`
@@ -306,10 +332,10 @@ The `snapshot` command supports two extraction formats:
 
 ```bash
 # Default — may return empty for background tabs or SPAs like Notion
-npx @vibebrowser/cli ... snapshot
+npx -y @vibebrowser/cli@latest ... snapshot
 
 # Reliable fallback — uses Chrome DevTools Protocol directly, works on background tabs
-npx @vibebrowser/cli ... snapshot --format aria --interactive
+npx -y @vibebrowser/cli@latest ... snapshot --format aria --interactive
 ```
 
 **Known limitations of `--format ai`:**

@@ -136,12 +136,12 @@ Keep this terminal open - the bridge must stay running for OpenClaw to connect.
 For operator workflows and OpenClaw skills, you can also use the OpenClaw-compatible browser CLI surface directly:
 
 ```bash
-npx @vibebrowser/cli sessions
+npx -y @vibebrowser/cli@latest sessions
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" status
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" tabs
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" snapshot --json
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" status
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" tabs
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" snapshot --json
 ```
 
 The CLI accepts only these remote forms:
@@ -150,8 +150,8 @@ The CLI accepts only these remote forms:
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json status
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" --json status
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json status
 ```
 
 `--remote <uuid>` uses the default public relay. `--remote <full-ws-url>` targets an explicit relay endpoint.
@@ -165,7 +165,7 @@ Use `--page-id <id>` (or `--pageId <id>`) to target a specific tab without switc
 
 For local relay mode with multiple connected browsers/profiles:
 
-- run `npx @vibebrowser/cli sessions` to list available local session IDs
+- run `npx -y @vibebrowser/cli@latest sessions` to list available local session IDs
 - pass `--session <id>` to target one explicitly
 - if omitted, the CLI uses the first connected local session
 
@@ -215,8 +215,8 @@ Use either remote form in commands:
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json status
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" --json status
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json status
 ```
 
 ### Available commands
@@ -225,19 +225,19 @@ npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
 # Check status
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json status
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" --json status
 
 # List tabs
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json tabs
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json tabs
 
 # Open a page
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json open https://example.com
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" --json open https://example.com
 
 # Click element by index
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json click 12
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json click 12
 
 # Type into element
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json type 23 "hello"
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" --json type 23 "hello"
 ```
 
 See [`openclaw/vibebrowser/SKILL.md`](../openclaw/vibebrowser/SKILL.md) for the full command reference.

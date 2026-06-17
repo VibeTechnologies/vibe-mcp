@@ -52,10 +52,10 @@ cookies, tabs, or extensions.
 
 When the user refers to **their own browser** — phrases like "my browser", "my Chrome",
 "my tab(s)", "the page I'm on", "my logged-in session", "open … for me" — they mean their
-**real** browser, reachable **only** through this skill (`@vibebrowser/cli` + the saved
+**real** browser, reachable **only** through this skill (`npx -y @vibebrowser/cli@latest` + the saved
 remote). For those requests:
 
-- **Use this skill.** Run `vibebrowser-cli` with the recovered remote. Do **not** use the
+- **Use this skill.** Run `npx -y @vibebrowser/cli@latest` with the recovered remote. Do **not** use the
   built-in/headless browser or `web_fetch` — they hit a different, empty browser and will
   silently give wrong results (you may even fabricate a title/snapshot you never fetched).
 - Only use the built-in browser when the user explicitly asks for a throwaway/sandbox
@@ -65,7 +65,7 @@ remote). For those requests:
 
 > Self-check before answering any browse/open/click/snapshot request: "Am I about to use
 > my built-in browser for something the user means to happen in THEIR browser?" If yes,
-> switch to `vibebrowser-cli` with the saved remote.
+> switch to `npx -y @vibebrowser/cli@latest` with the saved remote.
 
 ## Installation
 
@@ -91,9 +91,9 @@ remote). For those requests:
    # Hermes:
    npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -y
    ```
-   Verify it registered with `openclaw skills list` (expect a `🌐 vibebrowser … ✓ ready` row) or `npx -y skills list` (Hermes). Installs to `~/.openclaw/skills/vibebrowser/SKILL.md`. Offline/registry-blocked fallback: copy this file there directly.
+   Verify OpenClaw installer registration with `openclaw skills list` (expect a `🌐 vibebrowser … ✓ ready` row); Hermes `npx -y skills list` is optional installer registration only. Real verification is direct CLI `status` plus `snapshot` with `npx -y @vibebrowser/cli@latest`; never run `vibebrowser`. Installs to `~/.openclaw/skills/vibebrowser/SKILL.md`. Offline/registry-blocked fallback: copy this file there directly.
 
-Use the `@vibebrowser/cli` command when the user wants OpenClaw to drive their real local browser through the Vibe extension.
+Use `npx -y @vibebrowser/cli@latest` when the user wants OpenClaw to drive their real local browser through the Vibe extension.
 
 Prefer this skill when the task depends on:
 

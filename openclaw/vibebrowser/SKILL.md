@@ -262,7 +262,7 @@ If `jq` is unavailable, parse `.pages` from `tabs --json` directly and still pas
   npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json --page-id 2 click 7
   ```
 - Prefer `tabs` or `snapshot` before acting.
-- `snapshot` is tool-only and maps to the extension's `take_snapshot` tool (with `format` param for markdown vs aria).
+- `snapshot` is tool-only: default `--format ai` maps to `take_md_snapshot`; `--format aria` maps to `take_a11y_snapshot`.
 - Use `open <url>` to create a fresh page when possible. It opens a **background** tab and returns the new page id (`... (ID: <n>) ...`); pass that id as `--page-id` to any follow-up snapshot/evaluate/click — a bare follow-up reads the old active tab, not the page you just opened.
 - Use `evaluate --fn ...` only for simple compatibility-safe expressions such as:
   - `() => 21 + 21`

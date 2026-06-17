@@ -156,10 +156,10 @@ npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json status
 
 `--remote <uuid>` uses the default public relay. `--remote <full-ws-url>` targets an explicit relay endpoint.
 
-`snapshot` in `vibebrowser-cli` is tool-only and maps directly to extension snapshot tools:
+`snapshot` is tool-only and maps to the specific snapshot tool for the requested format:
 
-- default (`--format ai`) -> `take_snapshot` (format: markdown)
-- ARIA (`--format aria`) -> `take_snapshot` (format: aria)
+- default (`--format ai`) -> `take_md_snapshot`
+- ARIA (`--format aria`) -> `take_a11y_snapshot`
 
 Use `--page-id <id>` (or `--pageId <id>`) to target a specific tab without switching user focus.
 

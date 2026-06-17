@@ -12,21 +12,21 @@ Paste the block below into your **OpenClaw** or **Hermes** agent. Replace the la
 ```text
 You are setting yourself up to control my real Chrome through Vibe Browser. Work through the steps in order, and after each step confirm it worked before moving on. Do not claim a step is done until you have proven it.
 
-1. Install the "vibebrowser" skill for your runtime, then confirm it is listed:
+1. Install the "vibebrowser" skill for your runtime:
    - OpenClaw:  npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -a openclaw -g -y --copy --dangerously-accept-openclaw-risks
-                then run `openclaw skills list` and confirm a "vibebrowser" row shows "ready".
+                then run `openclaw skills list` and confirm a "vibebrowser" row shows "ready" as installer registration.
    - Hermes:    npx -y skills add VibeTechnologies/vibe-mcp -s vibebrowser -y
-                then run `npx -y skills list` and confirm a "vibebrowser" row.
+                optional installer registration check: `npx -y skills list` shows a "vibebrowser" row.
 
 2. Remember my remote so I only give it to you once. Save it to a file `vibebrowser-cli.md` in your persistent agent workspace root (the directory that holds your `memory/` folder — not the shell's working dir, not $HOME unless they are the same) as a line `remote: <value>`; if your runtime can also write memory keys, additionally store it under `vibebrowser_remote`. On every later command — including the first message of a new conversation — load it back from that file and reuse it without asking me again.
 
-3. Record a standing rule so you route correctly later: whenever I ask you to do anything in MY browser / MY Chrome / MY tabs / the page I'm on, use this vibebrowser skill (`@vibebrowser/cli` with my saved remote) to drive my REAL browser — never your built-in, headless, or in-pod browser, and never web-fetch instead. Save this rule wherever your standing instructions/memory live so it applies in future conversations.
+3. Record a standing rule so you route correctly later: whenever I ask you to do anything in MY browser / MY Chrome / MY tabs / the page I'm on, use this vibebrowser skill (`npx -y @vibebrowser/cli@latest` with my saved remote) to drive my REAL browser — never your built-in, headless, or in-pod browser, never web-fetch instead, and never run `vibebrowser`. Save this rule wherever your standing instructions/memory live so it applies in future conversations.
 
 4. Confirm you can control my Chrome, retrying on "Extension reconnecting" (wait 3s, up to 5x):
    npx -y @vibebrowser/cli@latest --remote "<my remote>" --json status --wait-for-extension --wait-timeout 20000
    npx -y @vibebrowser/cli@latest --remote "<my remote>" --json snapshot --format aria
 
-Then report: (1) is vibebrowser listed, (2) is extensionConnected true, (3) did the snapshot return my real page content?
+Then report: (1) is extensionConnected true, (2) did the snapshot return my real page content?
 
 My remote: <PASTE YOUR UUID OR wss:// URL HERE>
 ```
@@ -365,14 +365,14 @@ npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL"
 
 Use `--remote <uuid>` with the default public relay, or `--remote <full-ws-url>` when you need an explicit relay endpoint.
 
-For direct browser CLI checks, use `@vibebrowser/cli`:
+For direct browser CLI checks, always use `npx -y @vibebrowser/cli@latest`:
 
 ```bash
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" --json status
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" --json status
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" --json status
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json status
 ```
 
 `--remote <uuid>` uses the default public relay. `--remote <full-ws-url>` targets an explicit relay endpoint.
@@ -381,32 +381,32 @@ For the full walkthrough, see `docs/openclaw-local-browser.md`.
 
 ### OpenClaw-Compatible Browser CLI
 
-`@vibebrowser/cli` mirrors the OpenClaw browser CLI shape for the real local-browser path:
+`npx -y @vibebrowser/cli@latest` mirrors the OpenClaw browser CLI shape for the real local-browser path:
 
 ```bash
-npx @vibebrowser/cli sessions
+npx -y @vibebrowser/cli@latest sessions
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" status
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" tabs
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" open https://example.com
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" snapshot
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" click 12
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" type 23 "hello" --submit
-npx @vibebrowser/cli --devtools status
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" status
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" tabs
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" open https://example.com
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" snapshot
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" click 12
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" type 23 "hello" --submit
+npx -y @vibebrowser/cli@latest --devtools status
 ```
 
 Use the MCP package for MCP server workflows and the CLI package for direct browser control:
 
 - `vibebrowser-mcp` for MCP server, HTTP bridge, and helper commands
-- `@vibebrowser/cli` for OpenClaw-inspired browser control against the real Vibe-connected session
+- `npx -y @vibebrowser/cli@latest` for OpenClaw-inspired browser control against the real Vibe-connected session
 
 `@vibebrowser/cli` accepts the OpenClaw-style `--browser-profile` flag for compatibility and supports `--json` for machine-readable output. Unlike OpenClaw's managed `openclaw` browser profile, this CLI always targets the real Vibe-connected browser session.
 
 Local-session selection:
 
-- `npx @vibebrowser/cli sessions` lists connected local browser sessions.
-- `npx @vibebrowser/cli --session <id> ...` targets a specific local session.
+- `npx -y @vibebrowser/cli@latest sessions` lists connected local browser sessions.
+- `npx -y @vibebrowser/cli@latest --session <id> ...` targets a specific local session.
 - If `--session` is omitted in local mode, the CLI uses the first connected session.
 - In remote mode, pass either `--remote <uuid>` to use the default public relay or `--remote <full-ws-url>` to use an explicit relay endpoint.
 
@@ -449,7 +449,7 @@ For OpenClaw agents that need your real browser context (logged-in sessions, exi
 
 1. Copy the Vibe skill from this package to your OpenClaw skills folder
 2. Use the extension UUID or full WebSocket relay URL with `--remote`
-3. Use `@vibebrowser/cli` commands in your agent prompts
+3. Use `npx -y @vibebrowser/cli@latest` commands in your agent prompts
 
 The skill is located at [`openclaw/vibebrowser/SKILL.md`](openclaw/vibebrowser/SKILL.md) and provides:
 - Full OpenClaw-compatible CLI commands (`status`, `tabs`, `snapshot`, `click`, `type`, etc.)
@@ -508,7 +508,7 @@ The extension connects to `http://localhost:11434/v1` automatically.
 
 ```text
 npx -y @vibebrowser/mcp@latest --help
-npx @vibebrowser/cli --help
+npx -y @vibebrowser/cli@latest --help
 
 # MCP server (default)
 npx -y @vibebrowser/mcp@latest [start] [options]
@@ -537,13 +537,13 @@ npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID" --public-ur
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
 
 # OpenClaw-compatible browser CLI
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" status
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" status --wait-for-extension --wait-timeout 10000
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" tabs
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" snapshot --json
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_UUID" click 12
-npx @vibebrowser/cli --remote "$VIBE_REMOTE_URL" type 23 "hello" --submit
-npx @vibebrowser/cli --devtools tabs
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" status
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" status --wait-for-extension --wait-timeout 10000
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" tabs
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" snapshot --json
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" click 12
+npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" type 23 "hello" --submit
+npx -y @vibebrowser/cli@latest --devtools tabs
 
 # Local LLM server
 MODEL="qwen3.5"

@@ -29,6 +29,7 @@ const MIME_TYPE_BY_EXTENSION: Record<string, string> = {
 const DEFAULT_BROWSER_PROFILE = process.env.VIBE_BROWSER_PROFILE || 'user';
 const DEFAULT_REMOTE = process.env.VIBE_REMOTE_URL || process.env.VIBE_EXTENSION_UUID || process.env.VIBE_RELAY_UUID;
 const DEFAULT_REMOTE_SECRET = process.env.VIBE_REMOTE_SECRET;
+const REMOTE_START_FAILURE_MESSAGE = 'Remote browser start failed: unable to establish an authenticated browser relay session. Verify --remote / --remote-secret and extension relay connectivity.';
 
 type JsonPrimitive = null | boolean | number | string;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -157,15 +158,22 @@ function registerBrowserSubcommands(browser: Command): void {
     .command('start')
     .description('Connect to the browser bridge and verify the session is reachable')
     .action(async function (this: Command) {
-      await runBrowserCommand(this, 'start', false, async (ctx) => {
-        const status = await ctx.status();
+      await runBrowserCommand(this, 'start', false, async (ctx, _options, globalOptions) => {
+        const requireRemoteReady = Boolean(globalOptions.remote);
+        const status = await ctx.status({ failIfDisconnected: requireRemoteReady });
+        const started = status.extensionConnected === true;
+        const failedRemoteStart = requireRemoteReady && !started;
         return {
           ...status,
-          started: status.extensionConnected,
+          ok: failedRemoteStart ? false : status.ok,
+          started,
           managedLifecycle: false,
-          note: status.extensionConnected
+          note: failedRemoteStart
+            ? REMOTE_START_FAILURE_MESSAGE
+            : started
             ? 'Connected to Vibe browser session'
             : 'Vibe uses an attach-only browser session; no managed browser process was started',
+          ...(failedRemoteStart ? { error: REMOTE_START_FAILURE_MESSAGE } : {}),
         };
       });
     });
@@ -503,6 +511,9 @@ async function runBrowserCommand(
 
     const output = await handler(ctx, localOptions, globalOptions);
     emitOutput(Boolean(globalOptions.json), output, formatHumanOutput(commandName, output));
+    if (output.ok === false) {
+      process.exitCode = 1;
+    }
   } catch (error) {
     if (ctx) {
       emitError(Boolean(globalOptions.json), commandName, ctx, error);
@@ -617,10 +628,12 @@ export class BrowserCliContext {
     waitForExtension?: boolean;
     waitTimeoutMs?: number;
     pollIntervalMs?: number;
+    failIfDisconnected?: boolean;
   } = {}): Promise<CommandOutput> {
     const waitForExtension = options.waitForExtension === true;
     const waitTimeoutMs = options.waitTimeoutMs ?? this.timeoutMs;
     const pollIntervalMs = options.pollIntervalMs ?? 250;
+    const failIfDisconnected = options.failIfDisconnected === true;
     const waitStartedAt = Date.now();
 
     if (this.connection instanceof ExtensionConnection) {
@@ -653,8 +666,14 @@ export class BrowserCliContext {
     }
     await this.ensureToolsLoaded(STATUS_TOOLS_TIMEOUT_MS);
 
+    const relayConnected = this.connection instanceof ExtensionConnection
+      ? this.connection.getStatus() === 'connected'
+      : false;
+    const extensionConnected = this.isBackendConnected();
+    const shouldFailClosed = failIfDisconnected && Boolean(this.remoteUuid) && !extensionConnected;
+
     return {
-      ok: true,
+      ok: !shouldFailClosed,
       command: 'status',
       profile: this.profile,
       mode: this.mode(),
@@ -662,14 +681,13 @@ export class BrowserCliContext {
       requestedSessionId: this.requestedSessionId,
       sessions: this.sessions,
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
-      relayConnected: this.connection instanceof ExtensionConnection
-        ? this.connection.getStatus() === 'connected'
-        : false,
-      extensionConnected: this.isBackendConnected(),
+      relayConnected,
+      extensionConnected,
       managedLifecycle: false,
       transport: 'vibebrowser-mcp',
       toolCount: this.tools.length,
       tools: this.tools.map((tool) => tool.name),
+      ...(shouldFailClosed ? { error: REMOTE_START_FAILURE_MESSAGE } : {}),
       ...(waitForExtension
         ? {
           waitForExtension: true,
@@ -1735,6 +1753,7 @@ function formatHumanOutput(commandName: string, output: CommandOutput): string {
         `Managed lifecycle: ${boolText(output.managedLifecycle)}`,
         output.toolCount !== undefined ? `Tools: ${String(output.toolCount)}` : null,
         output.note ? String(output.note) : null,
+        output.error ? `Error: ${String(output.error)}` : null,
       ].filter(Boolean).join('\n');
     case 'sessions': {
       const sessions = Array.isArray(output.sessions) ? output.sessions as RelaySessionSummary[] : [];

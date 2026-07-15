@@ -8,6 +8,8 @@ published: true
 
 If you are running OpenClaw in the cloud, one of the most useful upgrades is giving it access to a real browser.
 
+> ⚠️ **Security:** A relay URL/UUID (`wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of your browser session** (read tabs, screenshots, page content). Treat it like a password — never share it, paste it into a chat with untrusted parties, or commit it to a repo. Example UUIDs in this doc are placeholders (`YOUR-EXTENSION-UUID` / `00000000-0000-0000-0000-000000000000`) and are not routable.
+
 But there are actually two different browser problems hiding inside that sentence:
 
 - **tenant browser**: a browser that lives inside the hosted OpenClaw runtime

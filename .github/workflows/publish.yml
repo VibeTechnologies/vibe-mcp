@@ -30,17 +30,31 @@ jobs:
           fetch-depth: 0
       
       - name: Setup Node.js
+        # npm's OIDC trusted publishing requires npm CLI >= 11.5.1 *and*
+        # Node >= 22.14.0 (https://docs.npmjs.com/trusted-publishers/).
+        # Node 20 satisfies npm 11.18.0's own package engines range
+        # (^20.17.0 || >=22.9.0) but is below npm's separate, stricter
+        # trusted-publishing runtime requirement, so this job must run on
+        # Node 22. Pinned to 22.23.1: the current Node 22 "Jod" LTS release
+        # (still in Maintenance LTS through 2027-04-30), verified present in
+        # actions/setup-node's version manifest and comfortably above the
+        # 22.14.0 minimum.
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22.23.1'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Upgrade npm (OIDC trusted publishing requires npm >= 11.5.1)
         run: |
           # Pin to npm 11.18.0: the latest 11.x release compatible with the
-          # Node 20 runtime above (engines: node ^20.17.0 || >=22.9.0).
-          # `npm@latest` resolves to npm 12.x, which requires Node >=22.22.2
-          # and breaks this job on Node 20 (see run 29392811746).
+          # Node 22.23.1 runtime above (npm's own engines field requires
+          # node ^20.17.0 || >=22.9.0). `npm@latest` resolves to npm 12.x,
+          # which requires Node >=22.22.2/^24.15.0/>=26.0.0 and previously
+          # broke this job on Node 20 (see failed run 29392811746). Even
+          # with npm 11.18.0, npm's trusted-publishing/OIDC feature itself
+          # additionally requires Node >= 22.14.0
+          # (https://docs.npmjs.com/trusted-publishers/), which is why the
+          # Setup Node.js step above was moved from Node 20 to Node 22.23.1.
           npm install -g npm@11.18.0
           echo "npm version: $(npm --version)"
           echo "node version: $(node --version)"

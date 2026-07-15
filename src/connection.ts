@@ -128,6 +128,26 @@ function parseRemoteTarget(value: string, currentRelayUrl?: string): ParsedRemot
   };
 }
 
+function normalizeRelayOrigin(relayUrl: string | undefined): string | undefined {
+  if (!relayUrl) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(relayUrl);
+    if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
+      return undefined;
+    }
+    parsed.username = '';
+    parsed.password = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.origin.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
 export function normalizeRemoteConfig(remote?: RemoteConfig): RemoteConfig | undefined {
   if (!remote) {
     return undefined;
@@ -221,7 +241,13 @@ export class ExtensionConnection extends EventEmitter {
   async setRemoteUrl(url: string, secret?: string, preserveExistingSecret: boolean = true): Promise<ParsedRemoteRelayUrl> {
     const parsed = parseRemoteTarget(url, this.remoteConfig?.relayUrl);
     const normalizedSecret = normalizeRemoteSecret(secret);
-    const nextSecret = preserveExistingSecret
+    const currentRelayBase = (this.remoteConfig?.relayUrl || DEFAULT_RELAY_URL).replace(/\/$/, '');
+    const currentOrigin = normalizeRelayOrigin(currentRelayBase);
+    const nextOrigin = normalizeRelayOrigin(parsed.relayUrl);
+    const sameRelayOrigin = Boolean(currentOrigin && nextOrigin && currentOrigin === nextOrigin);
+    // Security boundary: never carry bearer secrets across relay origins.
+    // If caller does not provide a new secret and the origin changed, drop it.
+    const nextSecret = preserveExistingSecret && sameRelayOrigin
       ? this.remoteConfig?.secret
       : normalizedSecret;
 

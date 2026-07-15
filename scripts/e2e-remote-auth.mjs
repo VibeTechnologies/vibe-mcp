@@ -17,6 +17,7 @@ const MCP_CLI = resolve(PACKAGE_ROOT, 'dist', 'cli.js');
 const BROWSER_CLI = resolve(PACKAGE_ROOT, 'dist', 'browser-main.js');
 
 const UUID_AUTH = '11111111-1111-4111-8111-111111111111';
+const UUID_DROP = '44444444-4444-4444-8444-444444444444';
 const UUID_ROTATED = '22222222-2222-4222-8222-222222222222';
 const UUID_LEGACY = '33333333-3333-4333-8333-333333333333';
 
@@ -70,6 +71,17 @@ async function waitForPort(port, timeoutMs = 10_000) {
     await delay(50);
   }
   throw new Error(`Timed out waiting for port ${port}`);
+}
+
+async function waitForAuthHeaderCount(relay, minCount, timeoutMs = 10_000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (relay.getAuthHeaders().length >= minCount) {
+      return;
+    }
+    await delay(25);
+  }
+  throw new Error(`Timed out waiting for auth header count >= ${minCount}`);
 }
 
 function parseJsonOrNull(value) {
@@ -426,6 +438,7 @@ async function withMcpClient(httpPort, callback) {
 
 async function main() {
   const relayAuthPort = await findFreePort();
+  const relayDropPort = await findFreePort();
   const relayRotatePort = await findFreePort();
   const relayLegacyPort = await findFreePort();
   const httpPortAuth = await findFreePort();
@@ -436,6 +449,11 @@ async function main() {
     uuid: UUID_AUTH,
     toolName: 'echo_auth',
     requiredToken: TOKEN_AUTH,
+  });
+  const relayDrop = startFakeRelay({
+    port: relayDropPort,
+    uuid: UUID_DROP,
+    toolName: 'echo_drop',
   });
   const relayRotate = startFakeRelay({
     port: relayRotatePort,
@@ -453,6 +471,7 @@ async function main() {
   let legacyServer = null;
 
   await relayAuth.start();
+  await relayDrop.start();
   await relayRotate.start();
   await relayLegacy.start();
 
@@ -545,6 +564,77 @@ async function main() {
       const initialCall = await client.callTool({ name: 'echo_auth', arguments: {} });
       assert(extractTextContent(initialCall).includes('echo_auth ok'), `mcp call_tool failed before set_remote: ${JSON.stringify(initialCall)}`);
 
+      const sameOriginUrl = relayAuth.url.replace(/^ws:\/\//, 'WS://');
+      const [sameOriginResult, sameOriginConn] = await Promise.all([
+        client.callTool({
+          name: 'set_remote',
+          arguments: {
+            url: sameOriginUrl,
+          },
+        }),
+        relayAuth.waitForConnection(),
+      ]);
+      assert(sameOriginConn.authorization === `Bearer ${TOKEN_AUTH}`, 'same-origin set_remote should preserve Authorization header');
+      const sameOriginText = extractTextContent(sameOriginResult);
+      assert(sameOriginText.length > 0, `same-origin set_remote result missing text payload: ${JSON.stringify(sameOriginResult)}`);
+      const sameOriginPayload = parseJsonOrNull(sameOriginText);
+      assert(sameOriginPayload?.ok === true, `same-origin set_remote result invalid: ${sameOriginText}`);
+      assert(sameOriginPayload?.uuid === UUID_AUTH, `same-origin set_remote should keep UUID_AUTH: ${sameOriginText}`);
+      assert(sameOriginPayload?.secretConfigured === true, `same-origin set_remote should keep secretConfigured=true: ${sameOriginText}`);
+      assertNoTokenLeak('same-origin set_remote result', sameOriginText, TOKEN_AUTH, TOKEN_ROTATED, TOKEN_WRONG);
+
+      const malformedDropAttemptsBefore = relayDrop.getUpgradeCount();
+      const malformedSetRemote = await client.callTool({
+        name: 'set_remote',
+        arguments: {
+          url: `${relayDrop.url}?token=${TOKEN_WRONG}`,
+        },
+      });
+      const malformedSetRemoteText = extractTextContent(malformedSetRemote);
+      assert(malformedSetRemote.isError === true, `malformed set_remote should return isError=true: ${JSON.stringify(malformedSetRemote)}`);
+      assert(/query|fragment|remote-secret/i.test(malformedSetRemoteText), `malformed set_remote should mention query/secret rejection: ${malformedSetRemoteText}`);
+      assert(relayDrop.getUpgradeCount() === malformedDropAttemptsBefore, 'malformed set_remote URL should fail before network connect');
+      assertNoTokenLeak('malformed set_remote result', malformedSetRemoteText, TOKEN_AUTH, TOKEN_ROTATED, TOKEN_WRONG);
+
+      const [crossOriginResult, dropConn] = await Promise.all([
+        client.callTool({
+          name: 'set_remote',
+          arguments: {
+            url: relayDrop.url,
+          },
+        }),
+        relayDrop.waitForConnection(),
+      ]);
+      assert(!dropConn.authorization, `cross-origin set_remote without secret must not send Authorization: ${dropConn.authorization}`);
+      const crossOriginText = extractTextContent(crossOriginResult);
+      assert(crossOriginText.length > 0, `cross-origin set_remote result missing text payload: ${JSON.stringify(crossOriginResult)}`);
+      const crossOriginPayload = parseJsonOrNull(crossOriginText);
+      assert(crossOriginPayload?.ok === true, `cross-origin set_remote result invalid: ${crossOriginText}`);
+      assert(crossOriginPayload?.uuid === UUID_DROP, `cross-origin set_remote should switch to UUID_DROP: ${crossOriginText}`);
+      assert(crossOriginPayload?.secretConfigured === false, `cross-origin set_remote should report secretConfigured=false: ${crossOriginText}`);
+      assertNoTokenLeak('cross-origin set_remote result', crossOriginText, TOKEN_AUTH, TOKEN_ROTATED, TOKEN_WRONG);
+
+      const droppedTools = await client.listTools();
+      assert(droppedTools.tools.some((toolDef) => toolDef.name === 'echo_drop'), `mcp tools missing drop-origin relay tool: ${JSON.stringify(droppedTools)}`);
+      assert(!droppedTools.tools.some((toolDef) => toolDef.name === 'echo_auth'), `mcp tools should not include stale auth-origin tool: ${JSON.stringify(droppedTools)}`);
+      const droppedCall = await client.callTool({ name: 'echo_drop', arguments: {} });
+      assert(extractTextContent(droppedCall).includes('echo_drop ok'), `mcp call_tool failed after cross-origin secret drop: ${JSON.stringify(droppedCall)}`);
+
+      const rotateAttemptsBefore = relayRotate.getAuthHeaders().length;
+      const rotateWithoutSecret = await client.callTool({
+        name: 'set_remote',
+        arguments: {
+          url: relayRotate.url,
+        },
+      });
+      await waitForAuthHeaderCount(relayRotate, rotateAttemptsBefore + 1);
+      const rotateWithoutSecretAuth = relayRotate.getAuthHeaders()[relayRotate.getAuthHeaders().length - 1] || '';
+      assert(!rotateWithoutSecretAuth, `cross-origin set_remote without secret should not forward prior bearer token: ${rotateWithoutSecretAuth}`);
+      const rotateWithoutSecretText = extractTextContent(rotateWithoutSecret);
+      assert(rotateWithoutSecret.isError === true, `set_remote to token-enabled origin without secret should fail: ${JSON.stringify(rotateWithoutSecret)}`);
+      assert(/401|unauthorized/i.test(rotateWithoutSecretText), `set_remote without secret should fail unauthorized: ${rotateWithoutSecretText}`);
+      assertNoTokenLeak('set_remote without secret result', rotateWithoutSecretText, TOKEN_AUTH, TOKEN_ROTATED, TOKEN_WRONG);
+
       const [setRemoteResult, rotatedConn] = await Promise.all([
         client.callTool({
           name: 'set_remote',
@@ -555,7 +645,6 @@ async function main() {
         }),
         relayRotate.waitForConnection(),
       ]);
-
       assert(rotatedConn.authorization === `Bearer ${TOKEN_ROTATED}`, 'set_remote did not apply rotated Authorization header');
       const setRemoteText = extractTextContent(setRemoteResult);
       assert(setRemoteText.length > 0, `set_remote result missing text payload: ${JSON.stringify(setRemoteResult)}`);
@@ -567,13 +656,14 @@ async function main() {
 
       const rotatedTools = await client.listTools();
       assert(rotatedTools.tools.some((toolDef) => toolDef.name === 'echo_rotated'), `mcp tools missing rotated relay tool: ${JSON.stringify(rotatedTools)}`);
+      assert(!rotatedTools.tools.some((toolDef) => toolDef.name === 'echo_drop'), `mcp tools should not include stale drop-origin relay tool: ${JSON.stringify(rotatedTools)}`);
 
       const rotatedCall = await client.callTool({ name: 'echo_rotated', arguments: {} });
       assert(extractTextContent(rotatedCall).includes('echo_rotated ok'), `mcp call_tool failed after set_remote: ${JSON.stringify(rotatedCall)}`);
     });
 
     assertNoTokenLeak('mcp auth server logs', `${authServer.getStdout()}\n${authServer.getStderr()}`, TOKEN_AUTH, TOKEN_ROTATED, TOKEN_WRONG);
-    console.log('  mcp valid token + set_remote secret rotation: PASS');
+    console.log('  mcp origin-bound secret handling + set_remote rotation: PASS');
 
     const mcpMissing = await runNodeProcess(MCP_CLI, [
       'start',
@@ -653,6 +743,7 @@ async function main() {
       await legacyServer.stop();
     }
     await relayAuth.close();
+    await relayDrop.close();
     await relayRotate.close();
     await relayLegacy.close();
   }

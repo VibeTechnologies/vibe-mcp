@@ -20,6 +20,7 @@ Evaluation date: **March 26, 2026 (America/Los_Angeles)**.
 |---|---|---|---|---|
 | Relay race regression | `npm run test:e2e:relay-race` | local | fake extension socket | relay preserves in-flight tool calls across extension reconnects |
 | HTTP MCP transport | `npm run test:e2e:http` | local | fake extension socket | streamable HTTP MCP path works end to end |
+| Remote relay second-factor auth | `npm run test:e2e:remote-auth` | local | fake remote relay with auth gate | Bearer-token handshake on MCP/CLI clients, rejection on missing/wrong token, legacy tokenless compatibility, and token redaction in outputs |
 | OpenClaw-compatible browser CLI | `npm run test:e2e:browser-cli` | `local`, `pack`, `npm` | fake extension socket | `vibebrowser-cli` command shape, JSON output, and tool routing work end to end |
 | Live browser CLI regression | `npm run test:e2e:browser-cli-live` | local | real extension session | validates `open`/`snapshot` behavior on a real URL against the connected Vibe extension |
 | Codex + OpenCode MCP bridge | `npm run test:e2e:agents` | `local`, `pack`, `npm` | real extension session | packaged `vibebrowser-mcp` can be launched by Codex/OpenCode tooling and route MCP traffic to a real Vibe-connected browser |
@@ -96,6 +97,7 @@ Pass signal:
 - output contains:
   - `e2e ok`
   - `http e2e ok`
+  - `remote auth e2e ok`
   - `browser cli e2e ok`
 
 ### 2. Packaged CLI artifact validation

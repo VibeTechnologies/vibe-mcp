@@ -146,6 +146,14 @@ try {
   const parsedWssRemote = parseRemoteRelayUrl(`wss://relay.example.test/nested/${REMOTE_UUID}`);
   assert(parsedWssRemote.relayUrl === 'wss://relay.example.test/nested', `wss remote relay base parsed incorrectly: ${JSON.stringify(parsedWssRemote)}`);
   assert(parsedWssRemote.uuid === REMOTE_UUID, `wss remote UUID parsed incorrectly: ${JSON.stringify(parsedWssRemote)}`);
+  let queryRejected = false;
+  try {
+    parseRemoteRelayUrl(`wss://relay.example.test/nested/${REMOTE_UUID}?token=${'a'.repeat(64)}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    queryRejected = /query|remote-secret/i.test(message);
+  }
+  assert(queryRejected, 'remote relay URL with query params should be rejected (token must be separate)');
 
   const status = await runCli(['status']);
   assert(status.ok === true, `status failed: ${JSON.stringify(status)}`);

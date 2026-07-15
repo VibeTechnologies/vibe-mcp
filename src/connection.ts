@@ -37,6 +37,8 @@ const RELAY_RECONNECT_DELAY = 2000;
 
 const DEFAULT_RELAY_URL = 'wss://relay.api.vibebrowser.app';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REMOTE_SECRET_PATTERN = /^[a-f0-9]{64}$/;
+const REMOTE_SECRET_ERROR = 'Invalid remote secret: expected 64 lowercase hex characters';
 
 /**
  * Remote relay configuration
@@ -44,6 +46,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 export interface RemoteConfig {
   uuid: string;
   relayUrl?: string; // defaults to DEFAULT_RELAY_URL
+  secret?: string; // optional bearer token for relay second-factor auth
 }
 
 export interface ParsedRemoteRelayUrl {
@@ -68,6 +71,14 @@ export function parseRemoteRelayUrl(value: string): ParsedRemoteRelayUrl {
     throw new Error('Invalid remote relay URL: protocol must be ws:// or wss://');
   }
 
+  if (parsed.username || parsed.password) {
+    throw new Error('Invalid remote relay URL: credentials in URL are not allowed (use --remote-secret / VIBE_REMOTE_SECRET)');
+  }
+
+  if (parsed.search || parsed.hash) {
+    throw new Error('Invalid remote relay URL: query/fragments are not allowed (use --remote-secret / VIBE_REMOTE_SECRET)');
+  }
+
   const pathSegments = parsed.pathname.split('/').filter(Boolean);
   const uuid = pathSegments[pathSegments.length - 1];
   if (!uuid) {
@@ -83,6 +94,23 @@ export function parseRemoteRelayUrl(value: string): ParsedRemoteRelayUrl {
     relayUrl: parsed.toString().replace(/\/$/, ''),
     uuid,
   };
+}
+
+export function normalizeRemoteSecret(secret?: string): string | undefined {
+  if (secret === undefined) {
+    return undefined;
+  }
+
+  const trimmed = secret.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  if (!REMOTE_SECRET_PATTERN.test(trimmed)) {
+    throw new Error(REMOTE_SECRET_ERROR);
+  }
+
+  return trimmed;
 }
 
 function parseRemoteTarget(value: string, currentRelayUrl?: string): ParsedRemoteRelayUrl {
@@ -105,9 +133,10 @@ export function normalizeRemoteConfig(remote?: RemoteConfig): RemoteConfig | und
     return undefined;
   }
 
+  const secret = normalizeRemoteSecret(remote.secret);
   const relayUrl = remote.relayUrl?.replace(/\/$/, '');
   if (!isRemoteRelayUrl(remote.uuid)) {
-    return { uuid: remote.uuid, relayUrl };
+    return { uuid: remote.uuid, relayUrl, secret };
   }
 
   const parsed = parseRemoteRelayUrl(remote.uuid);
@@ -118,6 +147,7 @@ export function normalizeRemoteConfig(remote?: RemoteConfig): RemoteConfig | und
   return {
     uuid: parsed.uuid,
     relayUrl: relayUrl || parsed.relayUrl,
+    secret,
   };
 }
 
@@ -188,15 +218,19 @@ export class ExtensionConnection extends EventEmitter {
     await this.connectToRelay();
   }
 
-  async setRemoteUrl(url: string): Promise<ParsedRemoteRelayUrl> {
+  async setRemoteUrl(url: string, secret?: string, preserveExistingSecret: boolean = true): Promise<ParsedRemoteRelayUrl> {
     const parsed = parseRemoteTarget(url, this.remoteConfig?.relayUrl);
+    const normalizedSecret = normalizeRemoteSecret(secret);
+    const nextSecret = preserveExistingSecret
+      ? this.remoteConfig?.secret
+      : normalizedSecret;
 
     this.stopping = true;
     this.clearReconnectTimer();
     this.rejectPendingRequests(new Error('Remote relay changed'));
     this.closeSocket();
 
-    this.remoteConfig = { uuid: parsed.uuid, relayUrl: parsed.relayUrl };
+    this.remoteConfig = { uuid: parsed.uuid, relayUrl: parsed.relayUrl, secret: nextSecret };
     this.tools = [];
     this.sessions = [];
     this.extensionConnected = false;
@@ -293,7 +327,12 @@ export class ExtensionConnection extends EventEmitter {
       this.log(`Connecting to relay at ${url}...`);
 
       try {
-        this.ws = new WebSocket(url);
+        const wsHeaders = this.remoteConfig?.secret
+          ? { Authorization: `Bearer ${this.remoteConfig.secret}` }
+          : undefined;
+        this.ws = wsHeaders
+          ? new WebSocket(url, { headers: wsHeaders })
+          : new WebSocket(url);
 
         this.ws.on('open', () => {
           this.log('Connected to relay');

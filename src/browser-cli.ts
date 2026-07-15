@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
-import { ExtensionConnection } from './connection.js';
+import { ExtensionConnection, normalizeRemoteSecret } from './connection.js';
 import { ChromeUseConnection, type CdpConnector } from './chrome-use-connection.js';
 import { DEFAULT_WS_PORT, type RelaySessionSummary, type ToolDefinition, type ToolResult } from './types.js';
 
@@ -28,6 +28,7 @@ const MIME_TYPE_BY_EXTENSION: Record<string, string> = {
 };
 const DEFAULT_BROWSER_PROFILE = process.env.VIBE_BROWSER_PROFILE || 'user';
 const DEFAULT_REMOTE = process.env.VIBE_REMOTE_URL || process.env.VIBE_EXTENSION_UUID || process.env.VIBE_RELAY_UUID;
+const DEFAULT_REMOTE_SECRET = process.env.VIBE_REMOTE_SECRET;
 
 type JsonPrimitive = null | boolean | number | string;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -39,6 +40,7 @@ interface BrowserCommandOptions {
   debug: boolean;
   devtools: boolean;
   remote?: string;
+  remoteSecret?: string;
   session?: string;
   json: boolean;
   timeout: string;
@@ -84,6 +86,7 @@ interface CommandContextInit {
   debug: boolean;
   devtools: boolean;
   remoteUuid?: string;
+  remoteSecret?: string;
   sessionId?: string;
   profile: string;
   json: boolean;
@@ -119,7 +122,8 @@ function buildBrowserCommand(command: Command): Command {
     .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
     .option('-d, --debug', 'Enable debug logging', false)
     .option('--devtools', 'Drive your real running Chrome directly over the DevTools Protocol (bypasses the extension relay)', false)
-    .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide the extension UUID or full ws(s) relay URL)', DEFAULT_REMOTE)
+    .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide extension UUID or full ws(s) relay URL; keep auth token separate)', DEFAULT_REMOTE)
+    .option('--remote-secret <token>', 'Optional remote relay bearer token (64 lowercase hex chars). Never put it in URL/query.', DEFAULT_REMOTE_SECRET)
     .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
     .option('--json', 'Emit machine-readable JSON output', false)
     .option('--timeout <ms>', 'Command timeout in milliseconds', String(DEFAULT_TIMEOUT_MS))
@@ -470,20 +474,28 @@ async function runBrowserCommand(
 ): Promise<void> {
   const globalOptions = command.optsWithGlobals<BrowserCommandOptions>();
   const localOptions = command.opts<Record<string, unknown>>();
-  const ctx = new BrowserCliContext({
-    port: parsePositiveInteger(globalOptions.port, '--port'),
-    debug: Boolean(globalOptions.debug),
-    devtools: Boolean(globalOptions.devtools),
-    remoteUuid: globalOptions.remote,
-    sessionId: globalOptions.session,
-    profile: globalOptions.browserProfile || DEFAULT_BROWSER_PROFILE,
-    json: Boolean(globalOptions.json),
-    timeoutMs: parsePositiveInteger(globalOptions.timeout, '--timeout'),
-    target: globalOptions.target,
-    pageId: globalOptions.pageId ? parsePositiveInteger(globalOptions.pageId, '--page-id') : undefined,
-  });
+  let ctx: BrowserCliContext | null = null;
 
   try {
+    const remoteSecret = normalizeRemoteSecret(globalOptions.remoteSecret);
+    if (remoteSecret && !globalOptions.remote) {
+      throw new Error('--remote-secret requires --remote (or VIBE_REMOTE_URL)');
+    }
+
+    ctx = new BrowserCliContext({
+      port: parsePositiveInteger(globalOptions.port, '--port'),
+      debug: Boolean(globalOptions.debug),
+      devtools: Boolean(globalOptions.devtools),
+      remoteUuid: globalOptions.remote,
+      remoteSecret,
+      sessionId: globalOptions.session,
+      profile: globalOptions.browserProfile || DEFAULT_BROWSER_PROFILE,
+      json: Boolean(globalOptions.json),
+      timeoutMs: parsePositiveInteger(globalOptions.timeout, '--timeout'),
+      target: globalOptions.target,
+      pageId: globalOptions.pageId ? parsePositiveInteger(globalOptions.pageId, '--page-id') : undefined,
+    });
+
     await ctx.connect();
     if (requireExtension) {
       await ctx.ensureExtensionConnected();
@@ -492,10 +504,27 @@ async function runBrowserCommand(
     const output = await handler(ctx, localOptions, globalOptions);
     emitOutput(Boolean(globalOptions.json), output, formatHumanOutput(commandName, output));
   } catch (error) {
-    emitError(Boolean(globalOptions.json), commandName, ctx, error);
+    if (ctx) {
+      emitError(Boolean(globalOptions.json), commandName, ctx, error);
+    } else {
+      const message = error instanceof Error ? error.message : String(error);
+      if (Boolean(globalOptions.json)) {
+        console.log(JSON.stringify({
+          ok: false,
+          command: commandName,
+          profile: globalOptions.browserProfile || DEFAULT_BROWSER_PROFILE,
+          mode: globalOptions.devtools ? 'devtools' : globalOptions.remote ? 'remote' : 'local',
+          error: message,
+        }, null, 2));
+      } else {
+        console.error(`Error: ${message}`);
+      }
+    }
     process.exitCode = 1;
   } finally {
-    await ctx.shutdown();
+    if (ctx) {
+      await ctx.shutdown();
+    }
   }
 }
 
@@ -521,7 +550,7 @@ export class BrowserCliContext {
       : new ExtensionConnection(
         init.port,
         init.debug,
-        init.remoteUuid ? { uuid: init.remoteUuid } : undefined,
+        init.remoteUuid ? { uuid: init.remoteUuid, secret: init.remoteSecret } : undefined,
         init.remoteUuid ? undefined : { sessionId: init.sessionId },
       );
     this.profile = init.profile;

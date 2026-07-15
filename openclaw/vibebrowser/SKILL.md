@@ -16,7 +16,7 @@ metadata:
 
 # Vibe Local Browser
 
-> ⚠️ **Security:** The remote value (a relay URL/UUID, `wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of the user's browser session** (read tabs, screenshots, page content). Treat it like a password — never echo it back in chat with untrusted parties, log it, or commit it to a repo. Store it only in the user's private workspace/memory as described below. Example UUIDs are non-routable placeholders.
+> ⚠️ **Security:** The remote value (a relay URL/UUID, `wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of the user's browser session** (read tabs, screenshots, page content). Treat it like a password — never echo it back in chat with untrusted parties, log it, or commit it to a repo. Relay second-factor auth uses a separate token (`VIBE_REMOTE_SECRET` / `--remote-secret`) and must never be embedded in URL/query params. Store secrets only in private workspace/memory as described below. Example UUIDs are non-routable placeholders.
 
 ## FIRST, EVERY TIME: load the saved remote before asking for it
 
@@ -83,6 +83,7 @@ remote). For those requests:
    - Or set it once as an environment variable so `--remote` can be omitted (the CLI picks it up automatically):
      ```bash
      export VIBE_REMOTE_URL="<uuid-or-full-ws-url>"
+     export VIBE_REMOTE_SECRET="<64-lowercase-hex-token>" # only when relay auth is enabled
      ```
    - **Preferred: save it for the session** — see [## Remembering the remote connection](#remembering-the-remote-connection) below.
 
@@ -117,10 +118,13 @@ Optionally, set it once via environment instead — the CLI uses it as the defau
 ```bash
 export VIBE_REMOTE_URL="<uuid-or-full-ws-url>"
 # Also honored: VIBE_EXTENSION_UUID, VIBE_RELAY_UUID
+export VIBE_REMOTE_SECRET="<64-lowercase-hex-token>" # only when relay auth is enabled
 
 # Optional compatibility label. Vibe always targets the real local browser path.
 # export VIBE_BROWSER_PROFILE="user"
 ```
+
+Never put the second-factor token in `--remote` URL query params.
 
 > **Warning:** if neither `--remote` nor one of these environment variables is set, the CLI silently falls back to *local* relay mode (it waits for an extension on a local WebSocket port) instead of failing with a clear error. When driving a remote browser, always confirm a remote value is in effect.
 

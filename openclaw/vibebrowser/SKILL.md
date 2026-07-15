@@ -16,6 +16,8 @@ metadata:
 
 # Vibe Local Browser
 
+> ⚠️ **Security:** The remote value (a relay URL/UUID, `wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of the user's browser session** (read tabs, screenshots, page content). Treat it like a password — never echo it back in chat with untrusted parties, log it, or commit it to a repo. Store it only in the user's private workspace/memory as described below. Example UUIDs are non-routable placeholders.
+
 ## FIRST, EVERY TIME: load the saved remote before asking for it
 
 The user gives their remote value **once**. On **every** browser task — including the

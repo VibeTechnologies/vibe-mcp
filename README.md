@@ -5,6 +5,8 @@
 
 MCP server for [Vibe AI Browser](https://vibebrowser.app) - the **only browser automation tool that supports multiple AI agents simultaneously**.
 
+> ⚠️ **Security — treat your relay URL/UUID like a password.** A relay URL or extension UUID (`wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of your browser session** (read your tabs, take screenshots, read page content). Never share it, paste it into a chat with untrusted parties, or commit it to a repo. Every example UUID in this documentation is a non-routable placeholder (`YOUR-EXTENSION-UUID` or `00000000-0000-0000-0000-000000000000`) — substitute your own secret value locally and keep it out of version control.
+
 ## Install prompt for AI agents (OpenClaw / Hermes)
 
 Paste the block below into your **OpenClaw** or **Hermes** agent. Replace the last line with your remote value — a UUID or a `wss://relay.api.vibebrowser.app/<uuid>` URL from the Vibe extension's **Settings → AI Agent Control → Remote (internet) → Relay access**. That's the only edit you make.
@@ -329,6 +331,8 @@ When multiple agents connect, Vibe MCP automatically spawns a relay daemon:
 - Each agent receives only its own responses
 
 ### Cloud OpenClaw -> Local Browser
+
+> ⚠️ **Security:** The `--remote` value below is a live credential — a relay URL/UUID grants full control of the target browser session. Keep it secret and never commit it. The placeholders shown here (`YOUR-EXTENSION-UUID`) are not routable.
 
 If your agent runs in the cloud but you want it to control the user's real local browser, run `vibebrowser-mcp` in HTTP mode and connect it to the Vibe extension in remote relay mode. Pass either the extension UUID or the full WebSocket relay URL to `--remote`.
 

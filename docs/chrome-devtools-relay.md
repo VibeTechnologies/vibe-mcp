@@ -1,5 +1,7 @@
 # Chrome DevTools Relay — System Design
 
+> ⚠️ **Security:** A relay URL/UUID (`wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of your browser session** (read tabs, screenshots, page content). Treat it like a password — never share it, paste it into a chat with untrusted parties, or commit it to a repo. Any example UUIDs are placeholders (`00000000-0000-0000-0000-000000000000`) and are not routable. The browser UUID must be paired with an access token; it is **not** a standalone credential.
+
 ## Problem
 
 Cloud AI agents (OpenClaw tenants, coding assistants, automation pipelines) need to

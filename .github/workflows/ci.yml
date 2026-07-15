@@ -32,5 +32,6 @@ jobs:
       - name: E2E (hermetic)
         # Hermetic e2e gate: relay, http, remote-auth second-factor checks,
         # CLI-relay, the #14 tools/list startup-budget regression, browser-cli,
-        # and the chrome-use devtools flag.
+        # packed @vibebrowser/cli install+help smoke, and the chrome-use
+        # devtools flag.
         run: npm run test:ci

@@ -1,6 +1,6 @@
 {
   "name": "@vibebrowser/cli",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "Standalone Vibe Browser CLI for controlling a Vibe-connected browser session",
   "bin": {
@@ -43,14 +43,7 @@
     "chrome-devtools-mcp": "^0.21.0"
   },
   "files": [
-    "dist/browser-main.js",
-    "dist/browser-cli.js",
-    "dist/connection.js",
-    "dist/devtools-fallback.js",
-    "dist/relay-daemon.js",
-    "dist/relay.js",
-    "dist/types.js",
-    "dist/version.js",
+    "dist",
     "README.md"
   ]
 }

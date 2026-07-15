@@ -20,6 +20,7 @@ const UUID_AUTH = '11111111-1111-4111-8111-111111111111';
 const UUID_DROP = '44444444-4444-4444-8444-444444444444';
 const UUID_ROTATED = '22222222-2222-4222-8222-222222222222';
 const UUID_LEGACY = '33333333-3333-4333-8333-333333333333';
+const UUID_START = '55555555-5555-4555-8555-555555555555';
 
 const TOKEN_AUTH = 'a'.repeat(64);
 const TOKEN_ROTATED = 'b'.repeat(64);
@@ -259,7 +260,7 @@ async function startMcpServer({ remoteUrl, remoteSecret, httpPort }) {
   };
 }
 
-function startFakeRelay({ port, uuid, toolName, requiredToken }) {
+function startFakeRelay({ port, uuid, toolName, requiredToken, acceptUnauthorized = false }) {
   const server = http.createServer();
   const wsServer = new WebSocketServer({ noServer: true });
   const connectionQueue = [];
@@ -267,14 +268,14 @@ function startFakeRelay({ port, uuid, toolName, requiredToken }) {
   const authHeaders = [];
   let upgradeCount = 0;
 
-  const sessionsPayload = () => [{
+  const sessionsPayload = (connected, toolCount) => [{
     sessionId: uuid,
-    connected: true,
+    connected,
     connectedAt: Date.now(),
-    toolCount: 1,
+    toolCount,
   }];
 
-  const handleConnection = (ws, request) => {
+  const handleConnection = (ws, request, authorized) => {
     const authorization = Array.isArray(request.headers.authorization)
       ? request.headers.authorization[0]
       : request.headers.authorization;
@@ -290,12 +291,12 @@ function startFakeRelay({ port, uuid, toolName, requiredToken }) {
       connectionQueue.push(info);
     }
 
-    ws.send(JSON.stringify({ type: 'extension_status', connected: true }));
+    ws.send(JSON.stringify({ type: 'extension_status', connected: authorized }));
     ws.send(JSON.stringify({
       type: 'sessions_list',
-      connected: true,
+      connected: authorized,
       sessionId: uuid,
-      sessions: sessionsPayload(),
+      sessions: sessionsPayload(authorized, authorized ? 1 : 0),
     }));
 
     ws.on('message', (raw) => {
@@ -310,7 +311,7 @@ function startFakeRelay({ port, uuid, toolName, requiredToken }) {
         ws.send(JSON.stringify({
           type: 'tools_list',
           requestId: message.requestId,
-          data: [tool(toolName)],
+          data: authorized ? [tool(toolName)] : [],
         }));
         return;
       }
@@ -319,14 +320,23 @@ function startFakeRelay({ port, uuid, toolName, requiredToken }) {
         ws.send(JSON.stringify({
           type: 'sessions_list',
           requestId: message.requestId,
-          connected: true,
+          connected: authorized,
           sessionId: uuid,
-          sessions: sessionsPayload(),
+          sessions: sessionsPayload(authorized, authorized ? 1 : 0),
         }));
         return;
       }
 
       if (message.type === 'call_tool') {
+        if (!authorized) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            requestId: message.requestId,
+            error: 'Unauthorized',
+          }));
+          return;
+        }
+
         if (message.data?.name !== toolName) {
           ws.send(JSON.stringify({
             type: 'error',
@@ -362,14 +372,15 @@ function startFakeRelay({ port, uuid, toolName, requiredToken }) {
     const authValue = authorization || '';
     authHeaders.push(authValue);
 
-    if (requiredToken && authValue !== `Bearer ${requiredToken}`) {
+    const authorized = !requiredToken || authValue === `Bearer ${requiredToken}`;
+    if (!authorized && !acceptUnauthorized) {
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;
     }
 
     wsServer.handleUpgrade(request, socket, head, (ws) => {
-      handleConnection(ws, request);
+      handleConnection(ws, request, authorized);
     });
   });
 
@@ -438,6 +449,7 @@ async function withMcpClient(httpPort, callback) {
 
 async function main() {
   const relayAuthPort = await findFreePort();
+  const relayStartPort = await findFreePort();
   const relayDropPort = await findFreePort();
   const relayRotatePort = await findFreePort();
   const relayLegacyPort = await findFreePort();
@@ -449,6 +461,13 @@ async function main() {
     uuid: UUID_AUTH,
     toolName: 'echo_auth',
     requiredToken: TOKEN_AUTH,
+  });
+  const relayStart = startFakeRelay({
+    port: relayStartPort,
+    uuid: UUID_START,
+    toolName: 'echo_start',
+    requiredToken: TOKEN_AUTH,
+    acceptUnauthorized: true,
   });
   const relayDrop = startFakeRelay({
     port: relayDropPort,
@@ -471,6 +490,7 @@ async function main() {
   let legacyServer = null;
 
   await relayAuth.start();
+  await relayStart.start();
   await relayDrop.start();
   await relayRotate.start();
   await relayLegacy.start();
@@ -532,6 +552,51 @@ async function main() {
     assert(relayAuth.getUpgradeCount() === upgradesBeforeMalformed, 'browser-cli malformed token should fail before network connect');
     assertNoTokenLeak('browser-cli malformed token', cliMalformedOutput, TOKEN_MALFORMED, TOKEN_AUTH);
     console.log('  browser-cli malformed token fails closed: PASS');
+
+    const cliStartValid = await runNodeProcess(BROWSER_CLI, [
+      '--remote',
+      relayStart.url,
+      '--remote-secret',
+      TOKEN_AUTH,
+      '--json',
+      'start',
+    ], { expectCode: 0 });
+    const cliStartValidConn = await relayStart.waitForConnection();
+    assert(cliStartValidConn.authorization === `Bearer ${TOKEN_AUTH}`, 'browser-cli start (valid token) did not send Authorization header');
+    assert(cliStartValid.json?.ok === true, `browser-cli start with valid token should succeed: ${cliStartValid.stdout}\n${cliStartValid.stderr}`);
+    assert(cliStartValid.json?.started === true, `browser-cli start with valid token should report started=true: ${cliStartValid.stdout}`);
+    assert(cliStartValid.json?.extensionConnected === true, `browser-cli start with valid token should report extensionConnected=true: ${cliStartValid.stdout}`);
+    assertNoTokenLeak('browser-cli start valid token', `${cliStartValid.stdout}\n${cliStartValid.stderr}`, TOKEN_AUTH);
+    console.log('  browser-cli start valid token: PASS');
+
+    const cliStartMissing = await runNodeProcess(BROWSER_CLI, [
+      '--remote',
+      relayStart.url,
+      '--json',
+      'start',
+    ], { expectCode: 1 });
+    const cliStartMissingOutput = `${cliStartMissing.stdout}\n${cliStartMissing.stderr}`;
+    assert(cliStartMissing.json?.ok === false, `browser-cli start without token should be fail-closed (ok=false): ${cliStartMissingOutput}`);
+    assert(cliStartMissing.json?.started === false, `browser-cli start without token should report started=false: ${cliStartMissingOutput}`);
+    assert(typeof cliStartMissing.json?.error === 'string' && cliStartMissing.json.error.length > 0, `browser-cli start without token should include an error: ${cliStartMissingOutput}`);
+    assert(!/missing|wrong/i.test(String(cliStartMissing.json?.error || '')), `browser-cli start missing-token message should not distinguish token state: ${cliStartMissingOutput}`);
+    assertNoTokenLeak('browser-cli start missing token', cliStartMissingOutput, TOKEN_AUTH);
+
+    const cliStartWrong = await runNodeProcess(BROWSER_CLI, [
+      '--remote',
+      relayStart.url,
+      '--remote-secret',
+      TOKEN_WRONG,
+      '--json',
+      'start',
+    ], { expectCode: 1 });
+    const cliStartWrongOutput = `${cliStartWrong.stdout}\n${cliStartWrong.stderr}`;
+    assert(cliStartWrong.json?.ok === false, `browser-cli start with wrong token should be fail-closed (ok=false): ${cliStartWrongOutput}`);
+    assert(cliStartWrong.json?.started === false, `browser-cli start with wrong token should report started=false: ${cliStartWrongOutput}`);
+    assert(typeof cliStartWrong.json?.error === 'string' && cliStartWrong.json.error.length > 0, `browser-cli start with wrong token should include an error: ${cliStartWrongOutput}`);
+    assert(String(cliStartWrong.json?.error || '') === String(cliStartMissing.json?.error || ''), `browser-cli start missing/wrong token must not use distinguishable error messages:\nmissing=${String(cliStartMissing.json?.error)}\nwrong=${String(cliStartWrong.json?.error)}`);
+    assertNoTokenLeak('browser-cli start wrong token', cliStartWrongOutput, TOKEN_AUTH, TOKEN_WRONG);
+    console.log('  browser-cli start missing/wrong token fail-closed: PASS');
 
     const cliLegacy = await runNodeProcess(BROWSER_CLI, [
       '--remote',
@@ -743,6 +808,7 @@ async function main() {
       await legacyServer.stop();
     }
     await relayAuth.close();
+    await relayStart.close();
     await relayDrop.close();
     await relayRotate.close();
     await relayLegacy.close();

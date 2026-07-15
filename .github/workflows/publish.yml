@@ -208,6 +208,67 @@ jobs:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN_FALLBACK: ${{ secrets.NODE_AUTH_TOKEN }}
 
+      - name: Deprecate broken @vibebrowser/cli@0.3.0
+        if: steps.versions.outputs.cli_current == '0.3.1' && steps.publish.outputs.cli_mode != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_message='Broken package: missing runtime file. Use 0.3.1 or later.'
+          token_sources=()
+          token_values=()
+
+          add_token_candidate() {
+            local candidate="${1:-}"
+            local source="$2"
+            if [ -z "$candidate" ]; then
+              return 0
+            fi
+            token_sources+=("$source")
+            token_values+=("$candidate")
+          }
+
+          add_token_candidate "${NODE_AUTH_TOKEN:-}" "NODE_AUTH_TOKEN"
+          add_token_candidate "${NPM_TOKEN:-}" "NPM_TOKEN"
+          add_token_candidate "${NODE_AUTH_TOKEN_FALLBACK:-}" "NODE_AUTH_TOKEN_FALLBACK"
+
+          selected_token=''
+          selected_source=''
+          if [ ${#token_values[@]} -gt 0 ]; then
+            for idx in "${!token_values[@]}"; do
+              candidate="${token_values[$idx]}"
+              source="${token_sources[$idx]}"
+              if NODE_AUTH_TOKEN="$candidate" npm whoami >/dev/null 2>&1; then
+                selected_token="$candidate"
+                selected_source="$source"
+                break
+              fi
+            done
+          fi
+
+          if [ -z "$selected_token" ]; then
+            echo "Failed to find a valid npm token for CLI deprecation." >&2
+            echo "Checked token sources: ${token_sources[*]:-none}" >&2
+            exit 1
+          fi
+
+          echo "Applying npm deprecation for @vibebrowser/cli@0.3.0 using token source: $selected_source"
+          NODE_AUTH_TOKEN="$selected_token" npm deprecate "@vibebrowser/cli@0.3.0" "$expected_message"
+
+          actual_message="$(NODE_AUTH_TOKEN="$selected_token" npm view @vibebrowser/cli@0.3.0 deprecated 2>/dev/null | tr -d '\r' | sed -e 's/[[:space:]]*$//')"
+          if [ "$actual_message" != "$expected_message" ]; then
+            echo "Deprecation verification failed for @vibebrowser/cli@0.3.0." >&2
+            echo "Expected: $expected_message" >&2
+            echo "Actual: ${actual_message:-<empty>}" >&2
+            exit 1
+          fi
+
+          echo "Deprecation verified for @vibebrowser/cli@0.3.0."
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+          NODE_AUTH_TOKEN_FALLBACK: ${{ secrets.NODE_AUTH_TOKEN }}
+
       - name: Create Git tags
         if: steps.versions.outputs.root_changed == 'true' || steps.versions.outputs.cli_changed == 'true'
         shell: bash

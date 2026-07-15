@@ -37,7 +37,11 @@ jobs:
 
       - name: Upgrade npm (OIDC trusted publishing requires npm >= 11.5.1)
         run: |
-          npm install -g npm@latest
+          # Pin to npm 11.18.0: the latest 11.x release compatible with the
+          # Node 20 runtime above (engines: node ^20.17.0 || >=22.9.0).
+          # `npm@latest` resolves to npm 12.x, which requires Node >=22.22.2
+          # and breaks this job on Node 20 (see run 29392811746).
+          npm install -g npm@11.18.0
           echo "npm version: $(npm --version)"
           echo "node version: $(node --version)"
 

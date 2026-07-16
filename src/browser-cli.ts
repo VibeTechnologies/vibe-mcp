@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
-import { ExtensionConnection, normalizeRemoteSecret } from './connection.js';
+import { ExtensionConnection } from './connection.js';
 import { ChromeUseConnection, type CdpConnector } from './chrome-use-connection.js';
 import { DEFAULT_WS_PORT, type RelaySessionSummary, type ToolDefinition, type ToolResult } from './types.js';
 
@@ -28,8 +28,7 @@ const MIME_TYPE_BY_EXTENSION: Record<string, string> = {
 };
 const DEFAULT_BROWSER_PROFILE = process.env.VIBE_BROWSER_PROFILE || 'user';
 const DEFAULT_REMOTE = process.env.VIBE_REMOTE_URL || process.env.VIBE_EXTENSION_UUID || process.env.VIBE_RELAY_UUID;
-const DEFAULT_REMOTE_SECRET = process.env.VIBE_REMOTE_SECRET;
-const REMOTE_START_FAILURE_MESSAGE = 'Remote browser start failed: unable to establish an authenticated browser relay session. Verify --remote / --remote-secret and extension relay connectivity.';
+const REMOTE_START_FAILURE_MESSAGE = 'Remote browser start failed: unable to establish a browser relay session. Verify --remote and extension relay connectivity.';
 
 type JsonPrimitive = null | boolean | number | string;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -41,7 +40,6 @@ interface BrowserCommandOptions {
   debug: boolean;
   devtools: boolean;
   remote?: string;
-  remoteSecret?: string;
   session?: string;
   json: boolean;
   timeout: string;
@@ -87,7 +85,6 @@ interface CommandContextInit {
   debug: boolean;
   devtools: boolean;
   remoteUuid?: string;
-  remoteSecret?: string;
   sessionId?: string;
   profile: string;
   json: boolean;
@@ -123,8 +120,7 @@ function buildBrowserCommand(command: Command): Command {
     .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
     .option('-d, --debug', 'Enable debug logging', false)
     .option('--devtools', 'Drive your real running Chrome directly over the DevTools Protocol (bypasses the extension relay)', false)
-    .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide extension UUID or full ws(s) relay URL; keep auth token separate)', DEFAULT_REMOTE)
-    .option('--remote-secret <token>', 'Optional remote relay bearer token (64 lowercase hex chars). Never put it in URL/query.', DEFAULT_REMOTE_SECRET)
+    .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide extension UUID or full ws(s) relay URL). This routing UUID is the sole bearer credential — treat it like a password; regenerate it in extension Settings if exposed.', DEFAULT_REMOTE)
     .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
     .option('--json', 'Emit machine-readable JSON output', false)
     .option('--timeout <ms>', 'Command timeout in milliseconds', String(DEFAULT_TIMEOUT_MS))
@@ -485,17 +481,11 @@ async function runBrowserCommand(
   let ctx: BrowserCliContext | null = null;
 
   try {
-    const remoteSecret = normalizeRemoteSecret(globalOptions.remoteSecret);
-    if (remoteSecret && !globalOptions.remote) {
-      throw new Error('--remote-secret requires --remote (or VIBE_REMOTE_URL)');
-    }
-
     ctx = new BrowserCliContext({
       port: parsePositiveInteger(globalOptions.port, '--port'),
       debug: Boolean(globalOptions.debug),
       devtools: Boolean(globalOptions.devtools),
       remoteUuid: globalOptions.remote,
-      remoteSecret,
       sessionId: globalOptions.session,
       profile: globalOptions.browserProfile || DEFAULT_BROWSER_PROFILE,
       json: Boolean(globalOptions.json),
@@ -561,7 +551,7 @@ export class BrowserCliContext {
       : new ExtensionConnection(
         init.port,
         init.debug,
-        init.remoteUuid ? { uuid: init.remoteUuid, secret: init.remoteSecret } : undefined,
+        init.remoteUuid ? { uuid: init.remoteUuid } : undefined,
         init.remoteUuid ? undefined : { sessionId: init.sessionId },
       );
     this.profile = init.profile;

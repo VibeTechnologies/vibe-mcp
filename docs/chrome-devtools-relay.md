@@ -1,6 +1,6 @@
 # Chrome DevTools Relay — System Design
 
-> ⚠️ **Security:** A relay URL/UUID (`wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of your browser session** (read tabs, screenshots, page content). Treat it like a password — never share it, paste it into a chat with untrusted parties, or commit it to a repo. Any example UUIDs are placeholders (`00000000-0000-0000-0000-000000000000`) and are not routable. The browser UUID must be paired with an access token; it is **not** a standalone credential.
+> ⚠️ **Security:** A relay URL/UUID (`wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of your browser session** (read tabs, screenshots, page content). For the standard `vibebrowser-mcp`/`vibebrowser-cli` relay connection, this UUID is the *sole* bearer credential — treat it like a password, and regenerate it in extension Settings if exposed. Any example UUIDs are placeholders (`00000000-0000-0000-0000-000000000000`) and are not routable. (The separate cloud REST API design described below, for OpenClaw skills/CI callers hitting `relay.vibebrowser.com`, uses its own bearer token — that is a distinct mechanism from the agent's wss relay connection.)
 
 ## Problem
 

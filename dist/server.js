@@ -34,17 +34,13 @@ const STARTUP_TOOLS_LIST_BUDGET_MS = 3_000;
 const CALL_TOOL_TIMEOUT_MS = 120_000;
 const SET_REMOTE_TOOL = {
     name: 'set_remote',
-    description: 'Set the remote relay target for this MCP server. If browser tools are missing, call set_remote first to connect to a Vibe relay. Optional secret support uses bearer auth and never URL query params.',
+    description: 'Set the remote relay target for this MCP server. If browser tools are missing, call set_remote first to connect to a Vibe relay. The routing UUID in the URL is the sole bearer credential for the relay session.',
     inputSchema: {
         type: 'object',
         properties: {
             url: {
                 type: 'string',
                 description: 'Remote target as either an extension UUID or a full websocket relay URL (for example wss://relay.api.vibebrowser.app/<extension-uuid>). Call set_remote first when browser tools are unavailable.',
-            },
-            secret: {
-                type: 'string',
-                description: 'Optional relay bearer token (exactly 64 lowercase hex chars). Never put secrets in URL/query params.',
             },
         },
         required: ['url'],
@@ -76,17 +72,13 @@ export class VibeMcpServer {
             remoteUuid: config.remoteUuid,
             sessionId: config.sessionId,
             remoteRelayUrl: config.remoteRelayUrl,
-            remoteSecret: config.remoteSecret,
         };
-        if (this.config.remoteSecret && !this.config.remoteUuid) {
-            throw new Error('Remote secret requires a remote target (--remote)');
-        }
         if (this.config.devtools) {
             this.connection = new ChromeUseConnection(this.config.debug);
         }
         else {
             const remoteConfig = this.config.remoteUuid
-                ? { uuid: this.config.remoteUuid, relayUrl: this.config.remoteRelayUrl, secret: this.config.remoteSecret }
+                ? { uuid: this.config.remoteUuid, relayUrl: this.config.remoteRelayUrl }
                 : undefined;
             this.connection = new ExtensionConnection(this.config.port, this.config.debug, remoteConfig, this.config.remoteUuid ? undefined : { sessionId: this.config.sessionId });
         }
@@ -309,15 +301,7 @@ export class VibeMcpServer {
                 isError: true,
             };
         }
-        const secretProvided = Object.prototype.hasOwnProperty.call(args, 'secret');
-        if (secretProvided && args.secret !== undefined && typeof args.secret !== 'string') {
-            return {
-                content: [{ type: 'text', text: 'Error: set_remote secret must be a string when provided' }],
-                isError: true,
-            };
-        }
-        const remote = await this.connection.setRemoteUrl(args.url.trim(), typeof args.secret === 'string' ? args.secret : undefined, !secretProvided);
-        const secretConfigured = Boolean(this.connection.getRemoteConfig()?.secret);
+        const remote = await this.connection.setRemoteUrl(args.url.trim());
         this.notifyToolListChanged();
         return {
             content: [{
@@ -327,7 +311,6 @@ export class VibeMcpServer {
                         mode: 'remote',
                         relayUrl: remote.relayUrl,
                         uuid: remote.uuid,
-                        secretConfigured,
                     }),
                 }],
         };

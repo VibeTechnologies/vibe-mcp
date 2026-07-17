@@ -8,7 +8,7 @@ published: true
 
 If you are running OpenClaw in the cloud, one of the most useful upgrades is giving it access to a real browser.
 
-> ⚠️ **Security:** A relay URL/UUID (`wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of your browser session** (read tabs, screenshots, page content). Treat it like a password — never share it, paste it into a chat with untrusted parties, or commit it to a repo. Relay second-factor auth uses a separate secret (`VIBE_REMOTE_SECRET` / `--remote-secret`); never place that token in URL/query params. Example UUIDs in this doc are placeholders (`YOUR-EXTENSION-UUID` / `00000000-0000-0000-0000-000000000000`) and are not routable.
+> ⚠️ **Security:** A relay URL/UUID (`wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of your browser session** (read tabs, screenshots, page content). It is the *sole* bearer credential — there is no second-factor secret. Treat it like a password — never share it, paste it into a chat with untrusted parties, or commit it to a repo — and if it leaks, regenerate it in the Vibe extension Settings. Example UUIDs in this doc are placeholders (`YOUR-EXTENSION-UUID` / `00000000-0000-0000-0000-000000000000`) and are not routable.
 
 But there are actually two different browser problems hiding inside that sentence:
 
@@ -97,7 +97,6 @@ On the same machine where the browser extension is installed, run one of these r
 ```bash
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-export VIBE_REMOTE_SECRET="<64-lowercase-hex-token>" # only when relay auth is enabled
 
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID"
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL"
@@ -111,7 +110,6 @@ If OpenClaw is running on another machine (for example in the cloud), provide a 
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 PUBLIC_MCP_URL="https://browser-bridge.example.com/mcp"
-export VIBE_REMOTE_SECRET="<64-lowercase-hex-token>" # only when relay auth is enabled
 
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID" --public-url "$PUBLIC_MCP_URL"
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
@@ -122,7 +120,6 @@ npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL" --public-url
 ```bash
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-export VIBE_REMOTE_SECRET="<64-lowercase-hex-token>" # only when relay auth is enabled
 
 npx -y @vibebrowser/mcp@latest start --transport http --remote "$VIBE_REMOTE_UUID"
 npx -y @vibebrowser/mcp@latest start --transport http --remote "$VIBE_REMOTE_URL"
@@ -144,7 +141,6 @@ For operator workflows and OpenClaw skills, you can also use the OpenClaw-compat
 npx -y @vibebrowser/cli@latest sessions
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-export VIBE_REMOTE_SECRET="<64-lowercase-hex-token>" # only when relay auth is enabled
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" status
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" tabs
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" snapshot --json
@@ -155,13 +151,12 @@ The CLI accepts only these remote forms:
 ```bash
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-export VIBE_REMOTE_SECRET="<64-lowercase-hex-token>" # only when relay auth is enabled
 
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" --json status
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json status
 ```
 
-`--remote <uuid>` uses the default public relay. `--remote <full-ws-url>` targets an explicit relay endpoint. If relay auth is enabled, supply `VIBE_REMOTE_SECRET` / `--remote-secret` separately — never in URL/query params.
+`--remote <uuid>` uses the default public relay. `--remote <full-ws-url>` targets an explicit relay endpoint. No second-factor secret is needed or accepted — the UUID alone authorizes the session.
 
 `snapshot` is tool-only and maps to the specific snapshot tool for the requested format:
 
@@ -198,14 +193,13 @@ Use that loopback URL only for same-machine setups. For cloud OpenClaw, set `"ur
 
 Once that is configured, the cloud OpenClaw agent can use the Vibe browser tools through the local bridge.
 
-If the browser relay URL changes while the MCP server is already running, call the MCP server tool `set_remote` with the new full URL to hot-reconnect without restarting the server. If your relay also rotates secrets, pass it in the separate `secret` field:
+If the browser relay URL changes (for example after regenerating the routing UUID in extension Settings) while the MCP server is already running, call the MCP server tool `set_remote` with the new full URL to hot-reconnect without restarting the server:
 
 ```json
 { "url": "wss://relay.api.vibebrowser.app/<extension-uuid>" }
-{ "url": "wss://relay.api.vibebrowser.app/<extension-uuid>", "secret": "<64-lowercase-hex-token>" }
 ```
 
-`set_remote` is an MCP tool exposed by the server, not a `vibebrowser-cli` subcommand. Never append the secret token to URL/query params.
+`set_remote` is an MCP tool exposed by the server, not a `vibebrowser-cli` subcommand.
 
 ## Optional: Use the OpenClaw skill for local agents
 
@@ -222,7 +216,6 @@ Use either remote form in commands:
 ```bash
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-export VIBE_REMOTE_SECRET="<64-lowercase-hex-token>" # only when relay auth is enabled
 
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" --json status
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json status
@@ -234,7 +227,6 @@ npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json status
 # Check status
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-export VIBE_REMOTE_SECRET="<64-lowercase-hex-token>" # only when relay auth is enabled
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" --json status
 
 # List tabs

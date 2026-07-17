@@ -132,6 +132,4 @@ export interface ServerConfig {
   sessionId?: string;
   /** Remote relay URL — defaults to wss://relay.api.vibebrowser.app */
   remoteRelayUrl?: string;
-  /** Optional relay bearer token for second-factor remote auth */
-  remoteSecret?: string;
 }

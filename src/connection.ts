@@ -37,16 +37,17 @@ const RELAY_RECONNECT_DELAY = 2000;
 
 const DEFAULT_RELAY_URL = 'wss://relay.api.vibebrowser.app';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const REMOTE_SECRET_PATTERN = /^[a-f0-9]{64}$/;
-const REMOTE_SECRET_ERROR = 'Invalid remote secret: expected 64 lowercase hex characters';
 
 /**
- * Remote relay configuration
+ * Remote relay configuration.
+ *
+ * The routing UUID (in the wss URL path) is the sole bearer capability for
+ * relay access. Treat it like a password: if it leaks, regenerate it in the
+ * Vibe extension Settings. There is no second-factor secret/attach token.
  */
 export interface RemoteConfig {
   uuid: string;
   relayUrl?: string; // defaults to DEFAULT_RELAY_URL
-  secret?: string; // optional bearer token for relay second-factor auth
 }
 
 export interface ParsedRemoteRelayUrl {
@@ -72,11 +73,11 @@ export function parseRemoteRelayUrl(value: string): ParsedRemoteRelayUrl {
   }
 
   if (parsed.username || parsed.password) {
-    throw new Error('Invalid remote relay URL: credentials in URL are not allowed (use --remote-secret / VIBE_REMOTE_SECRET)');
+    throw new Error('Invalid remote relay URL: credentials in URL are not allowed');
   }
 
   if (parsed.search || parsed.hash) {
-    throw new Error('Invalid remote relay URL: query/fragments are not allowed (use --remote-secret / VIBE_REMOTE_SECRET)');
+    throw new Error('Invalid remote relay URL: query/fragments are not allowed');
   }
 
   const pathSegments = parsed.pathname.split('/').filter(Boolean);
@@ -96,23 +97,6 @@ export function parseRemoteRelayUrl(value: string): ParsedRemoteRelayUrl {
   };
 }
 
-export function normalizeRemoteSecret(secret?: string): string | undefined {
-  if (secret === undefined) {
-    return undefined;
-  }
-
-  const trimmed = secret.trim();
-  if (trimmed.length === 0) {
-    return undefined;
-  }
-
-  if (!REMOTE_SECRET_PATTERN.test(trimmed)) {
-    throw new Error(REMOTE_SECRET_ERROR);
-  }
-
-  return trimmed;
-}
-
 function parseRemoteTarget(value: string, currentRelayUrl?: string): ParsedRemoteRelayUrl {
   if (isRemoteRelayUrl(value)) {
     return parseRemoteRelayUrl(value);
@@ -128,35 +112,14 @@ function parseRemoteTarget(value: string, currentRelayUrl?: string): ParsedRemot
   };
 }
 
-function normalizeRelayOrigin(relayUrl: string | undefined): string | undefined {
-  if (!relayUrl) {
-    return undefined;
-  }
-
-  try {
-    const parsed = new URL(relayUrl);
-    if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
-      return undefined;
-    }
-    parsed.username = '';
-    parsed.password = '';
-    parsed.search = '';
-    parsed.hash = '';
-    return parsed.origin.toLowerCase();
-  } catch {
-    return undefined;
-  }
-}
-
 export function normalizeRemoteConfig(remote?: RemoteConfig): RemoteConfig | undefined {
   if (!remote) {
     return undefined;
   }
 
-  const secret = normalizeRemoteSecret(remote.secret);
   const relayUrl = remote.relayUrl?.replace(/\/$/, '');
   if (!isRemoteRelayUrl(remote.uuid)) {
-    return { uuid: remote.uuid, relayUrl, secret };
+    return { uuid: remote.uuid, relayUrl };
   }
 
   const parsed = parseRemoteRelayUrl(remote.uuid);
@@ -167,7 +130,6 @@ export function normalizeRemoteConfig(remote?: RemoteConfig): RemoteConfig | und
   return {
     uuid: parsed.uuid,
     relayUrl: relayUrl || parsed.relayUrl,
-    secret,
   };
 }
 
@@ -238,25 +200,15 @@ export class ExtensionConnection extends EventEmitter {
     await this.connectToRelay();
   }
 
-  async setRemoteUrl(url: string, secret?: string, preserveExistingSecret: boolean = true): Promise<ParsedRemoteRelayUrl> {
+  async setRemoteUrl(url: string): Promise<ParsedRemoteRelayUrl> {
     const parsed = parseRemoteTarget(url, this.remoteConfig?.relayUrl);
-    const normalizedSecret = normalizeRemoteSecret(secret);
-    const currentRelayBase = (this.remoteConfig?.relayUrl || DEFAULT_RELAY_URL).replace(/\/$/, '');
-    const currentOrigin = normalizeRelayOrigin(currentRelayBase);
-    const nextOrigin = normalizeRelayOrigin(parsed.relayUrl);
-    const sameRelayOrigin = Boolean(currentOrigin && nextOrigin && currentOrigin === nextOrigin);
-    // Security boundary: never carry bearer secrets across relay origins.
-    // If caller does not provide a new secret and the origin changed, drop it.
-    const nextSecret = preserveExistingSecret && sameRelayOrigin
-      ? this.remoteConfig?.secret
-      : normalizedSecret;
 
     this.stopping = true;
     this.clearReconnectTimer();
     this.rejectPendingRequests(new Error('Remote relay changed'));
     this.closeSocket();
 
-    this.remoteConfig = { uuid: parsed.uuid, relayUrl: parsed.relayUrl, secret: nextSecret };
+    this.remoteConfig = { uuid: parsed.uuid, relayUrl: parsed.relayUrl };
     this.tools = [];
     this.sessions = [];
     this.extensionConnected = false;
@@ -353,12 +305,7 @@ export class ExtensionConnection extends EventEmitter {
       this.log(`Connecting to relay at ${url}...`);
 
       try {
-        const wsHeaders = this.remoteConfig?.secret
-          ? { Authorization: `Bearer ${this.remoteConfig.secret}` }
-          : undefined;
-        this.ws = wsHeaders
-          ? new WebSocket(url, { headers: wsHeaders })
-          : new WebSocket(url);
+        this.ws = new WebSocket(url);
 
         this.ws.on('open', () => {
           this.log('Connected to relay');

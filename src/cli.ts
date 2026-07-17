@@ -9,7 +9,6 @@
 
 import { program } from 'commander';
 import { registerBrowserCommand } from './browser-cli.js';
-import { normalizeRemoteSecret } from './connection.js';
 import { createServer } from './server.js';
 import {
   DEFAULT_HTTP_PATH,
@@ -21,7 +20,6 @@ import { serve } from './ollama.js';
 import { getPackageVersion } from './version.js';
 
 const DEFAULT_REMOTE = process.env.VIBE_REMOTE_URL || process.env.VIBE_EXTENSION_UUID || process.env.VIBE_RELAY_UUID;
-const DEFAULT_REMOTE_SECRET = process.env.VIBE_REMOTE_SECRET;
 
 program
   .name('vibebrowser-mcp')
@@ -36,27 +34,20 @@ program
   .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
   .option('-d, --debug', 'Enable debug logging', false)
   .option('--devtools', 'Drive your real running Chrome directly over the DevTools Protocol (bypasses the extension relay)', false)
-  .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide extension UUID or full ws(s) relay URL; never include auth token in URL/query)')
+  .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide extension UUID or full ws(s) relay URL). This routing UUID is the sole bearer credential — treat it like a password; regenerate it in extension Settings if exposed.')
   .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
   .option('--transport <mode>', 'MCP transport to expose: stdio or http', 'stdio')
   .option('--host <host>', 'Host to bind the HTTP server to', '127.0.0.1')
   .option('--http-port <number>', 'Port for streamable HTTP MCP transport', String(DEFAULT_HTTP_PORT))
   .option('--http-path <path>', 'Path for streamable HTTP MCP transport', DEFAULT_HTTP_PATH)
   .option('--allow-host <host>', 'Allowed host header for HTTP transport (repeatable)', collectRepeatedOption, [])
-  .option('--remote-secret <token>', 'Optional remote relay bearer token (64 lowercase hex chars). Never put it in URL/query.', DEFAULT_REMOTE_SECRET)
   .action(async (options) => {
     const transport = parseTransportMode(options.transport);
     const port = parsePort(options.port, 'Relay port');
     const httpPort = parsePort(options.httpPort, 'HTTP port');
 
     try {
-      const remoteSecret = normalizeRemoteSecret(options.remoteSecret);
       const remote = options.remote || DEFAULT_REMOTE;
-
-      if (remoteSecret && !remote) {
-        console.error('Error: --remote-secret requires --remote (or VIBE_REMOTE_URL)');
-        process.exit(1);
-      }
 
       const server = await createServer({
         port,
@@ -68,7 +59,6 @@ program
         httpPath: options.httpPath,
         allowedHosts: options.allowHost.length > 0 ? options.allowHost : undefined,
         remoteUuid: remote,
-        remoteSecret,
         sessionId: options.session,
       });
 
@@ -86,8 +76,7 @@ program
 program
   .command('openclaw')
   .description('Print OpenClaw-friendly configuration for cloud agent -> local browser relay')
-  .requiredOption('-r, --remote <uuid-or-url>', 'Extension UUID or full ws(s) relay URL from Vibe extension Settings > MCP External > Remote (token must be separate)')
-  .option('--remote-secret <token>', 'Optional remote relay bearer token (64 lowercase hex chars). Never put it in URL/query.', DEFAULT_REMOTE_SECRET)
+  .requiredOption('-r, --remote <uuid-or-url>', 'Extension UUID or full ws(s) relay URL from Vibe extension Settings > MCP External > Remote. Treat this routing UUID like a password; regenerate it in Settings if exposed.')
   .option('--host <host>', 'Host to bind the HTTP server to', '127.0.0.1')
   .option('--http-port <number>', 'Port for streamable HTTP MCP transport', String(DEFAULT_HTTP_PORT))
   .option('--http-path <path>', 'Path for streamable HTTP MCP transport', DEFAULT_HTTP_PATH)
@@ -98,7 +87,6 @@ program
       const httpPort = parsePort(options.httpPort, 'HTTP port');
       const httpPath = normalizePath(options.httpPath);
       const host = options.host;
-      const remoteSecret = normalizeRemoteSecret(options.remoteSecret);
       const localHttpUrl = `http://${formatHost(host)}:${httpPort}${httpPath}`;
       const openClawUrl = options.publicUrl
         ? normalizePublicUrl(String(options.publicUrl), httpPath)
@@ -120,10 +108,6 @@ program
         options.remote,
       ];
 
-      if (remoteSecret) {
-        cliArgs.push('--remote-secret', '$VIBE_REMOTE_SECRET');
-      }
-
       for (const allowedHost of options.allowHost as string[]) {
         cliArgs.push('--allow-host', allowedHost);
       }
@@ -137,10 +121,6 @@ program
       };
 
       console.log('Start a local bridge on the machine running the Vibe extension:');
-      if (remoteSecret) {
-        console.log('Prefer env for secrets to reduce process-list leakage:');
-        console.log('export VIBE_REMOTE_SECRET="<64-lowercase-hex-token>"');
-      }
       console.log(`npx ${cliArgs.join(' ')}`);
       console.log('');
       console.log('Local bridge MCP URL:');

@@ -121,7 +121,7 @@ async function main() {
       await client.close().catch(() => {});
     }
 
-    const relayPidFile = join(stateDir, 'relay.pid');
+    const relayPidFile = join(stateDir, 'vibebrowser-relay.pid');
     if (existsSync(relayPidFile)) {
       try {
         const relayPid = Number.parseInt(readFileSync(relayPidFile, 'utf-8').trim(), 10);

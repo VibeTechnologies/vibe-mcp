@@ -10,8 +10,8 @@
  */
 
 import { WebSocketServer, WebSocket } from 'ws';
-import { writeFileSync, readFileSync, existsSync, unlinkSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, existsSync, unlinkSync, mkdirSync, openSync, writeSync, closeSync } from 'fs';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
 import { DevtoolsFallbackConnection } from './devtools-fallback.js';
@@ -39,9 +39,99 @@ export const EXTENSION_PORT = parseEnvPort('VIBE_MCP_EXTENSION_PORT', 19889);
 export const AGENT_PORT = parseEnvPort('VIBE_MCP_AGENT_PORT', 19888);
 
 // PID file location
+// Production default: ~/.local/run/vibebrowser-relay.pid (zero-config localhost).
+// Isolatable for tests via VIBE_MCP_PID_FILE, or VIBE_MCP_STATE_DIR (which also
+// keeps the pidfile alongside a test's isolated state/log dir).
 const VIBE_DIR = process.env.VIBE_MCP_STATE_DIR || join(homedir(), '.vibe-mcp');
-const PID_FILE = join(VIBE_DIR, 'relay.pid');
+const RUN_DIR = process.env.VIBE_MCP_STATE_DIR || join(homedir(), '.local', 'run');
+const PID_FILE = process.env.VIBE_MCP_PID_FILE || join(RUN_DIR, 'vibebrowser-relay.pid');
 const LOG_FILE = join(VIBE_DIR, 'relay.log');
+
+/**
+ * Absolute path of the relay pidfile (single source of truth for tests/tooling).
+ */
+export function getRelayPidFile(): string {
+  return PID_FILE;
+}
+
+/**
+ * Atomically claim the relay pidfile as a cross-process lock.
+ *
+ * Uses O_CREAT|O_EXCL ('wx') so exactly one process can create the file. This is
+ * the PRIMARY mutex that prevents concurrent relay daemons (port binding is only
+ * a secondary backstop). Handles the stale case: if the file exists but its owner
+ * process is dead, the stale file is removed and creation retried.
+ *
+ * @returns true if this process now owns the pidfile; false if a LIVE relay
+ *          already owns it (caller should not start a second relay).
+ */
+function tryAcquirePidFile(): boolean {
+  const dir = dirname(PID_FILE);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  // Two attempts: first may lose to a stale file we then clear on the retry.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(PID_FILE, 'wx'); // O_CREAT | O_EXCL | O_WRONLY
+      try {
+        writeSync(fd, String(process.pid));
+      } finally {
+        closeSync(fd);
+      }
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        throw error;
+      }
+      // Pidfile exists — decide whether its owner is alive or stale.
+      let existingPid = Number.NaN;
+      try {
+        existingPid = parseInt(readFileSync(PID_FILE, 'utf-8').trim(), 10);
+      } catch {
+        // Unreadable/empty — treat as stale below.
+      }
+
+      if (Number.isFinite(existingPid) && existingPid > 0 && existingPid !== process.pid) {
+        try {
+          process.kill(existingPid, 0); // throws if the process is gone
+          return false; // a live relay already owns the lock
+        } catch {
+          // Owner is dead — fall through to clear the stale file.
+        }
+      }
+
+      // Stale (dead owner, our own leftover, or unreadable) — remove and retry.
+      try {
+        unlinkSync(PID_FILE);
+      } catch {
+        // Another racer may have cleared it first; retry the create.
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Remove the pidfile only if it is still owned by THIS process. Sync so it is
+ * safe to call from a `process.on('exit')` handler. Never deletes another
+ * relay's pidfile.
+ */
+function releasePidFileIfOwned(): void {
+  try {
+    if (!existsSync(PID_FILE)) {
+      return;
+    }
+    const pid = parseInt(readFileSync(PID_FILE, 'utf-8').trim(), 10);
+    if (pid === process.pid) {
+      unlinkSync(PID_FILE);
+    }
+  } catch {
+    // Best-effort cleanup.
+  }
+}
 
 /**
  * Message from extension
@@ -121,6 +211,8 @@ export class RelayServer extends EventEmitter {
   private anonymousSessionCounter = 0;
   private debug: boolean;
   private readonly devtoolsFallback: DevtoolsFallbackConnection;
+  private pidFileOwned = false;
+  private cleanupRegistered = false;
 
   constructor(debug: boolean = false) {
     super();
@@ -132,17 +224,39 @@ export class RelayServer extends EventEmitter {
    * Start the relay server
    */
   async start(): Promise<void> {
-    // Ensure directory exists
+    // Ensure state directory exists (for the log file).
     if (!existsSync(VIBE_DIR)) {
       mkdirSync(VIBE_DIR, { recursive: true });
     }
 
-    // Start extension WebSocket server
-    await this.startExtensionServer();
-    
-    // Start agent WebSocket server
-    await this.startAgentServer();
-    await this.devtoolsFallback.start();
+    // Acquire the pidfile lock BEFORE binding ports. This is the primary
+    // cross-process mutex: exactly one relay daemon may own it. If a live relay
+    // already holds it, exit cleanly (0) so the spawner reuses that relay
+    // instead of leaving a crashed second daemon behind.
+    if (!tryAcquirePidFile()) {
+      this.log('Another live relay already owns the pidfile — not starting a second relay');
+      process.exit(0);
+    }
+    this.pidFileOwned = true;
+    this.log(`Relay started (PID: ${process.pid})`);
+
+    // Register cleanup handlers as soon as we own the lock, so the pidfile is
+    // released even if a later bind step throws.
+    this.registerCleanupHandlers();
+
+    try {
+      // Start extension WebSocket server
+      await this.startExtensionServer();
+
+      // Start agent WebSocket server
+      await this.startAgentServer();
+      await this.devtoolsFallback.start();
+    } catch (error) {
+      // Bind/startup failed — release the lock so the next launch is not blocked
+      // by a stale pidfile pointing at this (about to exit) process.
+      this.releasePidFile();
+      throw error;
+    }
 
     this.devtoolsFallback.on('tools_updated', () => {
       this.broadcastDefaultToolsToAgents();
@@ -156,14 +270,32 @@ export class RelayServer extends EventEmitter {
       this.broadcastDefaultToolsToAgents();
       this.broadcastSessionState();
     });
+  }
 
-    // Write PID file
-    writeFileSync(PID_FILE, String(process.pid));
-    this.log(`Relay started (PID: ${process.pid})`);
-
-    // Handle shutdown
+  /**
+   * Register process-exit and signal handlers that release the pidfile lock.
+   * `exit` cleanup is synchronous so it runs on unexpected termination; SIGINT
+   * and SIGTERM trigger a graceful shutdown.
+   */
+  private registerCleanupHandlers(): void {
+    if (this.cleanupRegistered) {
+      return;
+    }
+    this.cleanupRegistered = true;
+    process.on('exit', () => this.releasePidFile());
     process.on('SIGINT', () => this.shutdown());
     process.on('SIGTERM', () => this.shutdown());
+  }
+
+  /**
+   * Release the pidfile lock if (and only if) this process still owns it.
+   */
+  private releasePidFile(): void {
+    if (!this.pidFileOwned) {
+      return;
+    }
+    releasePidFileIfOwned();
+    this.pidFileOwned = false;
   }
 
   /**
@@ -651,14 +783,8 @@ export class RelayServer extends EventEmitter {
   private async shutdown(): Promise<void> {
     this.log('Shutting down relay...');
 
-    // Clean up PID file
-    try {
-      if (existsSync(PID_FILE)) {
-        unlinkSync(PID_FILE);
-      }
-    } catch (error) {
-      // Ignore
-    }
+    // Release the pidfile lock (only if we still own it).
+    this.releasePidFile();
 
     // Close all agent connections
     for (const agent of this.agents.values()) {

@@ -41,7 +41,7 @@ RESERVED_PORTS.add(TEST_EXTENSION_PORT);
 const TEST_BROWSER_CDP_PORT = getConfiguredPort('E2E_TEST_BROWSER_CDP_PORT') ?? await findFreePort(RESERVED_PORTS);
 RESERVED_PORTS.add(TEST_BROWSER_CDP_PORT);
 const RELAY_STATE_DIR = process.env.E2E_RELAY_STATE_DIR || join(tmpdir(), `vibe-mcp-e2e-relay-${process.pid}`);
-const RELAY_PID_FILE = join(RELAY_STATE_DIR, 'relay.pid');
+const RELAY_PID_FILE = join(RELAY_STATE_DIR, 'vibebrowser-relay.pid');
 const EXTENSION_CONNECT_TIMEOUT_MS = Number(process.env.E2E_EXTENSION_TIMEOUT_MS)
   || 120_000;
 // Managed Chrome bootstrap must be explicit opt-in.

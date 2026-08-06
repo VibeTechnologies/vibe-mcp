@@ -1,0 +1,118 @@
+name: Publish to MCP Registry
+
+# Publishes server.json to the official MCP registry
+# (https://registry.modelcontextprotocol.io).
+#
+# Why OIDC and not `mcp-publisher login github`:
+# the interactive GitHub device flow authenticates a *user*, and the registry
+# then derives the publishable namespace from that user's visible org
+# memberships. If the org restricts OAuth apps, the registry cannot see
+# `VibeTechnologies` and rejects `io.github.VibeTechnologies/*` with 403.
+# GitHub Actions OIDC instead proves *this repository's* identity directly, so
+# the namespace is granted from the repo owner with no org-level OAuth
+# approval needed.
+#
+# Ordering matters: the registry verifies ownership of the npm package by
+# reading the `mcpName` field from the *published* tarball, so npm must be
+# published first. This workflow therefore chains off "Publish to npm".
+
+on:
+  workflow_run:
+    workflows: ["Publish to npm"]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  publish-registry:
+    runs-on: ubuntu-latest
+    # Only run when the npm publish actually succeeded (or when dispatched by hand).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read versions from server.json
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          name=$(node -p "require('./server.json').name")
+          version=$(node -p "require('./server.json').version")
+          pkg=$(node -p "require('./server.json').packages[0].identifier")
+          pkg_version=$(node -p "require('./server.json').packages[0].version")
+          echo "name=$name"               >> "$GITHUB_OUTPUT"
+          echo "version=$version"         >> "$GITHUB_OUTPUT"
+          echo "pkg=$pkg"                 >> "$GITHUB_OUTPUT"
+          echo "pkg_version=$pkg_version" >> "$GITHUB_OUTPUT"
+          echo "Publishing $name@$version (npm $pkg@$pkg_version)"
+
+      - name: Wait for npm to serve the referenced version
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg='${{ steps.meta.outputs.pkg }}'
+          want='${{ steps.meta.outputs.pkg_version }}'
+          for i in $(seq 1 30); do
+            if npm view "$pkg@$want" version >/dev/null 2>&1; then
+              echo "$pkg@$want is live on npm."
+              exit 0
+            fi
+            echo "Attempt $i/30: $pkg@$want not on npm yet; sleeping 20s..."
+            sleep 20
+          done
+          echo "::error::$pkg@$want never appeared on npm; registry would reject the package ownership check." >&2
+          exit 1
+
+      - name: Verify the published tarball carries mcpName
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkg='${{ steps.meta.outputs.pkg }}'
+          want='${{ steps.meta.outputs.pkg_version }}'
+          expect='${{ steps.meta.outputs.name }}'
+          got=$(npm view "$pkg@$want" mcpName 2>/dev/null || true)
+          if [ "$got" != "$expect" ]; then
+            echo "::error::Published $pkg@$want has mcpName='$got', expected '$expect'. The registry verifies npm ownership via this field and will reject the publish." >&2
+            exit 1
+          fi
+          echo "mcpName verified: $got"
+
+      - name: Install mcp-publisher
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.0/mcp-publisher_linux_amd64.tar.gz" \
+            -o /tmp/mcp-publisher.tar.gz
+          tar -xzf /tmp/mcp-publisher.tar.gz -C /tmp mcp-publisher
+          sudo install -m 0755 /tmp/mcp-publisher /usr/local/bin/mcp-publisher
+          mcp-publisher --version
+
+      - name: Validate server.json
+        run: mcp-publisher validate
+
+      - name: Authenticate via GitHub Actions OIDC
+        run: mcp-publisher login github-oidc
+
+      - name: Publish
+        run: mcp-publisher publish
+
+      - name: Confirm the server is listed
+        shell: bash
+        run: |
+          set -euo pipefail
+          name='${{ steps.meta.outputs.name }}'
+          for i in $(seq 1 10); do
+            if curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=vibebrowser" \
+                 | grep -q "$name"; then
+              echo "Confirmed: $name is live in the official registry."
+              exit 0
+            fi
+            echo "Attempt $i/10: not indexed yet; sleeping 15s..."
+            sleep 15
+          done
+          echo "::error::Publish reported success but $name is not searchable in the registry." >&2
+          exit 1

@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@vibebrowser/mcp.svg)](https://www.npmjs.com/package/@vibebrowser/mcp)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-MCP server for [Vibe AI Browser](https://vibebrowser.app) - the **only browser automation tool that supports multiple AI agents simultaneously**.
+MCP server for [Vibe AI Browser](https://vibebrowser.app) — drive your **real, logged-in Chrome** from any MCP client, including agents running on a **different machine** with no inbound port open.
 
 > ⚠️ **Security — treat your relay URL/UUID like a password.** A relay URL or extension UUID (`wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of your browser session** (read your tabs, take screenshots, read page content). Never share it, paste it into a chat with untrusted parties, or commit it to a repo. Every example UUID in this documentation is a non-routable placeholder (`YOUR-EXTENSION-UUID` or `00000000-0000-0000-0000-000000000000`) — substitute your own secret value locally and keep it out of version control.
 
@@ -35,18 +35,42 @@ My remote: <PASTE YOUR UUID OR wss:// URL HERE>
 
 ## Why Vibe MCP?
 
-| Feature | Vibe MCP | Playwright MCP | BrowserMCP |
-|---------|----------|----------------|------------|
-| **Multi-Agent Support** | Yes | No | No |
-| Uses Your Browser Profile | Yes | No | No |
-| Logged-In Sessions | Yes | No | No |
-| No Separate Browser | Yes | No | No |
-| Local & Private | Yes | Yes | Partial |
-| Content Script Based | Yes | No | No |
+The browser-automation MCP space moved fast. Most of what used to differentiate us is now table stakes — so here is an honest scorecard. Where a competitor matches us, the column says **Yes**.
+
+| Capability | Vibe MCP | Playwright MCP | Chrome DevTools MCP | Claude for Chrome | BrowserMCP |
+|---|---|---|---|---|---|
+| Uses your real profile / logged-in sessions | Yes | Yes ([`--extension`][pw-ext]) | Yes (own `--user-data-dir`) | Yes | Yes |
+| No per-connection approval dialog | Yes | Yes ([token][pw-token]) | Yes (dedicated profile only) | Yes | Yes |
+| **Real logged-in profile *and* no dialog, together** | **Yes** | Yes | **No** — [pick one][cdp-1794] | Yes | Yes |
+| Multiple agents against one browser | Yes | Yes ([`--shared-browser-context`][pw-shared]) | Yes ([`--experimentalPageIdRouting`][cdp-pageid]) | No | No |
+| **Agent on another machine, no inbound port** | **Yes** — extension dials **out** to a relay | No | No — needs an inbound debug port + forwarding | No | No |
+| Works with any MCP client (Codex, OpenCode, Cursor, Hermes, OpenClaw) | Yes | Yes | Yes | **No** — Anthropic surfaces only | Yes |
+
+Two rows are ours alone:
+
+- **Outbound, cross-machine control.** The Vibe extension opens an outbound WebSocket to a relay (`wss://relay.api.vibebrowser.app/<uuid>`). Nothing listens on the user's machine, nothing is port-forwarded, and the agent can live in a pod, a cron job, or a chat bot. No competitor documents an extension-initiated outbound connection to a remote MCP server.
+- **Real profile without the dialog tax.** Chrome DevTools MCP needs approval for *each* WebSocket connection to Chrome ([#1794][cdp-1794], open; persistence was [closed won't-fix][cdp-825]). The maintainer's workaround — `--remote-debugging-port` with a dedicated `--user-data-dir` — avoids the dialog by giving up your logged-in profile. So: **skip the dialog, or use your real profile — not both.**
+
+Also worth knowing:
+
+- **Vendor lock-in.** Claude for Chrome is GA, clicks and types via the `debugger` permission, and supports scheduled tasks — it is the closest competitor. But it only drives Anthropic's own surfaces (side panel, Claude Desktop connector, Cowork, Claude Code). There is no public API or MCP surface, so Codex, OpenCode, Hermes and OpenClaw cannot use it. Vibe MCP is agent-agnostic.
+- **Stability.** Chrome DevTools MCP is explicitly experimental and currently carries open memory-leak ([#2431][cdp-2431], [#2291][cdp-2291], [#2456][cdp-2456]) and concurrency ([#1763][cdp-1763], [#1921][cdp-1921]) issues.
+
+[pw-ext]: https://github.com/microsoft/playwright-mcp/tree/main/extension
+[pw-token]: https://github.com/microsoft/playwright-mcp#browser-extension
+[pw-shared]: https://github.com/microsoft/playwright-mcp
+[cdp-pageid]: https://github.com/ChromeDevTools/chrome-devtools-mcp
+[cdp-1794]: https://github.com/ChromeDevTools/chrome-devtools-mcp/issues/1794
+[cdp-825]: https://github.com/ChromeDevTools/chrome-devtools-mcp/issues/825
+[cdp-2431]: https://github.com/ChromeDevTools/chrome-devtools-mcp/issues/2431
+[cdp-2291]: https://github.com/ChromeDevTools/chrome-devtools-mcp/issues/2291
+[cdp-2456]: https://github.com/ChromeDevTools/chrome-devtools-mcp/issues/2456
+[cdp-1763]: https://github.com/ChromeDevTools/chrome-devtools-mcp/issues/1763
+[cdp-1921]: https://github.com/ChromeDevTools/chrome-devtools-mcp/issues/1921
 
 ### Multi-Agent Architecture
 
-Vibe MCP is the **only solution that allows multiple AI agents to control the same browser simultaneously**. Run Claude Desktop, Cursor, VS Code Copilot, and OpenCode all at once - they all share control of your browser through our relay architecture.
+Run Claude Desktop, Cursor, VS Code Copilot, and OpenCode at once — they share control of one browser through the relay, which multiplexes requests and routes each response back to the agent that asked.
 
 ```
 Claude Desktop       Cursor          VS Code         OpenCode
@@ -66,16 +90,14 @@ Claude Desktop       Cursor          VS Code         OpenCode
                    [Your Chrome]
 ```
 
-**Competitors like Playwright MCP and BrowserMCP fail when you try to run multiple agents** - they get port conflicts or connection errors. Vibe MCP just works.
-
 ## Features
 
-- **Multi-Agent Ready** - Run Claude, Cursor, VS Code, and more simultaneously
+- **Multi-Agent Ready** - Run Claude, Cursor, VS Code, and more simultaneously against one browser
 - **Uses Your Browser** - No separate browser instance, uses your existing Chrome with all your logins
-- **Fast & Local** - Automation happens on your machine, no cloud latency
-- **Private** - Your browsing data never leaves your device
-- **Stable** - Content script based, no flaky CDP connections
+- **Remote-capable** - The extension dials out to a relay, so the agent can run on another machine with no inbound port
+- **Local by default** - In local mode everything stays on `127.0.0.1`; only remote relay mode routes traffic through `relay.api.vibebrowser.app`
 - **Direct Chrome DevTools mode** - Extension tools stay primary by default; use `--devtools` to drive your real running Chrome directly over the DevTools Protocol (no extension required)
+
 
 ## Quick Start
 

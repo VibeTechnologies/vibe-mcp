@@ -343,6 +343,33 @@ Claude / Cursor / VS Code (stdio)
 3. The relay forwards commands to the extension on port `19889`
 4. Results flow back to the agent
 
+### Two legs, two protocols
+
+Don't conflate them — the transport to the MCP server is configurable, the transport to the extension is not.
+
+| Leg | Protocol | Configurable? |
+|---|---|---|
+| MCP client → `vibebrowser-mcp` | stdio **or** streamable HTTP | Yes — `--transport stdio\|http` |
+| `vibebrowser-mcp` ↔ relay ↔ extension | WebSocket only | No |
+
+```
+MCP client ──stdio──┐
+                    ├──> [vibebrowser-mcp] ──ws──> [relay] ──ws──> [extension]
+MCP client ──http───┘
+```
+
+Streamable HTTP lets a remote or hosted agent — one that can't spawn a stdio
+subprocess — talk to the server over a URL:
+
+```bash
+npx -y @vibebrowser/mcp@latest start --transport http
+# serves POST/GET http://127.0.0.1:8788/mcp
+```
+
+Defaults: `--host 127.0.0.1`, `--http-port 8788`, `--http-path /mcp`. Add
+`--allow-host <host>` (repeatable) if you front it with a proxy or bind it
+beyond localhost.
+
 ### Multi-Agent Mode
 
 When multiple agents connect, Vibe MCP automatically spawns a relay daemon:

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.VibeTechnologies/vibe-mcp",
+  "title": "Vibe MCP — Real Chrome, Remotely",
+  "description": "Drive your real, logged-in Chrome from any MCP client — even from a remote machine, no inbound port.",
+  "repository": {
+    "url": "https://github.com/VibeTechnologies/vibe-mcp",
+    "source": "github"
+  },
+  "version": "0.3.2",
+  "websiteUrl": "https://vibebrowser.app",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@vibebrowser/mcp",
+      "version": "0.3.2",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

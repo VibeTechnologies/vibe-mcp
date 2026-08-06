@@ -1,8 +1,9 @@
 {
   "name": "@vibebrowser/mcp",
-  "version": "0.3.1",
+  "mcpName": "io.github.VibeTechnologies/vibe-mcp",
+  "version": "0.3.2",
   "type": "module",
-  "description": "MCP server for browser automation - the only solution supporting multiple AI agents (Claude, Cursor, VS Code) simultaneously controlling your Chrome browser",
+  "description": "MCP server that drives your real, logged-in Chrome from any MCP client - including agents on a remote machine, with no inbound port open",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "workspaces": [
@@ -58,7 +59,15 @@
     "browser-mcp",
     "web-scraping",
     "vibe",
-    "vibebrowser"
+    "vibebrowser",
+    "remote-browser",
+    "logged-in-browser",
+    "chrome-extension",
+    "browser-control",
+    "claude",
+    "mcp-browser",
+    "real-browser",
+    "chrome-devtools-mcp-alternative"
   ],
   "author": "Vibe Technologies",
   "license": "Apache-2.0",
@@ -87,11 +96,12 @@
     "typescript": "^5.0.0"
   },
   "files": [
-    "dist",
-    "openclaw",
-    "docs/openclaw-local-browser.md",
-    "docs/chrome-devtools-relay.md",
+    "LICENSE",
     "README.md",
-    "LICENSE"
+    "dist",
+    "docs/chrome-devtools-relay.md",
+    "docs/openclaw-local-browser.md",
+    "openclaw",
+    "server.json"
   ]
 }

@@ -1,0 +1,74 @@
+{
+  "manifest_version": "0.3",
+  "name": "vibe-browser",
+  "display_name": "Vibe Browser",
+  "version": "0.3.2",
+  "description": "Drive your real, logged-in Chrome from Claude Desktop.",
+  "long_description": "Vibe Browser lets Claude drive the Chrome you already use - with your tabs, your cookies, and your logged-in sessions - instead of a headless throwaway browser.\n\nThe browser can also run on a different machine from Claude, with no inbound port open on either side, by pairing them through a relay UUID.\n\nRequires the free Vibe Chrome extension. After installing this bundle, install the extension from the Chrome Web Store and enable 'MCP External Control' in its Settings.",
+  "author": {
+    "name": "Vibe Technologies",
+    "url": "https://vibebrowser.app"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VibeTechnologies/vibe-mcp.git"
+  },
+  "homepage": "https://vibebrowser.app",
+  "documentation": "https://github.com/VibeTechnologies/vibe-mcp#readme",
+  "support": "https://github.com/VibeTechnologies/vibe-mcp/issues",
+  "license": "Apache-2.0",
+  "keywords": [
+    "browser",
+    "chrome",
+    "browser-automation",
+    "web-automation",
+    "productivity"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "server/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/index.js"],
+      "env": {
+        "VIBE_REMOTE_URL": "${user_config.remote_uuid}"
+      }
+    }
+  },
+  "user_config": {
+    "remote_uuid": {
+      "type": "string",
+      "title": "Remote browser UUID (optional)",
+      "description": "Leave empty when Chrome runs on this same machine. To control Chrome on a DIFFERENT machine, switch the Vibe extension to Remote mode and paste the UUID it shows here. Treat it like a password: it is the only credential guarding that browser.",
+      "sensitive": true,
+      "required": false,
+      "default": ""
+    }
+  },
+  "tools": [
+    { "name": "navigate_to_url", "description": "Navigate to any URL" },
+    { "name": "go_back", "description": "Go back in browser history" },
+    { "name": "go_forward", "description": "Go forward in browser history" },
+    { "name": "click", "description": "Click an element on the page" },
+    { "name": "type", "description": "Type text into an input" },
+    { "name": "fill", "description": "Fill an input with text" },
+    { "name": "scroll", "description": "Scroll the page" },
+    { "name": "take_screenshot", "description": "Capture a screenshot of the page" },
+    { "name": "get_page_content", "description": "Extract page text or HTML" },
+    { "name": "get_tabs", "description": "List open browser tabs" },
+    { "name": "create_new_tab", "description": "Open a new tab" },
+    { "name": "switch_to_tab", "description": "Switch to an existing tab" },
+    { "name": "close_tab", "description": "Close a tab" },
+    { "name": "keyboard_shortcut", "description": "Press a keyboard combination" },
+    { "name": "web_search", "description": "Search the web" }
+  ],
+  "tools_generated": true,
+  "privacy_policies": ["https://vibebrowser.app/privacy"],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

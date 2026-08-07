@@ -35,3 +35,13 @@ jobs:
         # packed @vibebrowser/cli install+help smoke, and the chrome-use
         # devtools flag.
         run: npm run test:ci
+
+      # Kept out of `test:ci` because it needs network: it installs the
+      # published npm package into the bundle, runs Anthropic's `mcpb` and
+      # `claude plugin validate` tools, and resolves the Chrome Web Store
+      # listing linked from the setup skill.
+      - name: Install claude CLI (runs the same validator as Anthropic's review pipeline)
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: E2E (distribution artifacts - plugin + .mcpb bundle)
+        run: npm run test:e2e:plugin-bundle

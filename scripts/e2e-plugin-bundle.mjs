@@ -183,6 +183,28 @@ check('bundle is self-contained (declared entry + dependency tree present)', () 
   }
 });
 
+// Hard requirements copied from Anthropic's MCPB Desktop Extensions submission
+// form. A drift here gets the submission rejected, so fail the build instead.
+check('bundle meets the MCPB directory submission requirements', () => {
+  const manifest = readJson(path.join(stageDir, 'manifest.json'));
+  assert(
+    manifest.server.type === 'node',
+    `directory expects a Node.js extension, manifest declares "${manifest.server.type}"`,
+  );
+  assert(
+    manifest.author && /^https:\/\/github\.com\/[^/]+\/?$/.test(manifest.author.url || ''),
+    `manifest author.url must point at a GitHub profile, got "${(manifest.author || {}).url}"`,
+  );
+  assert(
+    Array.isArray(manifest.privacy_policies) && manifest.privacy_policies.length > 0,
+    'manifest must declare privacy_policies: the server reaches an external relay',
+  );
+  assert(
+    manifest.repository && /^https:\/\/github\.com\//.test(manifest.repository.url || ''),
+    'manifest must declare a public GitHub repository',
+  );
+});
+
 check('bundle packs into a loadable .mcpb archive', () => {
   const out = path.join(repoRoot, 'build', 'vibe-browser.mcpb');
   fs.rmSync(out, { force: true });

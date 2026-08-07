@@ -50,7 +50,48 @@ jobs:
           echo "pkg_version=$pkg_version" >> "$GITHUB_OUTPUT"
           echo "Publishing $name@$version (npm $pkg@$pkg_version)"
 
+      # This workflow chains off every successful "Publish to npm" run, and that
+      # workflow runs on any push to main touching package.json - including pushes
+      # that don't bump the version. The registry rejects a re-publish with
+      # 400 "cannot publish duplicate version", which turned main red on
+      # 2026-08-07 (run 31183624542) after a docs/plugin-only change. Treat
+      # "already published at this exact version" as success and stop early.
+      - name: Skip if this version is already published
+        id: existing
+        shell: bash
+        run: |
+          set -euo pipefail
+          name='${{ steps.meta.outputs.name }}'
+          want='${{ steps.meta.outputs.version }}'
+          body=$(curl -fsS --get \
+            --data-urlencode "search=$name" \
+            "https://registry.modelcontextprotocol.io/v0/servers" || true)
+          already=false
+          if [ -n "$body" ] && printf '%s' "$body" | NAME="$name" WANT="$want" node -e '
+            const want = process.env.WANT, name = process.env.NAME;
+            let raw = "";
+            process.stdin.on("data", c => raw += c);
+            process.stdin.on("end", () => {
+              let d; try { d = JSON.parse(raw); } catch { process.exit(1); }
+              const hit = (d.servers || []).find(e => {
+                const s = e.server || e;
+                const meta = (e._meta || {})["io.modelcontextprotocol.registry/official"] || {};
+                return s.name === name && s.version === want && meta.status === "active";
+              });
+              process.exit(hit ? 0 : 1);
+            });
+          '; then
+            already=true
+          fi
+          echo "already=$already" >> "$GITHUB_OUTPUT"
+          if [ "$already" = "true" ]; then
+            echo "$name@$want is already active in the registry; nothing to publish."
+          else
+            echo "$name@$want is not in the registry yet; proceeding to publish."
+          fi
+
       - name: Wait for npm to serve the referenced version
+        if: steps.existing.outputs.already != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -68,6 +109,7 @@ jobs:
           exit 1
 
       - name: Verify the published tarball carries mcpName
+        if: steps.existing.outputs.already != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -82,6 +124,7 @@ jobs:
           echo "mcpName verified: $got"
 
       - name: Install mcp-publisher
+        if: steps.existing.outputs.already != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -92,12 +135,15 @@ jobs:
           mcp-publisher --version
 
       - name: Validate server.json
+        if: steps.existing.outputs.already != 'true'
         run: mcp-publisher validate
 
       - name: Authenticate via GitHub Actions OIDC
+        if: steps.existing.outputs.already != 'true'
         run: mcp-publisher login github-oidc
 
       - name: Publish
+        if: steps.existing.outputs.already != 'true'
         run: mcp-publisher publish
 
       # Verify against the *server name*, not a hardcoded brand string. The
@@ -109,6 +155,7 @@ jobs:
       # server was live. Also assert the published version and active status so a
       # stale prior entry can't satisfy the check.
       - name: Confirm the server is listed
+        if: steps.existing.outputs.already != 'true'
         shell: bash
         run: |
           set -euo pipefail

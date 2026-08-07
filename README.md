@@ -237,20 +237,29 @@ Add to `~/.gemini/settings.json`:
 </details>
 
 <details>
-<summary><strong>OpenAI Codex CLI</strong></summary>
+<summary><strong>OpenAI Codex CLI / ChatGPT desktop app / Codex IDE extension</strong></summary>
 
-Add to your Codex configuration:
+All three share one config file: `~/.codex/config.toml`. Configure once, use everywhere.
 
-```json
-{
-  "mcp": {
-    "vibe": {
-      "command": "npx",
-      "args": ["-y", "@vibebrowser/mcp"]
-    }
-  }
-}
+Easiest — let Codex write the entry:
+
+```bash
+codex mcp add vibe -- npx -y @vibebrowser/mcp
 ```
+
+Or add the table to `~/.codex/config.toml` by hand (Codex uses **TOML**, not JSON):
+
+```toml
+[mcp_servers.vibe]
+command = "npx"
+args = ["-y", "@vibebrowser/mcp"]
+```
+
+In the ChatGPT desktop app you can also use the UI: **Settings → MCP servers → Add server**, choose **STDIO**, command `npx`, args `-y @vibebrowser/mcp`, then **Restart**.
+
+Verify with `codex mcp list`, or type `/mcp` in the Codex TUI or the desktop composer.
+
+> ChatGPT on the web does not read local Codex config, so a local MCP server like Vibe is not available there.
 
 </details>
 

@@ -280,6 +280,53 @@ npx -y -p @vibebrowser/mcp@latest vibebrowser-mcp --help
 npx -y -p @vibebrowser/mcp@latest vibe-mcp --help
 ```
 
+### Remote connector (hosted assistants — no install)
+
+Everything above assumes the client can spawn a local process. Hosted
+assistants cannot: Claude on the web / in Cowork / on mobile, and ChatGPT on
+the web, run in the vendor's cloud with no access to your machine. They accept
+a **remote MCP server URL** and nothing else — no command, no arguments, and
+no custom request headers.
+
+For those, skip `@vibebrowser/mcp` entirely. The extension alone is enough:
+
+```
+https://relay.api.vibebrowser.app/mcp/<your-extension-uuid>
+```
+
+Find `<your-extension-uuid>` in the extension: **Vibe icon → Settings → Agent
+connection URL**. It is the same UUID the CLI takes as
+`--remote wss://relay.api.vibebrowser.app/<uuid>`.
+
+Where to paste it:
+
+| Client | Where |
+|---|---|
+| Claude (web, Cowork, mobile, Desktop) | Settings → Connectors → Add custom connector |
+| ChatGPT (web) | Settings → Connectors → developer mode |
+
+Custom connectors are a paid-plan feature in both products.
+
+The relay also accepts the UUID as an `X-Remote-Session` or
+`Authorization: Bearer` header on a bare `POST /mcp`. Use the header form from
+anything that can send one (Codex CLI, scripts) — it keeps the credential out
+of URLs, logs, and browser history. The path form exists specifically for the
+UIs that cannot send a header.
+
+**Two things this path costs you, stated plainly:**
+
+1. **The URL is a credential.** Anyone who has that UUID can drive your
+   logged-in browser — read your mail, act as you on any site you are signed
+   into. Treat it exactly like a password: never commit it, never paste it into
+   a shared chat, an issue, a README, or a screenshot. If it leaks, revoke the
+   session in the extension and generate a new one. (This is not hypothetical:
+   a dev machine's UUID once shipped in these very docs.)
+2. **Page content leaves your machine.** On the local STDIO path, tool calls
+   and page content never leave `127.0.0.1`. On the remote-connector path they
+   traverse `relay.api.vibebrowser.app`, because the assistant is in the
+   vendor's cloud and has no other route to your browser. If you need
+   on-device-only, use a desktop client with the local server instead.
+
 ### 3. Connect the Extension
 
 1. Open Chrome with the Vibe extension installed

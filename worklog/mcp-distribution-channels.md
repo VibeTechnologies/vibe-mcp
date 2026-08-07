@@ -2,6 +2,86 @@
 
 Research date: 2026-08-07. Read-only investigation. No product code changed.
 
+Execution status last updated: 2026-08-07. See [Execution status](#execution-status) for what
+actually shipped — that section is the source of truth; the analysis below it is the original
+research and is left unedited except where it was factually wrong (noted inline).
+
+---
+
+## Execution status
+
+| Channel | Status | Date | Evidence / link |
+|---|---|---|---|
+| **Official MCP Registry** | **LIVE** | 2026-08-07 | `io.github.VibeTechnologies/vibe-mcp` v0.3.2, `status: active`, `isLatest: true`. Verify: `curl -s --get --data-urlencode "search=io.github.VibeTechnologies/vibe-mcp" https://registry.modelcontextprotocol.io/v0/servers` |
+| **Own Claude Code marketplace** | **LIVE** | 2026-08-07 | `/plugin marketplace add VibeTechnologies/vibe-mcp` then `/plugin install vibe-browser@vibe-browser`. Catalog: `.claude-plugin/marketplace.json` |
+| **Anthropic Plugin Directory** (`claude-community`) | **BUILT, NOT SUBMITTED — blocked** | 2026-08-07 | Plugin at `plugins/vibe-browser/`, passes `claude plugin validate --strict`. Blocker below. |
+| **Anthropic MCPB directory** | **BUILT, NOT SUBMITTED — blocked** | 2026-08-07 | Bundle builds via `npm run build:mcpb`, passes `mcpb validate`, installs and completes an MCP handshake. Blockers below. |
+| npm | LIVE | 2026-08-07 | `@vibebrowser/mcp@0.3.2` |
+
+### What shipped
+
+- **MCP registry.** `@vibebrowser/mcp@0.3.2` was published to npm (the registry verifies package
+  ownership by reading `mcpName` from the *published* tarball, so npm must go first), then
+  `mcp-publisher publish` ran under GitHub Actions OIDC. Live since `2026-08-07T13:13:04Z`.
+  The publish job nevertheless went red on its final step: the verifier grepped the API response
+  for the literal string `vibebrowser`, but the registry's `search` filter matches the server
+  *name* (`io.github.VibeTechnologies/vibe-mcp`) — `vibebrowser` appears only in the description
+  and package identifier. Fixed to assert name + version + `status: active`.
+- **Claude Code plugin** (`plugins/vibe-browser/`): `plugin.json`, `.mcp.json` wrapping the
+  published npm package, and a `skills/setup/SKILL.md` that walks the user through installing the
+  Chrome extension — our worst onboarding blocker, since the server is only a relay and cannot
+  install the extension itself.
+- **Repo-as-marketplace** (`.claude-plugin/marketplace.json`): users can install today without
+  waiting on Anthropic's review queue. This was not in the original plan and is the reason the
+  directory blocker below is not a hard dependency for distribution.
+- **`.mcpb` bundle** (`mcpb/`): manifest per MCPB spec 0.3 plus a build that vendors the server
+  and its dependencies, so installing needs no network. 3.4 MB, 2309 entries.
+- **Tests** (`scripts/e2e-plugin-bundle.mjs`, in CI): runs `claude plugin validate --strict` (the
+  same validator Anthropic's review pipeline runs) and `mcpb validate`, packs a real archive, and
+  boots the bundled server exactly as `manifest.json` declares to complete a real MCP `initialize`
+  handshake over stdio.
+
+### Blockers (exact)
+
+**1. Both Anthropic submissions need an authenticated Anthropic account, and we do not have the
+company one.** The only submission routes are two in-app forms —
+`platform.claude.com/plugins/submit` (Console) and
+`claude.ai/admin-settings/directory/submissions/plugins/new` (Team/Enterprise) — plus a Google
+Form for MCPB at `clau.de/desktop-extention-submission` that records the signed-in Google
+identity. `anthropics/claude-plugins-community` is explicitly a **read-only mirror**, so there is
+no pull-request path.
+
+The only identity signed into this machine's Chrome is the founder's **personal** Google/Anthropic
+account, which company policy forbids using for project signups. The company account
+(`vibeteaichnologies@gmail.com`) has its password in Bitwarden, and the Bitwarden CLI is
+**unauthenticated** — `~/Library/Application Support/Bitwarden CLI/data.json` contains only
+`stateVersion`, and `~/.env.d/bitwarden.env` holds a stale `BW_SESSION` with no API key or master
+password. `gcloud` *is* authenticated as `vibeteaichnologies@gmail.com`, but only with
+cloud-platform scope, which cannot read that mailbox or mint a browser session.
+
+*Unblock:* `bw login` the company Bitwarden account, then sign into Chrome as
+`vibeteaichnologies@gmail.com` and submit both forms. Everything else is ready.
+
+**2. MCPB directory states "MIT licensed"; this repo is Apache-2.0.** The form lists MIT under
+what Anthropic is "primarily considering" — soft-worded, not an explicit hard gate, but it is a
+stated preference we currently fail. Relicensing is a founder/legal decision (it affects existing
+contributors and the `vibe` fork), so it was deliberately **not** changed here. Either accept the
+lower odds and submit as Apache-2.0, or decide to relicense first.
+
+### Corrections to the original research below
+
+- §8 item 2 claimed submitting the plugin form "Lands us in `claude-plugins-official`, which every
+  Claude Code user already has." **That is wrong.** Per Anthropic's current docs the form feeds
+  `claude-community` (users must add it with `/plugin marketplace add anthropics/claude-plugins-community`).
+  `claude-plugins-official` is curated by Anthropic at its own discretion and has **no application
+  process** — "the submission form does not add plugins to the official marketplace." The
+  auto-available-everywhere reach attributed to this channel does not exist; treat it as a normal
+  reviewed directory.
+- §8 item 1's premise that a publish "would fail validation" because `server.json` claimed 0.3.2
+  while npm had 0.3.1 was correct, and was resolved by publishing 0.3.2 rather than downgrading.
+
+---
+
 ## One-sentence answer
 
 **No, there is no store you must publish to** — every client that matters (Claude Code, Claude

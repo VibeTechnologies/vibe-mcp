@@ -100,19 +100,43 @@ jobs:
       - name: Publish
         run: mcp-publisher publish
 
+      # Verify against the *server name*, not a hardcoded brand string. The
+      # previous version searched for "vibebrowser", which never matches: the
+      # registry's `search` filter matches the server `name`
+      # (io.github.VibeTechnologies/vibe-mcp), and "vibebrowser" appears only in
+      # the description and package identifier. That produced a red job on
+      # 2026-08-07 even though `mcp-publisher publish` had succeeded and the
+      # server was live. Also assert the published version and active status so a
+      # stale prior entry can't satisfy the check.
       - name: Confirm the server is listed
         shell: bash
         run: |
           set -euo pipefail
           name='${{ steps.meta.outputs.name }}'
+          want='${{ steps.meta.outputs.version }}'
           for i in $(seq 1 10); do
-            if curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=vibebrowser" \
-                 | grep -q "$name"; then
-              echo "Confirmed: $name is live in the official registry."
+            body=$(curl -fsS --get \
+              --data-urlencode "search=$name" \
+              "https://registry.modelcontextprotocol.io/v0/servers" || true)
+            if [ -n "$body" ] && printf '%s' "$body" | NAME="$name" WANT="$want" node -e '
+              const want = process.env.WANT, name = process.env.NAME;
+              let raw = "";
+              process.stdin.on("data", c => raw += c);
+              process.stdin.on("end", () => {
+                let d; try { d = JSON.parse(raw); } catch { process.exit(1); }
+                const hit = (d.servers || []).find(e => {
+                  const s = e.server || e;
+                  const meta = (e._meta || {})["io.modelcontextprotocol.registry/official"] || {};
+                  return s.name === name && s.version === want && meta.status === "active";
+                });
+                process.exit(hit ? 0 : 1);
+              });
+            '; then
+              echo "Confirmed: $name@$want is live and active in the official registry."
               exit 0
             fi
-            echo "Attempt $i/10: not indexed yet; sleeping 15s..."
+            echo "Attempt $i/10: $name@$want not indexed as active yet; sleeping 15s..."
             sleep 15
           done
-          echo "::error::Publish reported success but $name is not searchable in the registry." >&2
+          echo "::error::Publish reported success but $name@$want is not listed as active in the registry." >&2
           exit 1

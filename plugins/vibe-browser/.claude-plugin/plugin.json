@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "vibe-browser",
+  "displayName": "Vibe Browser",
+  "version": "0.3.2",
+  "description": "Drive your real, logged-in Chrome from Claude Code. Navigate, click, type, screenshot and read pages in the browser you already use - including a browser on a different machine, with no inbound port open.",
+  "author": {
+    "name": "Vibe Technologies",
+    "url": "https://vibebrowser.app"
+  },
+  "homepage": "https://vibebrowser.app",
+  "repository": "https://github.com/VibeTechnologies/vibe-mcp",
+  "license": "Apache-2.0",
+  "keywords": [
+    "browser",
+    "chrome",
+    "browser-automation",
+    "web-automation",
+    "mcp",
+    "playwright-alternative",
+    "puppeteer-alternative"
+  ]
+}

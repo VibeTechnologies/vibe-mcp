@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "vibe": {
+      "command": "npx",
+      "args": ["-y", "@vibebrowser/mcp@0.3.2"]
+    }
+  }
+}

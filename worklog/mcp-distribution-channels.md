@@ -250,3 +250,213 @@ Directory listings are discovery. Distribution already works.
 `<uuid>` comes from the extension: Settings → external agent control → Remote
 (internet) → Agent connection URL. It grants full control of that browser —
 never log, screenshot, or paste it anywhere else.
+
+---
+
+## 7. Update — 2026-08-08: what moved, and one correction
+
+Three things changed since §0–§6 were written, and one claim in them is now
+wrong. Read this section before acting on anything above.
+
+### 7.1 The OAuth gap in §4 is closed (shipped)
+
+§4 estimated ~4 engineering days for OAuth 2.1 + DCR. It landed in
+platform#67/#68. Measured against production today — all FACT:
+
+| Probe | Result |
+|---|---|
+| `POST /mcp` unauthenticated | `401` |
+| `WWW-Authenticate` on that `401` | `Bearer resource_metadata="https://relay.api.vibebrowser.app/.well-known/oauth-protected-resource", scope="browser:read browser:control"` |
+| `/.well-known/oauth-protected-resource` | `200` |
+| `/.well-known/oauth-authorization-server` | `200` |
+
+So we now have a **universal URL**: `https://relay.api.vibebrowser.app/mcp`.
+That removes the template-URL disqualifier §2 flagged for OpenAI, and the
+`custom_connection` special-casing §2 flagged for Anthropic. Treat §4 as a
+record of the design, not as outstanding work.
+
+### 7.2 Domain verification is now possible (shipped)
+
+`/.well-known/openai-apps-challenge` returned `404` in §1's probe table. It is
+now implemented and live (platform#69). Details, and the full business-
+verification pack, are in `openai-verification-pack.md`. Summary of the
+requirement, since §2 left it vague: it is a **`.well-known` HTTPS file only —
+there is no DNS TXT record**, and the file must return the bare token as
+`text/plain` with no JSON envelope.
+FACT — <https://developers.openai.com/plugins/deploy/submission#domain-verification>
+
+### 7.3 Correction: annotations are NOT done on the path that matters
+
+vibe-mcp#125 added a full annotation table (`src/tool-annotations.ts`) and the
+follow-up commit recorded the blocker as closed. **On the hosted endpoint it is
+not.** FACT, read from source today:
+
+- The relay does not own a tool list. `handleMcpToolsList` proxies whatever the
+  connected extension reports — `session.tools`, else a `list_tools` round-trip.
+  `platform/subscriptions/relay-service/server.js`
+- The extension's tool shape is `McpServerToolDefinition { name, description,
+  inputSchema }` — **no `title`, no annotations**.
+  `vibe/lib/mcp/server/types.ts:97`
+- `grep -c 'readOnlyHint|destructiveHint|annotations'` over the relay source and
+  over `vibe/lib/mcp/` both return **0**.
+
+`tool-annotations.ts` is applied by the **npm stdio package**. Both directories
+scan the **remote** endpoint, which is fed by the extension. So the endpoint
+OpenAI and Anthropic actually inspect still advertises zero annotations, and
+hard-fails both:
+
+- Anthropic: "Every tool must include a `title` and the applicable hint."
+- OpenAI: "Every tool has accurate `readOnlyHint`, `openWorldHint`, and
+  `destructiveHint` values."
+
+**Cheapest fix: enrich in the relay, not the extension.** The relay already
+mediates `tools/list`; it can join the extension's tool names against the same
+classification table and emit `title` + hints. That is a relay deploy (minutes)
+versus an extension change that must clear Chrome Web Store review (days, and
+users must update). Do this before anything in §8.
+
+---
+
+## 8. Hosted demo browser for reviewers — assessment and recommendation
+
+The question: reviewers install nothing, so our tools have no browser to drive.
+Do we have to host one?
+
+### 8.1 Does each directory actually require working tools?
+
+**Anthropic — NO, not to get listed.** FACT
+(<https://claude.com/docs/connectors/building/review-criteria>):
+
+> When you submit a server, it is automatically scanned for policy compliance
+> and, **by default, listed in the directory as a community connector**.
+> Anthropic may then escalate listings flagged as highly useful ... to verified
+> review, which is higher touch and slower; **reviewers run a functional test of
+> each tool**. This escalation is assessed automatically, and you do not need to
+> take any action.
+
+A human functional test happens only on an escalation we cannot request and do
+not control. "Test credentials ... must be a fully populated account" is a
+stated submission field, and "every tool must return a successful response when
+called with valid parameters" is a stated criterion — but the default path to a
+community listing is an automated policy scan, not a tool-by-tool exercise.
+
+**OpenAI — YES, hard, in three independent places.** FACT
+(<https://developers.openai.com/plugins/deploy/submission>):
+
+1. **`Scan Tools` cannot populate the draft.** Our relay answers `tools/list`
+   with JSON-RPC error `-32002` when no extension is connected. The portal
+   imports tool metadata by scanning the live endpoint, so with no browser
+   attached the submission cannot even be *built*, let alone reviewed.
+2. **Five positive and three negative test cases**, which reviewers run.
+3. Credentials must work "without MFA, email confirmation, SMS confirmation, or
+   **private-network access**", and the single most-cited rejection reason is
+   *"We're unable to connect to your MCP server using the MCP URL and/or test
+   credentials we were given."*
+
+Docs and a video do **not** substitute for either directory. Neither offers a
+documentation-only route.
+
+**Consequence:** a demo browser is required for OpenAI only. Building one to
+reach Anthropic's directory would be unjustified.
+
+### 8.2 Cheapest viable design (if we proceed for OpenAI)
+
+Our architecture already solves the hard part. The extension dials **outbound**
+to the relay; nothing needs an inbound port. So the demo browser can live
+anywhere with egress and does not need to be a hosted service at all.
+
+**Ephemeral CI session, on demand:**
+
+- Reuse `vibe/tests/cua/` — it already runs Xvfb + real Chrome with the
+  extension loaded, and four CUA workflows depend on it today. This is existing,
+  working, exercised code, not a new system.
+- Add a `workflow_dispatch` job that starts Chrome + extension, registers a
+  **pre-provisioned review session UUID**, and idles for the job's lifetime.
+- A GitHub-hosted job caps at 6 hours, which gives the time box for free — the
+  session cannot outlive the window even if we forget to tear it down.
+- Trigger it for an announced review window; revoke the session afterwards by
+  regenerating it (the relay already supports revocation, per §3).
+
+**Capacity, if we instead used the existing cluster** (measured today):
+3 nodes × 2 vCPU; memory at 35% / 51% / 72%, so roughly 2.5 GB free on the
+least-loaded node. Chrome plus the extension needs ~1–1.5 GB and bursts CPU.
+One concurrent session would fit. **We should still not do it — see 8.4.**
+
+### 8.3 Cost — honest number
+
+No new paid services and no new cloud spend under either option.
+
+| Option | Cash | Real cost |
+|---|---|---|
+| Ephemeral CI session | $0 new | GitHub Actions minutes. `VibeWebAgent` is **private**, so minutes are metered: ~360 per 6-hour window at the 1× Linux rate. A realistic review needs several windows — call it **1,000–2,000 minutes**, drawn from the existing plan allowance. |
+| Existing k8s cluster | $0 new | No minutes, spare capacity exists — but see 8.4. |
+
+So: it can be done with **no new spend**, but "free" overstates it for the CI
+option — it consumes an existing metered budget. If that allowance is exhausted,
+overage is billed per-minute; that is the only path to real money here.
+
+### 8.4 Security — the part that decides this
+
+An agent-drivable browser is a serious abuse surface. Enumerated:
+
+| # | Risk | Why it is real here |
+|---|---|---|
+| 1 | **SSRF into our own infrastructure** | Our toolset includes `evaluate_script` (arbitrary JS) and `web_fetch` (arbitrary URL). A browser inside our cluster can reach the cloud metadata endpoint (`169.254.169.254`) and cluster-internal services, escalating toward node credentials — in a cluster that holds `vibe-secrets`, LiteLLM, and the Stripe service. **This is the dominant risk and it is created purely by the "keep it free, put it on the existing cluster" choice.** |
+| 2 | Open proxy / anonymising egress | Anyone holding the token browses arbitrary sites from our IP: illegal content, abuse, fraud. Our IP and cloud account carry the consequences. |
+| 3 | Credential harvesting | Anthropic asks for a "fully populated account". Any real logged-in session in the demo profile is readable via `get_page_content` / `take_screenshot` by whoever holds the token. |
+| 4 | Token leakage | The session id is a bearer capability in a URL (§3). Review URLs get pasted into portals, tickets and screenshots. |
+| 5 | Noisy neighbour | Chrome on a 2-vCPU node beside the production relay can degrade the live product. |
+
+Required mitigations, all of them, not a subset:
+
+- Run **off** the production cluster; never in a namespace that can see
+  `vibe-secrets`.
+- **Egress allowlist** to the handful of benign domains the test cases need.
+  This is the single highest-value control: an allowlisted browser is not an
+  open proxy, which collapses risks 1 and 2.
+- Block link-local and RFC1918 (`169.254/16`, `10/8`, `172.16/12`, `192.168/16`).
+- **No real credentials** in the demo profile — use a throwaway account on a
+  property we control.
+- Live only during an announced review window; revoke the session afterwards.
+- Hard wall-clock cap and per-session rate limiting.
+
+### 8.5 Recommendation
+
+**Do not build a general hosted browser. Recommend AGAINST the persistent,
+open, cluster-hosted version outright.** It is free in cash and expensive in
+risk: a tool that executes arbitrary JavaScript, running inside the cluster that
+holds our production secrets, is a plausible metadata-service SSRF path to those
+secrets. No directory listing justifies that.
+
+**Do not build anything for Anthropic.** Community listing is automatic (8.1);
+the functional test only happens on an escalation we cannot request. There is no
+demo-browser-shaped blocker there to solve.
+
+**For OpenAI only, build the narrow version**: an ephemeral, allowlisted,
+credential-free CI session (8.2), live only during a review window. Scoped that
+way it is not a hosted browser product — it is a test fixture that happens to be
+reachable, and the abuse surface is small enough to accept.
+
+**Sequence it last.** §7.3 is the binding constraint: the hosted endpoint
+advertises no annotations, and both directories reject on that alone. A demo
+browser built today would let a reviewer connect to a server that still fails
+the checklist. Fix annotations in the relay first (hours), then reconsider the
+demo session. Do not open an OpenAI submission before both are done — only one
+version may be in review at a time, and the queue has no published SLA, so a
+predictable rejection is expensive.
+
+### 8.6 Revised order (supersedes §5)
+
+1. **Emit `title` + annotations from the relay's `tools/list`** (§7.3). Hours,
+   not days; unblocks every reviewed directory.
+2. Publish the privacy policy in the MCPB manifest + README, then submit
+   **MCPB** and **Plugin** directories — neither needs a demo browser.
+3. Submit **Anthropic Connectors**. Community listing is automatic; no demo
+   browser required.
+4. Complete OpenAI **business verification** and paste the domain token
+   (`openai-verification-pack.md` §4) — the endpoint is already live.
+5. Only then, build the narrow ephemeral demo session (8.2/8.4) and submit to
+   **OpenAI**.
+
+Steps 1–4 need no new infrastructure and carry no security risk. Step 5 is the
+only one that does, and it is last for that reason.

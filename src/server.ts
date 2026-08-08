@@ -27,6 +27,7 @@ import {
   type ToolResult,
 } from './types.js';
 import { getPackageVersion } from './version.js';
+import { annotateTool } from './tool-annotations.js';
 
 const SERVER_NAME = 'vibebrowser-mcp';
 const SERVER_VERSION = getPackageVersion();
@@ -47,7 +48,7 @@ const STARTUP_TOOLS_LIST_BUDGET_MS = 3_000;
  * promptly on genuine hangs.
  */
 const CALL_TOOL_TIMEOUT_MS = 120_000;
-const SET_REMOTE_TOOL: ToolDefinition = {
+export const SET_REMOTE_TOOL: ToolDefinition = {
   name: 'set_remote',
   description: 'Set the remote relay target for this MCP server. If browser tools are missing, call set_remote first to connect to a Vibe relay. The routing UUID in the URL is the sole bearer credential for the relay session.',
   inputSchema: {
@@ -281,12 +282,13 @@ export class VibeMcpServer {
         await this.awaitStartupToolsWithinBudget(STARTUP_TOOLS_LIST_BUDGET_MS);
       }
 
+      // Annotations are attached here because this is the single choke point
+      // where every backend's tools converge on the wire. See
+      // src/tool-annotations.ts for the classification and its rationale.
       return {
-        tools: [SET_REMOTE_TOOL, ...this.connection.getTools()].map((tool: ToolDefinition) => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-        })),
+        tools: [SET_REMOTE_TOOL, ...this.connection.getTools()].map((tool: ToolDefinition) =>
+          annotateTool(tool)
+        ),
       };
     });
 

@@ -118,7 +118,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-const TOOLS: ToolDefinition[] = [
+export const CHROME_USE_TOOLS: ToolDefinition[] = [
   {
     name: 'navigate',
     description: 'Navigate the active tab to a URL (bare domains get https://). Waits for load.',
@@ -386,7 +386,7 @@ export class ChromeUseConnection extends EventEmitter {
   }
 
   getTools(): ToolDefinition[] {
-    return this.available ? TOOLS : [];
+    return this.available ? CHROME_USE_TOOLS : [];
   }
 
   hasTool(name: string): boolean {

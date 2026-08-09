@@ -4,9 +4,9 @@ Everything an authorised founder needs to complete OpenAI domain verification
 and business verification for **vibe-mcp**, in one place, so the portal session
 is copy-paste rather than research.
 
-Assembled **2026-08-08**. Companion to `mcp-distribution-channels.md` (PR #124),
-which holds the channel-by-channel assessment; this file holds only the OpenAI
-submission inputs.
+Assembled **2026-08-08**; attempt log appended **2026-08-09** (§2). Companion to
+`mcp-distribution-channels.md` (PR #124), which holds the channel-by-channel
+assessment; this file holds only the OpenAI submission inputs.
 
 Every row is marked **FACT** (from a cited official source, our own filed
 documents, or measured against production today) or **ASSUMPTION**. Do not
@@ -24,7 +24,7 @@ different reasons and are fixed in different places.
 | Proves | We control the host serving the MCP endpoint | We are a real, named legal entity |
 | Mechanism | A token served over HTTPS at a well-known path | Identity documents reviewed by OpenAI |
 | Where it happens | Our infrastructure (**done — §2**) | OpenAI Platform org settings (**founder-only — §4**) |
-| Blocking on | Nothing; awaiting the portal-minted token | Founder account access |
+| Blocking on | A `platform.openai.com` sign-in to mint the token (§2) | The same `platform.openai.com` sign-in |
 
 **There is no DNS TXT record involved in either.** This is worth stating
 explicitly because most directory verifications (Google, Microsoft, Brevo — all
@@ -96,19 +96,83 @@ to rotate. Why unset returns `404` rather than an empty `200`: an empty body
 would present to the verifier as a valid-but-wrong token and could burn a
 verification attempt.
 
+### Attempt log — 2026-08-09: blocked at the Platform auth wall
+
+An agent attempted the full flow in the founder's own running Chrome (real
+profile, live sessions) rather than assuming it was founder-only. Result:
+**not completable by an agent in this browser profile.** What was measured:
+
+| Probe (2026-08-09, founder's Chrome) | Result |
+|---|---|
+| `chatgpt.com` | **signed in** — personal account, **Free** plan |
+| `platform.openai.com/` | `→ /login` |
+| `platform.openai.com/plugins` | `→ /login?next=%2Fplugins` |
+| `platform.openai.com/settings/organization/general` | `→ /login?next=…organization%2Fgeneral` |
+
+The ChatGPT consumer session does **not** carry into the Platform. The login
+page offers only email / Google / Apple / Microsoft / phone — i.e. a genuine
+authentication step, which the agent is not authorised to perform.
+
+Two further findings worth keeping:
+
+1. **`chatgpt.com/plugins` → "Create app" is not the submission portal.** It
+   opens a *developer-mode connector* dialog (Name, Description, Server URL /
+   Tunnel, OAuth) scoped to the signed-in consumer account. There is already a
+   connector named `vibebrowser` installed there
+   (`plugin_asdk_app_6a7699b5c8f8…`, "Control my real browser", version 1.0.0,
+   category Other). **That is a personal connector, not a submission** — it
+   carries no listing, no review state and no domain-verification challenge.
+   Do not mistake it for a draft submission.
+2. **The publisher account is the wrong one.** The signed-in ChatGPT account is
+   a personal Free consumer account. Publishing must happen from a Platform
+   organisation verified as VIBE TECHNOLOGIES, LLC (§3.1), with the submitter
+   holding **Apps Management = Write**. Whoever signs in must therefore pick
+   the org that will own the plugin, not the personal identity.
+
+Endpoint re-measured the same day, confirming the server side is genuinely
+deployed and merely unconfigured:
+
+| Path | Status | Content-Type | Body |
+|---|---|---|---|
+| `/.well-known/openai-apps-challenge` | `404` | `application/json` | `{"error":"Domain verification token not configured"}` |
+| `/.well-known/nope` (control) | `404` | — | `Not found` |
+
+The two responses differ, which is the proof the handler is routed and live —
+a generic `Not found` on both would have meant the deploy never landed. The
+GitHub secret does not exist yet: `gh secret list --repo VibeTechnologies/platform`
+shows no `OPENAI_APPS_CHALLENGE_TOKEN`.
+
 ### The one remaining action
 
 The token does not exist until the portal generates it, so this cannot be
 completed without the founder's OpenAI account. Exact remaining step:
 
-1. Open <https://platform.openai.com/plugins> → the vibe-mcp draft → **MCP** tab.
-2. Copy the value shown under the **Domain not verified** challenge.
+1. Sign in to <https://platform.openai.com/plugins> **as the org that will
+   publish**, not the personal ChatGPT identity. The portal calls the entry
+   point **Create plugin** → **With MCP**.
+2. On the **MCP** tab, copy the value shown under the **Domain not verified**
+   challenge. Leave **Challenge Base URL** empty — the default already resolves
+   to `relay.api.vibebrowser.app`, which is what we serve (§1).
 3. Set it as the repo secret `OPENAI_APPS_CHALLENGE_TOKEN` in
    `VibeTechnologies/platform` (flows into `.env.secrets.prod` → `vibe-secrets`),
    or hand the token over for an immediate `kubectl patch` of `vibe-secrets` in
    the `vibe` namespace — the deployment already reads the key.
-4. Confirm the endpoint echoes it:
-   `curl -s https://relay.api.vibebrowser.app/.well-known/openai-apps-challenge`
+
+   ```
+   gh secret set OPENAI_APPS_CHALLENGE_TOKEN --repo VibeTechnologies/platform --body '<token>'
+   ```
+
+   Then re-run the deploy workflow so the relay picks it up.
+4. Confirm the endpoint echoes it — all three must hold, or **do not press
+   Verify**, because a failed attempt is spent:
+
+   ```
+   curl -sD- https://relay.api.vibebrowser.app/.well-known/openai-apps-challenge
+   ```
+
+   - status `200` (not `404`)
+   - `content-type: text/plain; charset=utf-8` (not `application/json`)
+   - body byte-identical to the token — no JSON wrapper, no trailing newline
 5. Press **Verify** in the portal.
 
 No code change is required at any point in that sequence.
@@ -232,6 +296,24 @@ Neither item below is a research gap; both are account-access gates.
 | 1 | Complete **business verification** under the name VIBE TECHNOLOGIES, LLC | <https://platform.openai.com/settings/organization/general> → business verification | Entity data, §3.1–3.2 |
 | 2 | Grant the submitter **Apps Management = Write** | <https://platform.openai.com/settings/organization/people/roles> | — |
 | 3 | Copy the domain challenge token into `OPENAI_APPS_CHALLENGE_TOKEN` | portal → repo secret | Endpoint already live, §2 |
+
+All three were **attempted on 2026-08-09 and blocked at the same single gate**:
+signing in to `platform.openai.com`. None of them is partially completable —
+business verification, the roles page and the challenge token all sit behind
+that one login. So the founder step is exactly one thing:
+
+> **Sign in to `platform.openai.com` in the org that will publish.** Everything
+> in this table becomes doable in that one session; nothing else is blocked.
+
+### Secret handling for the token
+
+When the token is minted, it is a credential and follows the normal rule: it
+lives in the `VibeTechnologies/platform` GitHub Actions secret
+`OPENAI_APPS_CHALLENGE_TOKEN`, and it **must also be mirrored into Bitwarden,
+collection `dev`**, which is the source of truth. The Bitwarden CLI is
+unauthenticated on the agent workstation, so an agent cannot write that mirror —
+**treat the Bitwarden copy as an open follow-up** until someone with an
+unlocked vault records it. Do not paste the token into any tracked file.
 
 Publish under a **business** identity, not an individual one: the listing
 should read VIBE TECHNOLOGIES, LLC to match the privacy policy and terms.

@@ -460,3 +460,144 @@ predictable rejection is expensive.
 
 Steps 1–4 need no new infrastructure and carry no security risk. Step 5 is the
 only one that does, and it is last for that reason.
+
+---
+
+## 9. Update — 2026-08-09: the OAuth connector is finished and verified in Claude
+
+§7.1 shipped the OAuth 2.1 + DCR endpoints. It did **not** finish the client-side
+flow — a prior run reached our consent page and stopped. That is now done, in the
+founder's real logged-in Chrome. Everything in this section is FACT, measured
+today, not inferred.
+
+### 9.1 Per-product status
+
+| Product | Connector | URL | Status |
+|---|---|---|---|
+| **Claude web** | `vibebrowser oauth` | `https://relay.api.vibebrowser.app/mcp` (canonical) | **Connected + functionally verified** |
+| **Claude web** | `vibebrowser` (legacy) | `https://relay.api.vibebrowser.app/mcp/<uuid>` | **Still connected + still works** |
+| **ChatGPT web** | `vibebrowser` (legacy, dev-mode app) | legacy per-uuid URL | Installed, untouched |
+| **ChatGPT web** | canonical OAuth URL | `https://relay.api.vibebrowser.app/mcp` | **Blocked** — see 9.4 |
+
+### 9.2 What the Claude flow actually required
+
+The OAuth handshake itself was clean: `401` → RFC 9728 discovery → DCR → our
+consent page with PKCE S256, `resource` pinned to the canonical MCP URL. The
+consent page then asks for the extension's connection URL
+(`wss://relay.api.vibebrowser.app/<uuid>`), which binds the grant to that
+browser session, and redirects to `https://claude.ai/api/mcp/auth_callback`.
+
+Claude's connector detail page now shows **Disconnect** (i.e. connected) against
+`https://relay.api.vibebrowser.app/mcp`, and lists **27 tools split 11
+read-only / 16 write**, each with a human `title` ("Take Screenshot", "Navigate
+Page", …). That is the relay-side annotation work from §7.3 / platform#70 showing
+up on the OAuth path too — the gap §7.3 flagged is closed on the hosted endpoint.
+
+### 9.3 Functional verification — not just "Connected"
+
+With the legacy `vibebrowser` connector **disabled** in Claude's connector picker,
+so the request could only be served by the new OAuth connector, this prompt was
+run:
+
+> Using the vibebrowser connector, go to duckduckgo.com and find out when the
+> first GPT model was released.
+
+Claude called `List Pages`, `Navigate Page` and `Fill`, each labelled in the
+transcript as **"Used vibebrowser oauth integration"**, and answered:
+
+> **June 2018.** OpenAI's first GPT model — GPT-1 — was introduced in the paper
+> "Improving Language Understanding by Generative Pre-Training" … Wikipedia's
+> infobox lists the initial release as June 2018 … GPT-2 followed in February
+> 2019 with 1.5B parameters.
+
+So the tool calls demonstrably routed through the canonical OAuth endpoint into
+the founder's real browser. The legacy connector was re-enabled afterwards.
+
+One incidental defect surfaced by the run, worth a follow-up issue: Claude
+targeted an existing `about:blank` tab and `navigate_page` rejected it as a
+restricted page. It recovered by opening a new tab, but `navigate_page` should
+fall back to `new_page` when the current target is a system page.
+
+**Legacy connector re-verified independently** at the protocol level: a real
+`tools/call` (`list_pages`) against `https://relay.api.vibebrowser.app/mcp/<uuid>`
+returned `200` with live page data, and `tools/list` returns 27 tools, all
+titled and annotated. The legacy connector carries no stored credential — it is
+a bare URL — so "the URL works" is the whole of its health. **Recommendation:
+keep it for now.** The new connector supersedes it functionally, but the legacy
+per-uuid URL is what `vibe-mcp`'s own docs, the npm package and the MCPB bundle
+still hand to users, and it is the only path that works without an interactive
+consent step (so it stays the right answer for headless/CLI callers). Retire it
+only when those surfaces have been migrated — not before.
+
+### 9.4 ChatGPT — exact blocker
+
+The dev-mode entry point exists and works: **Settings → Plugins → Create app**
+(Developer mode was already on) opens a *New Plugin* dialog. Pasting the
+canonical URL, ChatGPT **successfully auto-discovered our OAuth metadata** and
+pre-filled, with no manual entry:
+
+- Registration method: **Dynamic Client Registration (DCR)** (selectable, and
+  the only sensible option — CIMD was correctly reported unavailable because we
+  do not advertise it)
+- Auth URL, Token URL, Registration URL, Authorization server base, Resource —
+  all resolved to our endpoints
+- Default scopes: `browser:read`, `browser:control`, both pre-ticked
+
+So the *server side is fully acceptable to ChatGPT*. The blocker is on their
+side: **clicking `Create` does nothing.** No navigation, no error, no toast, no
+network request. Confirmed not a UI-automation artefact —
+
+- the button reports `disabled: false` and a trusted CDP click lands on it;
+- clearing the URL and clicking `Create` **does** raise client-side validation
+  ("required", "Enter a valid MCP Server URL…"), which proves the click handler
+  runs and the form is wired up;
+- with valid input, the same click silently no-ops;
+- it also no-ops with Authentication set to **No Auth**, so this is **not
+  OAuth-specific** — this account cannot create *any* new custom plugin.
+
+The account is on the **Free** plan (`Den Washington · Free · Upgrade` in the
+sidebar). Custom-connector *creation* being a paid-plan capability is the only
+hypothesis consistent with every observation, and it explains why §6's note
+("verified on a Free account") no longer reproduces — the pre-existing
+`vibebrowser` app predates whatever gate now applies. ASSUMPTION, not proven:
+OpenAI surfaces no message at all, so this is inference from behaviour.
+
+**Next step for ChatGPT is therefore commercial, not technical:** upgrade the
+account (or use a Business/organisation account) and re-run the same dialog. No
+relay change is required — discovery already passes.
+
+### 9.5 Token persistence — a real operational risk, but it did not bite today
+
+The OAuth stores (`clients`, `authCodes`, `accessTokens`, `refreshTokens`) are
+`Map`s in the relay process, deliberately matching `registeredCredentials` in
+`server.js`. FACT — `platform/subscriptions/relay-service/oauth.js:78-91`.
+
+Access tokens live 1 hour; refresh tokens 30 days. Neither survives a process
+restart. **Did it bite us? No** — the `client_id` registered by the earlier run
+was still valid today, and the serving pod (`relay-service-78b698c8f7-rjb8c`)
+has been up **24 days with 0 restarts**, so nothing was lost.
+
+That is luck, not design. Any redeploy of the relay wipes every registered
+client and every token, and each affected user must repeat the *whole* consent
+flow — including re-pasting their extension connection URL, which is the one
+step that cannot be automated away. A 30-day refresh TTL is meaningless when the
+store cannot outlive a deploy.
+
+**Recommendation:** persist at minimum `clients` and `refreshTokens` before we
+point any directory listing at this endpoint. Losing every user's connector on
+an unrelated relay deploy is the kind of thing a Connectors-Directory listing
+turns from an annoyance into a support incident.
+
+### 9.6 Revised order (supersedes §8.6)
+
+1. ~~Emit `title` + annotations from the relay's `tools/list`~~ — **done**,
+   confirmed live on both the OAuth and legacy paths.
+2. **Persist the OAuth client/refresh stores** (9.5). New, and it now leads,
+   because everything downstream assumes connections survive a deploy.
+3. Publish the privacy policy in the MCPB manifest + README, then submit
+   **MCPB** and **Plugin** directories — neither needs a demo browser.
+4. Submit **Anthropic Connectors**. The canonical URL is live, OAuth+DCR works
+   end to end, and tools are annotated — the three things §2 listed as missing.
+5. ChatGPT: upgrade the account plan, then re-run *Create app* (9.4).
+6. Only then, build the narrow ephemeral demo session (8.2/8.4) and submit to
+   **OpenAI**.

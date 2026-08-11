@@ -10,6 +10,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocketServer } from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { relayChildEnv } from '../dist/child-env.js';
 
 const RELAY_HOST = '127.0.0.1';
 const configuredHttpPort = getConfiguredPort('VIBE_MCP_TEST_HTTP_PORT', 'E2E_HTTP_PORT');
@@ -22,12 +23,17 @@ RESERVED_PORTS.add(RELAY_PORT);
 const RELAY_PORT_B = await findFreePort(RESERVED_PORTS);
 const RELAY_URL = `ws://${RELAY_HOST}:${RELAY_PORT}`;
 const RELAY_URL_B = `ws://${RELAY_HOST}:${RELAY_PORT_B}`;
-const REMOTE_UUID = '00000000-0000-4000-8000-000000000132';
-const REMOTE_UUID_B = '00000000-0000-4000-8000-000000000133';
-const HTTP_BEARER_TOKEN = '00000000-0000-4000-8000-000000000134';
+const REMOTE_UUID = 'test-routing-id-a';
+const REMOTE_UUID_B = 'test-routing-id-b';
+const HTTP_BEARER_TOKEN = 'fake-http-e2e-secret';
 const SESSION_ID = REMOTE_UUID;
 const SESSION_ID_B = REMOTE_UUID_B;
 const MCP_URL = `http://${RELAY_HOST}:${MCP_HTTP_PORT}/mcp`;
+const PUBLIC_HOST = 'bridge.example.test';
+const INITIALIZE_REQUEST = {
+  jsonrpc: '2.0', id: 1, method: 'initialize',
+  params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'auth-probe', version: '1.0.0' } },
+};
 
 function getConfiguredPort(...names) {
   for (const name of names) {
@@ -87,6 +93,28 @@ async function waitForPort(port, timeoutMs = 15_000) {
   throw new Error(`Timed out waiting for port ${port}`);
 }
 
+async function waitForHostPort(host, port, timeoutMs = 15_000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await probeHostPort(host, port)) {
+      return;
+    }
+    await delay(100);
+  }
+  throw new Error(`Timed out waiting for ${host}:${port}`);
+}
+
+function probeHostPort(host, port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    socket.on('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on('error', () => resolve(false));
+  });
+}
+
 function waitForWebSocketMessage(ws, predicate, timeoutMs = 10_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -141,7 +169,11 @@ async function main() {
     remoteA = startFakeRemoteRelay(RELAY_PORT, REMOTE_UUID, SESSION_ID);
     remoteB = startFakeRemoteRelay(RELAY_PORT_B, REMOTE_UUID_B, SESSION_ID_B);
 
-    await verifyNonLoopbackRefusal(stateDir, remoteA);
+    verifyRelayChildEnv();
+    await verifyOpenClawOutput(stateDir);
+    await verifyUnsafeBindRefusals(stateDir, remoteA);
+    await verifyAlternateLoopbackHostFiltering(stateDir, remoteA);
+    await verifyCustomHttpPathRouting(stateDir, remoteA);
 
     serverProcess = spawnHttpServer(stateDir);
     await Promise.all([remoteA.nextConnection(), waitForPort(MCP_HTTP_PORT)]);
@@ -153,7 +185,7 @@ async function main() {
     await waitForProcessExit(serverProcess);
     serverProcess = undefined;
 
-    serverProcess = spawnHttpServer(stateDir, HTTP_BEARER_TOKEN, '0.0.0.0');
+    serverProcess = spawnHttpServer(stateDir, HTTP_BEARER_TOKEN, RELAY_HOST, [RELAY_HOST, PUBLIC_HOST]);
 
     let stderr = '';
     serverProcess.stderr.on('data', (chunk) => {
@@ -169,6 +201,10 @@ async function main() {
 
     const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {
       requestInit: { headers: { Authorization: `Bearer ${HTTP_BEARER_TOKEN}` } },
+      fetch: (url, init) => fetch(url, {
+        ...init,
+        headers: { ...Object.fromEntries(new Headers(init?.headers)), Host: PUBLIC_HOST },
+      }),
     });
     const client = new Client({ name: 'vibe-mcp-http-e2e', version: '1.0.0' });
 
@@ -376,6 +412,7 @@ async function main() {
       throw new Error(`Unexpected relay B tool result: ${JSON.stringify(callResultB)}`);
     }
 
+    await withTimeout(transport.terminateSession(), 'authenticated MCP session termination');
     await withTimeout(client.close(), 'MCP client close');
     console.log('http e2e ok');
   } finally {
@@ -389,13 +426,13 @@ async function main() {
   }
 }
 
-function spawnHttpServer(stateDir, bearerToken, host = RELAY_HOST) {
+function spawnHttpServer(stateDir, bearerToken, host = RELAY_HOST, allowedHosts = []) {
   const args = [
     'dist/cli.js', 'start', '--transport', 'http', '--host', host,
     '--http-port', String(MCP_HTTP_PORT), '--remote', `${RELAY_URL}/${REMOTE_UUID}`,
   ];
-  if (host !== RELAY_HOST) {
-    args.push('--allow-host', RELAY_HOST);
+  for (const allowedHost of allowedHosts) {
+    args.push('--allow-host', allowedHost);
   }
   return spawn(process.execPath, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -404,7 +441,11 @@ function spawnHttpServer(stateDir, bearerToken, host = RELAY_HOST) {
 }
 
 function childEnv(stateDir, bearerToken) {
-  const { VIBE_MCP_HTTP_BEARER_TOKEN: _ambientToken, ...env } = process.env;
+  const {
+    VIBE_MCP_HTTP_BEARER_TOKEN: _ambientToken,
+    VIBE_MCP_ALLOW_INSECURE_HTTP: _ambientInsecureHttp,
+    ...env
+  } = process.env;
   return {
     ...env,
     VIBE_MCP_STATE_DIR: stateDir,
@@ -412,21 +453,227 @@ function childEnv(stateDir, bearerToken) {
   };
 }
 
-async function verifyNonLoopbackRefusal(stateDir, remote) {
+async function verifyOpenClawOutput(stateDir) {
+  const whitespaceToken = 'fake token must stay secret';
+  const invalidToken = await runCli([
+    'openclaw', '--remote', REMOTE_UUID,
+  ], childEnv(stateDir, whitespaceToken));
+  if (invalidToken.code === 0
+    || !invalidToken.stderr.includes('single non-whitespace credential')
+    || invalidToken.stdout.length > 0
+    || invalidToken.stderr.includes(whitespaceToken)) {
+    throw new Error('Expected OpenClaw whitespace token refusal before safe output');
+  }
+
+  const withoutToken = await runCli([
+    'openclaw', '--remote', REMOTE_UUID, '--public-url', 'https://bridge.example.test/mcp',
+  ], childEnv(stateDir));
+  if (withoutToken.code === 0 || !withoutToken.stderr.includes('--public-url requires')) {
+    throw new Error(`Expected public URL without token refusal, code=${withoutToken.code}`);
+  }
+
+  const insecureUrl = await runCli([
+    'openclaw', '--remote', REMOTE_UUID, '--public-url', 'http://bridge.example.test/mcp',
+  ], childEnv(stateDir, HTTP_BEARER_TOKEN));
+  if (insecureUrl.code === 0 || !insecureUrl.stderr.includes('--public-url must use https://')) {
+    throw new Error(`Expected insecure public URL refusal, code=${insecureUrl.code}`);
+  }
+
+  const unsafeBind = await runCli([
+    'openclaw', '--remote', REMOTE_UUID, '--host', '0.0.0.0',
+    '--public-url', 'https://bridge.example.test/mcp',
+  ], childEnv(stateDir, HTTP_BEARER_TOKEN));
+  if (unsafeBind.code === 0 || !unsafeBind.stderr.includes('--public-url requires --host to be')) {
+    throw new Error(`Expected unsafe public bridge bind refusal, code=${unsafeBind.code}`);
+  }
+
+  const localWithToken = await runCli([
+    'openclaw', '--remote', REMOTE_UUID,
+  ], childEnv(stateDir, HTTP_BEARER_TOKEN));
+  if (localWithToken.code !== 0
+    || !localWithToken.stdout.includes('Bearer ${VIBE_MCP_HTTP_BEARER_TOKEN}')
+    || localWithToken.stdout.includes(HTTP_BEARER_TOKEN)
+    || localWithToken.stderr.includes(HTTP_BEARER_TOKEN)) {
+    throw new Error('Expected local OpenClaw config to reference, but never expose, the environment token');
+  }
+
+  const success = await runCli([
+    'openclaw', '--remote', REMOTE_UUID, '--public-url', 'https://bridge.example.test/mcp',
+  ], childEnv(stateDir, HTTP_BEARER_TOKEN));
+  if (success.code !== 0) {
+    throw new Error(`Expected OpenClaw helper success, code=${success.code}, stderr=${success.stderr}`);
+  }
+  if (!success.stdout.includes('"transport": "streamable-http"')
+    || !success.stdout.includes('Bearer ${VIBE_MCP_HTTP_BEARER_TOKEN}')) {
+    throw new Error('Expected safe OpenClaw transport and Authorization template');
+  }
+  if (success.stdout.includes(HTTP_BEARER_TOKEN) || success.stderr.includes(HTTP_BEARER_TOKEN)) {
+    throw new Error('OpenClaw helper output exposed the configured bearer token');
+  }
+  const startCommand = success.stdout.split('\n').find((line) => line.startsWith('npx ')) ?? '';
+  if (startCommand.includes('bearer-token') || startCommand.includes('VIBE_MCP_HTTP_BEARER_TOKEN')) {
+    throw new Error('OpenClaw bridge start command must inherit auth from the environment');
+  }
+  if (!startCommand.includes(`--allow-host ${PUBLIC_HOST}`)) {
+    throw new Error('OpenClaw bridge start command must allow its public proxy Host');
+  }
+}
+
+async function verifyUnsafeBindRefusals(stateDir, remote) {
+  await verifyStartupRefusal(stateDir, remote, ['--host', '127.0.0.2'], 'Non-loopback HTTP bindings require');
+  await verifyStartupRefusal(
+    stateDir,
+    remote,
+    ['--host', RELAY_HOST, '--allow-host', PUBLIC_HOST],
+    'Proxy-exposed HTTP endpoints require',
+  );
+  await verifyStartupRefusal(
+    stateDir,
+    remote,
+    ['--host', RELAY_HOST, '--allow-host', 'attacker@localhost'],
+    'Invalid --allow-host authority',
+  );
+  await verifyStartupRefusal(
+    stateDir,
+    remote,
+    ['--host', RELAY_HOST, '--allow-host', 'localhost:8788'],
+    'Invalid --allow-host authority',
+  );
+  await verifyStartupRefusal(
+    stateDir,
+    remote,
+    ['--host', RELAY_HOST, '--http-bearer-token', 'invalid token'],
+    'single non-whitespace credential',
+  );
+  await verifyStartupRefusal(
+    stateDir,
+    remote,
+    ['--host', '0.0.0.0', '--http-bearer-token', HTTP_BEARER_TOKEN],
+    'require --allow-insecure-http',
+  );
+  await verifyStartupRefusal(
+    stateDir,
+    remote,
+    ['--host', '0.0.0.0', '--http-bearer-token', HTTP_BEARER_TOKEN, '--allow-insecure-http'],
+    'require at least one --allow-host',
+  );
+}
+
+function verifyRelayChildEnv() {
+  const source = {
+    VIBE_MCP_HTTP_BEARER_TOKEN: 'fake-detached-relay-token',
+    VIBE_MCP_E2E_MARKER: 'preserved',
+  };
+  const child = relayChildEnv(source);
+  if (source.VIBE_MCP_HTTP_BEARER_TOKEN === undefined
+    || child.VIBE_MCP_HTTP_BEARER_TOKEN !== undefined
+    || child.VIBE_MCP_E2E_MARKER !== 'preserved') {
+    throw new Error('Detached relay child environment did not scrub only the HTTP bearer token');
+  }
+}
+
+async function verifyCustomHttpPathRouting(stateDir, remote) {
   const port = await findFreePort(RESERVED_PORTS);
   RESERVED_PORTS.add(port);
+  const customPath = '/custom-mcp';
   const child = spawn(process.execPath, [
-    'dist/cli.js', 'start', '--transport', 'http', '--host', '0.0.0.0',
-    '--http-port', String(port), '--remote', `${RELAY_URL}/${REMOTE_UUID}`,
+    'dist/cli.js', 'start', '--transport', 'http', '--host', RELAY_HOST,
+    '--http-port', String(port), '--http-path', customPath,
+    '--remote', `${RELAY_URL}/${REMOTE_UUID}`, '--http-bearer-token', HTTP_BEARER_TOKEN,
   ], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: childEnv(stateDir),
   });
   let stderr = '';
   child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-  const code = await withTimeout(new Promise((resolve) => child.once('exit', resolve)), 'non-loopback startup refusal');
-  if (code === 0 || !stderr.includes('Non-loopback HTTP bindings require')) {
-    throw new Error(`Expected non-loopback startup refusal, code=${code}, stderr=${stderr}`);
+
+  try {
+    await Promise.all([
+      remote.nextConnection(),
+      Promise.race([
+        waitForPort(port),
+        new Promise((_, reject) => child.once('exit', (code) => {
+          reject(new Error(`Custom-path server exited with ${code}: ${redact(stderr)}`));
+        })),
+      ]),
+    ]);
+    const exact = await rawMcpRequest('{', RELAY_HOST, undefined, RELAY_HOST, port, `${customPath}?query`);
+    if (exact !== 401) {
+      throw new Error(`Expected custom MCP path query to be preflighted with 401, got ${exact}`);
+    }
+    for (const path of ['/mcp', '/CUSTOM-MCP', '/custom-mcp/', '/custom-mcp/.']) {
+      const malformedStatus = await rawMcpRequest('{', RELAY_HOST, undefined, RELAY_HOST, port, path);
+      if (malformedStatus !== 400 && malformedStatus !== 404) {
+        throw new Error(`Expected malformed non-exact custom MCP path ${path} to be rejected before MCP, got ${malformedStatus}`);
+      }
+      const validStatus = await rawMcpRequest(JSON.stringify(INITIALIZE_REQUEST), RELAY_HOST, undefined, RELAY_HOST, port, path);
+      if (validStatus !== 400 && validStatus !== 404) {
+        throw new Error(`Expected non-exact custom MCP path ${path} not to reach MCP, got ${validStatus}`);
+      }
+    }
+  } finally {
+    child.kill('SIGTERM');
+    await waitForProcessExit(child);
+  }
+}
+
+async function verifyAlternateLoopbackHostFiltering(stateDir, remote) {
+  const bindHost = '127.0.0.2';
+  const port = await findFreePort(RESERVED_PORTS);
+  RESERVED_PORTS.add(port);
+  const child = spawn(process.execPath, [
+    'dist/cli.js', 'start', '--transport', 'http', '--host', bindHost,
+    '--http-port', String(port), '--remote', `${RELAY_URL}/${REMOTE_UUID}`,
+    '--http-bearer-token', HTTP_BEARER_TOKEN, '--allow-insecure-http',
+    '--allow-host', bindHost,
+  ], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: childEnv(stateDir),
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+  try {
+    await Promise.all([
+      remote.nextConnection(),
+      Promise.race([
+        waitForHostPort(bindHost, port),
+        new Promise((_, reject) => child.once('exit', (code) => {
+          reject(new Error(`127.0.0.2 server exited with ${code}: ${redact(stderr)}`));
+        })),
+      ]),
+    ]);
+    const status = await rawMcpRequest(
+      '{',
+      'hostile.example',
+      `Bearer ${HTTP_BEARER_TOKEN}`,
+      bindHost,
+      port,
+    );
+    if (status !== 403) {
+      throw new Error(`Expected hostile Host on 127.0.0.2 to fail pre-parser with 403, got ${status}`);
+    }
+  } finally {
+    child.kill('SIGTERM');
+    await waitForProcessExit(child);
+  }
+}
+
+async function verifyStartupRefusal(stateDir, remote, extraArgs, expectedMessage) {
+  const port = await findFreePort(RESERVED_PORTS);
+  RESERVED_PORTS.add(port);
+  const child = spawn(process.execPath, [
+    'dist/cli.js', 'start', '--transport', 'http', '--http-port', String(port),
+    '--remote', `${RELAY_URL}/${REMOTE_UUID}`, ...extraArgs,
+  ], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: childEnv(stateDir),
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+  const code = await withTimeout(new Promise((resolve) => child.once('exit', resolve)), 'unsafe bind startup refusal');
+  if (code === 0 || !stderr.includes(expectedMessage)) {
+    throw new Error(`Expected startup refusal containing ${expectedMessage}, code=${code}, stderr=${redact(stderr)}`);
   }
   if (await probePort(port)) {
     throw new Error('Non-loopback refusal must occur before HTTP listen');
@@ -437,11 +684,8 @@ async function verifyNonLoopbackRefusal(stateDir, remote) {
 }
 
 async function verifyHttpAuthentication() {
-  const initialize = {
-    jsonrpc: '2.0', id: 1, method: 'initialize',
-    params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'auth-probe', version: '1.0.0' } },
-  };
-  const request = (method, authorization) => fetch(MCP_URL, {
+  const initialize = INITIALIZE_REQUEST;
+  const request = (method, authorization) => fetch(`${MCP_URL}?preflight=query-safe`, {
     method,
     headers: {
       'content-type': 'application/json',
@@ -452,8 +696,15 @@ async function verifyHttpAuthentication() {
   });
 
   for (const method of ['POST', 'GET', 'DELETE']) {
-    for (const authorization of [undefined, 'Bearer invalid-token']) {
+    for (const authorization of [
+      undefined,
+      'Bearer invalid-token',
+      `Basic ${HTTP_BEARER_TOKEN}`,
+      `Bearer ${HTTP_BEARER_TOKEN} trailing`,
+      'Bearer',
+    ]) {
       const response = await request(method, authorization);
+      await response.arrayBuffer();
       if (response.status !== 401 || !response.headers.get('www-authenticate')?.startsWith('Bearer')) {
         throw new Error(`Expected ${method} bearer challenge, got ${response.status}`);
       }
@@ -462,14 +713,68 @@ async function verifyHttpAuthentication() {
 
   for (const method of ['GET', 'DELETE']) {
     const response = await request(method, `Bearer ${HTTP_BEARER_TOKEN}`);
+    await response.arrayBuffer();
     if (response.status !== 400) {
       throw new Error(`Expected authenticated ${method} to reach session routing, got ${response.status}`);
     }
   }
 
-  const hostStatus = await postWithHost(initialize, 'untrusted.example');
+  const malformedUnauthorized = await rawMcpRequest('{', RELAY_HOST);
+  if (malformedUnauthorized !== 401) {
+    throw new Error(`Expected malformed unauthenticated JSON to fail pre-parser with 401, got ${malformedUnauthorized}`);
+  }
+
+  const queryUnauthorized = await rawMcpRequest('{', RELAY_HOST, undefined, RELAY_HOST, MCP_HTTP_PORT, '/mcp?query');
+  if (queryUnauthorized !== 401) {
+    throw new Error(`Expected MCP query path to be preflighted with 401, got ${queryUnauthorized}`);
+  }
+
+  for (const path of ['/MCP', '/mcp/', '/MCP/', '/mcp/.']) {
+    const malformedStatus = await rawMcpRequest('{', RELAY_HOST, undefined, RELAY_HOST, MCP_HTTP_PORT, path);
+    if (malformedStatus !== 400 && malformedStatus !== 404) {
+      throw new Error(`Expected malformed non-exact MCP path ${path} to be rejected before MCP, got ${malformedStatus}`);
+    }
+    const validStatus = await rawMcpRequest(JSON.stringify(initialize), RELAY_HOST, undefined, RELAY_HOST, MCP_HTTP_PORT, path);
+    if (validStatus !== 400 && validStatus !== 404) {
+      throw new Error(`Expected non-exact MCP path ${path} not to reach MCP, got ${validStatus}`);
+    }
+  }
+
+  const malformedHostile = await rawMcpRequest('{', 'untrusted.example', `Bearer ${HTTP_BEARER_TOKEN}`);
+  if (malformedHostile !== 403) {
+    throw new Error(`Expected hostile Host to fail before auth/parser with 403, got ${malformedHostile}`);
+  }
+
+  const deceptiveHost = await rawMcpRequest('{', `attacker@${RELAY_HOST}`, `Bearer ${HTTP_BEARER_TOKEN}`);
+  if (deceptiveHost !== 403) {
+    throw new Error(`Expected malformed Host authority to fail before auth/parser with 403, got ${deceptiveHost}`);
+  }
+
+  const missingHost = await rawHttpStatus([
+    'POST /mcp HTTP/1.0',
+    `Authorization: Bearer ${HTTP_BEARER_TOKEN}`,
+    'Content-Type: application/json',
+    'Content-Length: 1',
+    'Connection: close',
+    '',
+    '{',
+  ].join('\r\n'));
+  if (missingHost !== 403) {
+    throw new Error(`Expected missing Host to fail before auth/parser with 403, got ${missingHost}`);
+  }
+
+  const mixedCaseBearer = await rawMcpRequest(
+    JSON.stringify(initialize),
+    RELAY_HOST,
+    ` \t bEaReR \t ${HTTP_BEARER_TOKEN}  `,
+  );
+  if (mixedCaseBearer !== 200) {
+    throw new Error(`Expected mixed-case Bearer with whitespace to authenticate, got ${mixedCaseBearer}`);
+  }
+
+  const hostStatus = await rawMcpRequest(JSON.stringify(initialize), 'untrusted.example', `Bearer ${HTTP_BEARER_TOKEN}`);
   if (hostStatus !== 403) {
-    throw new Error(`Expected SDK Host validation with valid auth, got ${hostStatus}`);
+    throw new Error(`Expected Host validation with valid auth, got ${hostStatus}`);
   }
 
   const healthResponse = await fetch(`http://${RELAY_HOST}:${MCP_HTTP_PORT}/health`);
@@ -478,13 +783,17 @@ async function verifyHttpAuthentication() {
   }
 }
 
-function postWithHost(body, host) {
+function rawMcpRequest(body, host, authorization, connectHost = RELAY_HOST, port = MCP_HTTP_PORT, path = '/mcp') {
   return new Promise((resolve, reject) => {
-    const req = http.request(MCP_URL, {
+    const req = http.request({
+      hostname: connectHost,
+      port,
+      path,
       method: 'POST',
+      setHost: host !== undefined,
       headers: {
-        Host: host,
-        Authorization: `Bearer ${HTTP_BEARER_TOKEN}`,
+        ...(host !== undefined ? { Host: host } : {}),
+        ...(authorization ? { Authorization: authorization } : {}),
         'content-type': 'application/json',
         accept: 'application/json, text/event-stream',
       },
@@ -493,8 +802,46 @@ function postWithHost(body, host) {
       res.once('end', () => resolve(res.statusCode));
     });
     req.once('error', reject);
-    req.end(JSON.stringify(body));
+    req.end(body);
   });
+}
+
+function rawHttpStatus(request) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host: RELAY_HOST, port: MCP_HTTP_PORT });
+    let response = '';
+    socket.setEncoding('utf8');
+    socket.once('connect', () => socket.end(request));
+    socket.on('data', (chunk) => { response += chunk; });
+    socket.once('error', reject);
+    socket.once('close', () => {
+      const match = /^HTTP\/1\.[01] (\d{3})/.exec(response);
+      if (!match) {
+        reject(new Error(`Invalid raw HTTP response: ${response}`));
+        return;
+      }
+      resolve(Number.parseInt(match[1], 10));
+    });
+  });
+}
+
+function runCli(args, env) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['dist/cli.js', ...args], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.once('error', reject);
+    child.once('exit', (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+function redact(value) {
+  return value.split(HTTP_BEARER_TOKEN).join('[redacted]');
 }
 
 function startFakeRemoteRelay(port, uuid, sessionId) {

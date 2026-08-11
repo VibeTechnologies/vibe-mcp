@@ -423,16 +423,21 @@ npx -y @vibebrowser/mcp@latest start --transport http
 ```
 
 Defaults: `--host 127.0.0.1`, `--http-port 8788`, `--http-path /mcp`. Add
-`--allow-host <host>` (repeatable) if you front it with a proxy or bind it
-beyond localhost. Loopback bindings are auth-free by default. A non-loopback
-binding refuses to start unless `--http-bearer-token` or
-`VIBE_MCP_HTTP_BEARER_TOKEN` supplies a non-empty token. Prefer the environment
-variable so the token does not appear in process arguments:
+`--allow-host <host>` (repeatable) for the hostname a reverse proxy forwards.
+Only exact `127.0.0.1`, `localhost`, and `::1` bindings are auth-free by
+default. The production pattern is to keep this server on loopback and expose
+it through an HTTPS reverse proxy. Set a non-empty bearer token in the
+environment so it does not appear in process arguments:
 
 ```bash
 export VIBE_MCP_HTTP_BEARER_TOKEN="$(openssl rand -hex 32)"
-npx -y @vibebrowser/mcp@latest start --transport http --host 0.0.0.0
+npx -y @vibebrowser/mcp@latest start --transport http \
+  --host 127.0.0.1 --allow-host browser-bridge.example.com
 ```
+
+Direct plaintext non-loopback binding is a development-only escape hatch. It
+requires all three protections: a bearer token, at least one `--allow-host`,
+and explicit `--allow-insecure-http` acknowledgement.
 
 Clients must send the token on every `/mcp` request, including initialization:
 
@@ -472,9 +477,15 @@ When OpenClaw runs on a different machine (for example cloud-hosted), provide a 
 VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
 PUBLIC_MCP_URL="https://browser-bridge.example.com/mcp"
+export VIBE_MCP_HTTP_BEARER_TOKEN="$(openssl rand -hex 32)"
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID" --public-url "$PUBLIC_MCP_URL"
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
 ```
+
+`--public-url` accepts HTTPS URLs only and requires
+`VIBE_MCP_HTTP_BEARER_TOKEN`. Give the OpenClaw process the same environment
+variable; the generated configuration references it without printing or
+embedding its value.
 
 You can print the exact OpenClaw-friendly setup with:
 
@@ -640,6 +651,7 @@ npx -y @vibebrowser/mcp@latest [start] [options]
   --http-port <number> Port for streamable HTTP MCP transport (default: 8788)
   --http-path <path>   Path for streamable HTTP MCP transport (default: /mcp)
   --http-bearer-token <token> Bearer token required for HTTP MCP requests (or VIBE_MCP_HTTP_BEARER_TOKEN)
+  --allow-insecure-http Dev only: permit plaintext HTTP on a non-loopback bind when token and allowed hosts are configured
   --allow-host <host>  Allowed host header for HTTP transport (repeatable)
   -r, --remote <uuid-or-url>  Extension UUID, or full ws(s) remote URL. This routing UUID is the sole bearer credential — treat it like a password.
   --devtools           Drive your real running Chrome directly over the DevTools Protocol (bypasses the extension relay)

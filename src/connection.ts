@@ -20,6 +20,7 @@ import {
   ToolResult,
 } from './types.js';
 import { isRelayRunning, AGENT_PORT, EXTENSION_PORT } from './relay.js';
+import { relayChildEnv } from './child-env.js';
 
 const NO_CONNECTION_MESSAGE = `No connection to Vibe extension. Please:
 1. Install the Vibe AI Browser extension from https://vibebrowser.app
@@ -231,7 +232,7 @@ export class ExtensionConnection extends EventEmitter {
     const child = spawn(process.execPath, [relayScript, this.debug ? '--debug' : ''], {
       detached: true,
       stdio: 'ignore',
-      env: process.env,
+      env: relayChildEnv(process.env),
     });
     
     child.unref();

@@ -95,6 +95,7 @@ export class VibeMcpServer {
       httpPort: config.httpPort ?? DEFAULT_HTTP_PORT,
       httpPath: normalizeHttpPath(config.httpPath ?? DEFAULT_HTTP_PATH),
       httpBearerToken: config.httpBearerToken,
+      allowInsecureHttp: config.allowInsecureHttp ?? false,
       allowedHosts: config.allowedHosts,
       remoteUuid: config.remoteUuid,
       sessionId: config.sessionId,
@@ -496,6 +497,10 @@ export class VibeMcpServer {
       host: this.config.host,
       allowedHosts: this.config.allowedHosts,
     });
+    this.httpApp.set('case sensitive routing', true);
+    this.httpApp.set('strict routing', true);
+    this.httpApp.router.caseSensitive = true;
+    this.httpApp.router.strict = true;
 
     const healthHandler = (_req: IncomingMessage, res: ServerResponse) => {
       res.statusCode = 200;
@@ -516,20 +521,23 @@ export class VibeMcpServer {
     this.httpApp.get('/', healthHandler);
 
     this.httpApp.post(this.config.httpPath, async (req: HttpRequest, res: ServerResponse) => {
-      if (!this.authenticateHttpRequest(req, res)) return;
       await this.handleHttpRequest(req, res, req.body);
     });
     this.httpApp.get(this.config.httpPath, async (req: HttpRequest, res: ServerResponse) => {
-      if (!this.authenticateHttpRequest(req, res)) return;
       await this.handleHttpRequest(req, res);
     });
     this.httpApp.delete(this.config.httpPath, async (req: HttpRequest, res: ServerResponse) => {
-      if (!this.authenticateHttpRequest(req, res)) return;
       await this.handleHttpRequest(req, res);
     });
 
     this.httpServer = await new Promise<http.Server>((resolve, reject) => {
-      const server = this.httpApp!.listen(this.config.httpPort, this.config.host, () => resolve(server));
+      const server = http.createServer((req, res) => {
+        if (requestPathname(req) === this.config.httpPath && !this.preflightHttpRequest(req, res)) {
+          return;
+        }
+        this.httpApp!(req, res);
+      });
+      server.listen(this.config.httpPort, this.config.host, () => resolve(server));
       server.once('error', reject);
     });
 
@@ -542,15 +550,39 @@ export class VibeMcpServer {
     }
 
     const token = this.config.httpBearerToken;
-    if (token !== undefined && token.trim().length === 0) {
-      throw new Error('HTTP bearer token must not be empty');
+    if (token !== undefined && !/^\S+$/.test(token)) {
+      throw new Error('HTTP bearer token must be a single non-whitespace credential');
     }
-    if (!isLoopbackHost(this.config.host) && token === undefined) {
-      throw new Error('Non-loopback HTTP bindings require --http-bearer-token or VIBE_MCP_HTTP_BEARER_TOKEN');
+
+    const normalizedAllowedHosts = (this.config.allowedHosts ?? []).map((allowedHost) => {
+      const normalized = normalizeAllowedHostname(allowedHost);
+      if (!normalized) {
+        throw new Error(`Invalid --allow-host authority: ${allowedHost}`);
+      }
+      return normalized;
+    });
+    if (normalizedAllowedHosts.some((allowedHost) => !isSafeHttpHostname(allowedHost)) && token === undefined) {
+      throw new Error('Proxy-exposed HTTP endpoints require --http-bearer-token or VIBE_MCP_HTTP_BEARER_TOKEN');
+    }
+    if (!isSafeHttpBind(this.config.host)) {
+      if (token === undefined) {
+        throw new Error('Non-loopback HTTP bindings require --http-bearer-token or VIBE_MCP_HTTP_BEARER_TOKEN');
+      }
+      if (!this.config.allowInsecureHttp) {
+        throw new Error('Non-loopback plaintext HTTP bindings require --allow-insecure-http');
+      }
+      if (!this.config.allowedHosts || this.config.allowedHosts.length === 0) {
+        throw new Error('Non-loopback plaintext HTTP bindings require at least one --allow-host');
+      }
     }
   }
 
-  private authenticateHttpRequest(req: IncomingMessage, res: ServerResponse): boolean {
+  private preflightHttpRequest(req: IncomingMessage, res: ServerResponse): boolean {
+    if (!isAllowedHostHeader(req.headers.host, this.config.allowedHosts)) {
+      writeJsonRpcError(res, 403, 'Forbidden');
+      return false;
+    }
+
     const expected = this.config.httpBearerToken;
     if (expected === undefined) {
       return true;
@@ -558,7 +590,7 @@ export class VibeMcpServer {
 
     const authorization = req.headers.authorization;
     const supplied = typeof authorization === 'string'
-      ? /^Bearer (.+)$/.exec(authorization)?.[1]
+      ? /^[ \t]*Bearer[ \t]+([^\s]+)[ \t]*$/i.exec(authorization)?.[1]
       : undefined;
     if (supplied && tokensEqual(supplied, expected)) {
       return true;
@@ -899,15 +931,51 @@ function normalizeHttpPath(path: string): string {
   return path.startsWith('/') ? path : `/${path}`;
 }
 
-function isLoopbackHost(host: string): boolean {
+function isSafeHttpBind(host: string): boolean {
   const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
-  if (normalized === 'localhost' || normalized === '::1') {
-    return true;
+  return isSafeHttpHostname(normalized);
+}
+
+function isSafeHttpHostname(hostname: string): boolean {
+  return hostname === '127.0.0.1' || hostname === 'localhost' || hostname === '::1';
+}
+
+function requestPathname(req: IncomingMessage): string | null {
+  try {
+    return new URL(req.url ?? '/', 'http://localhost').pathname;
+  } catch {
+    return null;
   }
-  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(normalized);
-  return match !== null
-    && match.slice(1).every((part) => Number(part) <= 255)
-    && Number(match[1]) === 127;
+}
+
+function isAllowedHostHeader(hostHeader: string | undefined, configuredHosts?: string[]): boolean {
+  const hostname = hostHeader ? normalizeAllowedHostname(hostHeader, true) : null;
+  if (!hostname) {
+    return false;
+  }
+
+  const allowedHosts = configuredHosts && configuredHosts.length > 0
+    ? configuredHosts
+    : ['127.0.0.1', 'localhost', '[::1]'];
+  return allowedHosts.some((allowedHost) => normalizeAllowedHostname(allowedHost) === hostname);
+}
+
+function normalizeAllowedHostname(value: string, allowPort = false): string | null {
+  if (!value || value !== value.trim()) {
+    return null;
+  }
+  if (value.toLowerCase() === '::1') {
+    return '::1';
+  }
+  try {
+    const parsed = new URL(`http://${value}`);
+    if (parsed.username || parsed.password || (!allowPort && parsed.port) || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+      return null;
+    }
+    return parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  } catch {
+    return null;
+  }
 }
 
 function tokensEqual(supplied: string, expected: string): boolean {

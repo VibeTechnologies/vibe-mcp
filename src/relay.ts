@@ -16,6 +16,7 @@ import { homedir } from 'os';
 import { EventEmitter } from 'events';
 import { DevtoolsFallbackConnection } from './devtools-fallback.js';
 import type { ToolDefinition } from './types.js';
+import { relayChildEnv } from './child-env.js';
 
 function parseEnvPort(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -1088,7 +1089,7 @@ export function spawnRelayDaemon(debug: boolean = false): void {
     detached: true,
     stdio: 'ignore',
     cwd: VIBE_DIR,
-    env: process.env,
+    env: relayChildEnv(process.env),
   });
 
   child.unref();

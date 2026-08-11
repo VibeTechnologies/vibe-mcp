@@ -5,7 +5,7 @@
 
 MCP server for [Vibe AI Browser](https://vibebrowser.app) — drive your **real, logged-in Chrome** from any MCP client, including agents running on a **different machine** with no inbound port open.
 
-> ⚠️ **Security — treat your relay URL/UUID like a password.** A relay URL or extension UUID (`wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of your browser session** (read your tabs, take screenshots, read page content). Never share it, paste it into a chat with untrusted parties, or commit it to a repo. Every example UUID in this documentation is a non-routable placeholder (`YOUR-EXTENSION-UUID` or `00000000-0000-0000-0000-000000000000`) — substitute your own secret value locally and keep it out of version control.
+> ⚠️ **Security — prefer hosted OAuth.** The canonical hosted MCP endpoint uses OAuth 2.1 and scoped access. Legacy relay URLs and extension UUIDs (`wss://relay.api.vibebrowser.app/<uuid>`) are bearer credentials that grant full browser control; never share or commit them. Every UUID below is the non-routable placeholder `00000000-0000-0000-0000-000000000000` unless a variable is shown.
 
 ## Install prompt for AI agents (OpenClaw / Hermes)
 
@@ -288,15 +288,17 @@ the web, run in the vendor's cloud with no access to your machine. They accept
 a **remote MCP server URL** and nothing else — no command, no arguments, and
 no custom request headers.
 
-For those, skip `@vibebrowser/mcp` entirely. The extension alone is enough:
+For those, skip `@vibebrowser/mcp` entirely and use the canonical hosted endpoint:
 
 ```
-https://mcp.api.vibebrowser.app/mcp/00000000-0000-0000-0000-000000000000
+https://relay.api.vibebrowser.app/mcp
 ```
 
-Replace the placeholder UUID with the value from **Vibe icon -> Settings -> Agent
-connection URL**. It is the same UUID the CLI takes as
-`--remote wss://relay.api.vibebrowser.app/<uuid>`.
+It is a Streamable HTTP MCP endpoint with OAuth 2.1 and Dynamic Client Registration.
+An unauthenticated request receives `401` plus OAuth discovery metadata. `browser:read`
+is sufficient for MCP `initialize`, `ping`, and `tools/list`; every `tools/call` requires
+`browser:control`, including tools annotated read-only. `browser:control` implies
+`browser:read`.
 
 Where to paste it:
 
@@ -307,19 +309,38 @@ Where to paste it:
 
 Custom connectors are a paid-plan feature in both products.
 
-**Two things this path costs you, stated plainly:**
+For API-capable clients, hosted `/mcp` also supports `X-Remote-Session` containing
+either a bare UUID or the canonical full WSS relay URL. Resolution order in the
+hosted platform is OAuth bearer, `X-Remote-Session`, legacy non-OAuth bearer
+compatibility, then path UUID. OAuth is preferred.
 
-1. **The URL is a credential.** Anyone who has that UUID can drive your
+The legacy hosted form remains supported for compatibility:
+
+```
+https://relay.api.vibebrowser.app/mcp/00000000-0000-0000-0000-000000000000
+```
+
+The legacy URL is unscoped, grants full control, and is itself a bearer credential.
+The UUID is the same value accepted by local clients as
+`--remote wss://relay.api.vibebrowser.app/<uuid>`.
+
+**Privacy and security:**
+
+Hosted OAuth enforces `browser:read` for MCP `initialize`, `ping`, and `tools/list`.
+Every `tools/call` requires `browser:control`, including tools annotated read-only;
+`browser:control` implies `browser:read`.
+
+1. **Legacy URLs are credentials.** Anyone who has that UUID can drive your
    logged-in browser — read your mail, act as you on any site you are signed
    into. Treat it exactly like a password: never commit it, never paste it into
    a shared chat, an issue, a README, or a screenshot. If it leaks, revoke the
    session in the extension and generate a new one. (This is not hypothetical:
    a dev machine's UUID once shipped in these very docs.)
-2. **Page content leaves your machine on remote paths.** Only default local
-   stdio without `--remote` keeps browser-facing traffic on `127.0.0.1`. A
-   stdio MCP server configured with `--remote` sends that traffic over WSS. With
-   hosted MCP, browser traffic passes through the hosted MCP service and relay.
-   If you need on-device-only, use default local stdio without `--remote`.
+2. **Page content leaves your machine on remote paths.** Local stdio and
+   loopback-only local HTTP without `--remote` keep browser-facing traffic on
+   `127.0.0.1`. Hosted MCP or local MCP configured with `--remote` sends browser
+   traffic through hosted infrastructure. If you need on-device-only, use local
+   stdio or loopback-only local HTTP without `--remote`.
 
 ### 3. Connect the Extension
 
@@ -393,7 +414,7 @@ Claude / Cursor / VS Code (stdio)
 3. The relay forwards commands to the extension on port `19889`
 4. Results flow back to the agent
 
-### Three supported paths
+### Supported paths
 
 Do not conflate the relay WebSocket protocol with MCP. The relay carries proprietary project JSON messages such as `list_tools`, `call_tool`, and `tool_result`; it does not carry MCP over WebSocket.
 
@@ -401,23 +422,26 @@ Do not conflate the relay WebSocket protocol with MCP. The relay carries proprie
 |---|---|---|
 | Direct `@vibebrowser/cli` | CLI process | `src/browser-cli.ts` -> `ExtensionConnection` -> WS/WSS relay JSON |
 | Local `@vibebrowser/mcp` | MCP over stdio (default) or Streamable HTTP at `http://127.0.0.1:8788/mcp` | `ExtensionConnection` -> local `ws://127.0.0.1:19888` or remote WS/WSS with `--remote` |
-| Hosted remote MCP | Streamable HTTP at `https://mcp.api.vibebrowser.app/mcp/<uuid>` | Hosted service routes to the extension relay |
+| Hosted remote MCP (preferred) | Streamable HTTP with OAuth at `https://relay.api.vibebrowser.app/mcp` | Separate hosted service routes to the extension relay |
+| Hosted remote MCP (legacy) | Streamable HTTP at `https://relay.api.vibebrowser.app/mcp/00000000-0000-0000-0000-000000000000`, or hosted `/mcp` compatibility routing | Separate hosted service routes to the extension relay |
+| Direct CLI or local MCP with `--devtools` | CLI output or MCP over stdio/local HTTP | Direct CDP; bypasses relay and extension |
 
 ```
 MCP client --stdio/http--> [vibebrowser-mcp] --project JSON over WS/WSS--> [relay] --> [extension]
 ```
 
-Streamable HTTP lets a remote or hosted agent — one that can't spawn a stdio
-subprocess — talk to the server over a URL:
+Local Streamable HTTP is for clients on the same machine that cannot use stdio:
 
 ```bash
 npx -y @vibebrowser/mcp@latest start --transport http
 # serves POST/GET http://127.0.0.1:8788/mcp
 ```
 
-Defaults: `--host 127.0.0.1`, `--http-port 8788`, `--http-path /mcp`. Add
-`--allow-host <host>` (repeatable) if you front it with a proxy or bind it
-beyond localhost.
+Defaults: `--host 127.0.0.1`, `--http-port 8788`, `--http-path /mcp`. This local
+HTTP endpoint has no client authentication and must remain loopback-only.
+`--allow-host <host>` (repeatable) only validates the HTTP `Host` header; it is
+not authentication and does not make non-loopback or public exposure safe. Use
+the hosted OAuth endpoint for remote MCP clients.
 
 ### Multi-Agent Mode
 
@@ -430,33 +454,34 @@ When multiple agents connect, Vibe MCP automatically spawns a relay daemon:
 
 ### Remote relay target
 
-> **Security:** The UUID path in `--remote` is a bearer capability. Treat the complete URL as a secret. There is no separate shared secret, authorization header, or query-string credential.
+> **Security:** For the browser-facing WS/WSS `--remote` connection, the UUID path is the bearer capability. Treat the complete URL as a secret. This relay connection has no separate shared secret, authorization header, or query-string credential. Hosted MCP authentication is separate and described above.
 
-If your agent runs in the cloud but you want it to control the user's real local browser, run `vibebrowser-mcp` in HTTP mode and connect it to the Vibe extension in remote relay mode. Pass either the extension UUID or the full WebSocket relay URL to `--remote`.
+To connect a local MCP process to an extension through the remote relay, pass either the extension UUID or the full WebSocket relay URL to `--remote`. The MCP-facing transport should remain stdio or loopback-only HTTP.
 
 ```bash
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"
 npx -y @vibebrowser/mcp@latest start --transport http --remote "$VIBE_REMOTE_URL"
 ```
 
-This exposes a local MCP endpoint at `http://127.0.0.1:8788/mcp` by default.
+This exposes a local, unauthenticated MCP endpoint at `http://127.0.0.1:8788/mcp`
+by default. Do not publish it or place it behind a public reverse proxy. Remote
+MCP clients should use `https://relay.api.vibebrowser.app/mcp` with OAuth.
 
-When OpenClaw runs on a different machine (for example cloud-hosted), provide a reachable URL:
-
-```bash
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"
-PUBLIC_MCP_URL="https://browser-bridge.example.com/mcp"
-npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
-```
-
-You can print the exact OpenClaw-friendly setup with:
+For an OpenClaw client running on the same machine, you can print loopback-only
+configuration with:
 
 ```bash
 VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL"
 ```
 
-Use `--remote <uuid>` with the default public relay, or `--remote <full-ws-url>` for an explicit relay endpoint. Source validation rejects relay URLs containing userinfo, query strings, or fragments.
+This exact invocation uses the helper's default loopback settings and is safe
+only for same-machine OpenClaw. The `openclaw` command exposes `--host` and
+`--public-url`, but the local HTTP server has no client authentication, so do
+not use those options to publish it. Remote OpenClaw clients should use
+`https://relay.api.vibebrowser.app/mcp` with hosted OAuth.
+
+Use `--remote <uuid>` with the default relay, or `--remote <full-ws-url>` for an explicit relay endpoint. This `src/connection.ts` validation applies to browser-facing WS/WSS relay targets; it is separate from the hosted `/mcp` service's OAuth and compatibility routing.
 
 For direct browser CLI checks, always use `npx -y @vibebrowser/cli@latest`:
 
@@ -475,8 +500,8 @@ For the full walkthrough, see `docs/openclaw-local-browser.md`.
 
 ```bash
 npx -y @vibebrowser/cli@latest sessions
-VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
+VIBE_REMOTE_UUID="00000000-0000-0000-0000-000000000000"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" status
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" tabs
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" open https://example.com
@@ -525,13 +550,14 @@ For a deeper skill definition (when to prefer this over a managed/headless brows
 
 There are two ways to use Vibe with OpenClaw:
 
-**Option A: Cloud OpenClaw controlling local browser**
+**Option A: Remote OpenClaw controlling the browser**
 
-If OpenClaw runs in the cloud but you want it to control your local browser:
+If OpenClaw runs remotely, configure it with the hosted OAuth MCP endpoint
+`https://relay.api.vibebrowser.app/mcp`. Do not expose the local HTTP bridge.
 
 1. Install the Vibe extension and enable **Remote** mode (see [docs/openclaw-local-browser.md](docs/openclaw-local-browser.md))
-2. Start the local HTTP bridge: `vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_UUID" [--public-url "$PUBLIC_MCP_URL"]` or `vibebrowser-mcp openclaw --remote "$VIBE_REMOTE_URL" [--public-url "$PUBLIC_MCP_URL"]`
-3. Register the MCP URL in OpenClaw
+2. Register `https://relay.api.vibebrowser.app/mcp` in OpenClaw
+3. Complete OAuth authorization with only the required scope; invoking any browser tool requires `browser:control`
 
 **Option B: OpenClaw skill for local agents**
 
@@ -608,25 +634,20 @@ npx -y @vibebrowser/mcp@latest [start] [options]
   --host <host>        Host to bind the HTTP server to (default: 127.0.0.1)
   --http-port <number> Port for streamable HTTP MCP transport (default: 8788)
   --http-path <path>   Path for streamable HTTP MCP transport (default: /mcp)
-  --allow-host <host>  Allowed host header for HTTP transport (repeatable)
+  --allow-host <host>  Allowed Host header for local HTTP transport (repeatable; validation only, not authentication or permission for public exposure)
   -r, --remote <uuid-or-url>  Extension UUID, or full ws(s) remote URL. This routing UUID is the sole bearer credential — treat it like a password.
   --devtools           Drive your real running Chrome directly over the DevTools Protocol (bypasses the extension relay)
 
 # MCP server tool
-set_remote { "url": "wss://relay.api.vibebrowser.app/<extension-uuid>" }
+set_remote { "url": "wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000" }
 ```
 
 The `set_remote` MCP server tool hot-reconnects the running MCP server to a different remote relay URL. It is an MCP tool, not a browser CLI subcommand. The URL's UUID is the only credential — never place it in logs shared with untrusted parties; regenerate it in extension Settings if exposed.
 
 ```bash
-# OpenClaw helper
-VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-PUBLIC_MCP_URL="https://browser-bridge.example.com/mcp"
-npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID" --public-url "$PUBLIC_MCP_URL"
-npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
-
 # OpenClaw-compatible browser CLI
+VIBE_REMOTE_UUID="00000000-0000-0000-0000-000000000000"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" status
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" status --wait-for-extension --wait-timeout 10000
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" tabs
@@ -651,12 +672,11 @@ npx -y @vibebrowser/mcp@latest serve "$MODEL"
 2. Click the extension icon and enable "MCP External Control" in Settings
 3. Check that no firewall is blocking localhost connections
 
-### "OpenClaw cannot reach my local browser bridge"
+### "A remote MCP client cannot reach the local HTTP endpoint"
 
-1. Start `vibebrowser-mcp` in HTTP mode instead of stdio
-2. Make sure the bridge process is still running on the user's machine
-3. Confirm the extension is in `Remote` mode and connected
-4. Verify the MCP URL in OpenClaw matches the bridge URL. If OpenClaw is cloud-hosted, do not use `127.0.0.1`; use `openclaw --public-url` with a reachable host.
+This is expected: the unauthenticated local HTTP transport is loopback-only and
+must not be exposed. Configure the remote client with the hosted OAuth endpoint
+`https://relay.api.vibebrowser.app/mcp` instead.
 
 ### Debug mode
 

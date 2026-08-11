@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -19,6 +21,11 @@ jobs:
       
       - name: Install dependencies
         run: npm ci
+
+      - name: Check standalone CLI version consistency
+        run: npm run check:cli-version
+        env:
+          CLI_VERSION_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
       
       - name: Build
         run: npm run build
@@ -30,11 +37,16 @@ jobs:
         run: npm run validate:skill
 
       - name: E2E (hermetic)
-        # Hermetic e2e gate: relay, http, remote-auth second-factor checks,
+        # Hermetic e2e gate: relay, http, UUID-only remote-auth checks,
         # CLI-relay, the #14 tools/list startup-budget regression, browser-cli,
-        # packed @vibebrowser/cli install+help smoke, and the chrome-use
+        # packed @vibebrowser/cli local TLS WSS tool roundtrip, and chrome-use
         # devtools flag.
         run: npm run test:ci
+
+      - name: E2E (opt-in public relay, published CLI)
+        run: npm run test:e2e:cli-public-relay
+        env:
+          VIBE_PUBLIC_RELAY_URL_SECRET: ${{ secrets.VIBE_PUBLIC_RELAY_URL_SECRET }}
 
       # Kept out of `test:ci` because it needs network: it installs the
       # published npm package into the bundle, runs Anthropic's `mcpb` and

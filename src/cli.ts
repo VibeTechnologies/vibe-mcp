@@ -20,6 +20,7 @@ import { serve } from './ollama.js';
 import { getPackageVersion } from './version.js';
 
 const DEFAULT_REMOTE = process.env.VIBE_REMOTE_URL || process.env.VIBE_EXTENSION_UUID || process.env.VIBE_RELAY_UUID;
+const DEFAULT_HTTP_BEARER_TOKEN = process.env.VIBE_MCP_HTTP_BEARER_TOKEN;
 
 program
   .name('vibebrowser-mcp')
@@ -40,6 +41,8 @@ program
   .option('--host <host>', 'Host to bind the HTTP server to', '127.0.0.1')
   .option('--http-port <number>', 'Port for streamable HTTP MCP transport', String(DEFAULT_HTTP_PORT))
   .option('--http-path <path>', 'Path for streamable HTTP MCP transport', DEFAULT_HTTP_PATH)
+  .option('--http-bearer-token <token>', 'Bearer token required for streamable HTTP MCP requests (or VIBE_MCP_HTTP_BEARER_TOKEN)')
+  .option('--allow-insecure-http', 'Dev only: allow plaintext HTTP on a non-loopback bind when token and allowed hosts are configured', false)
   .option('--allow-host <host>', 'Allowed host header for HTTP transport (repeatable)', collectRepeatedOption, [])
   .action(async (options) => {
     const transport = parseTransportMode(options.transport);
@@ -57,6 +60,8 @@ program
         transport,
         httpPort,
         httpPath: options.httpPath,
+        httpBearerToken: options.httpBearerToken ?? DEFAULT_HTTP_BEARER_TOKEN,
+        allowInsecureHttp: options.allowInsecureHttp,
         allowedHosts: options.allowHost.length > 0 ? options.allowHost : undefined,
         remoteUuid: remote,
         sessionId: options.session,
@@ -87,6 +92,16 @@ program
       const httpPort = parsePort(options.httpPort, 'HTTP port');
       const httpPath = normalizePath(options.httpPath);
       const host = options.host;
+      const token = DEFAULT_HTTP_BEARER_TOKEN;
+      if (token !== undefined && !/^\S+$/.test(token)) {
+        throw new Error('HTTP bearer token must be a single non-whitespace credential');
+      }
+      if (options.publicUrl && (!token || token.trim().length === 0)) {
+        throw new Error('--public-url requires a non-empty VIBE_MCP_HTTP_BEARER_TOKEN');
+      }
+      if (options.publicUrl && !isSafeHttpBind(host)) {
+        throw new Error('--public-url requires --host to be 127.0.0.1, localhost, or ::1 for a loopback TLS proxy');
+      }
       const localHttpUrl = `http://${formatHost(host)}:${httpPort}${httpPath}`;
       const openClawUrl = options.publicUrl
         ? normalizePublicUrl(String(options.publicUrl), httpPath)
@@ -108,15 +123,26 @@ program
         options.remote,
       ];
 
-      for (const allowedHost of options.allowHost as string[]) {
+      const allowedHosts = new Set(options.allowHost as string[]);
+      if (options.publicUrl) {
+        allowedHosts.add(new URL(openClawUrl).hostname);
+      }
+      for (const allowedHost of allowedHosts) {
         cliArgs.push('--allow-host', allowedHost);
       }
 
+      const vibeConfig: Record<string, unknown> = {
+        url: openClawUrl,
+        transport: 'streamable-http',
+      };
+      if (token && token.trim().length > 0) {
+        vibeConfig.headers = {
+          Authorization: 'Bearer ${VIBE_MCP_HTTP_BEARER_TOKEN}',
+        };
+      }
       const openClawConfig = {
         mcpServers: {
-          vibe: {
-            url: openClawUrl,
-          },
+          vibe: vibeConfig,
         },
       };
 
@@ -136,6 +162,9 @@ program
       console.log('');
       console.log('OpenClaw JSON snippet:');
       console.log(JSON.stringify(openClawConfig, null, 2));
+      if (token && token.trim().length > 0) {
+        console.log('Ensure the OpenClaw process also has VIBE_MCP_HTTP_BEARER_TOKEN in its environment.');
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Error: ${message}`);
@@ -198,8 +227,16 @@ function formatHost(host: string): string {
   return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
 }
 
+function isSafeHttpBind(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  return normalized === '127.0.0.1' || normalized === 'localhost' || normalized === '::1';
+}
+
 function normalizePublicUrl(value: string, fallbackPath: string): string {
   const parsed = parseHttpUrl(value, '--public-url');
+  if (parsed.protocol !== 'https:') {
+    throw new Error('--public-url must use https://');
+  }
   if (!parsed.pathname || parsed.pathname === '/') {
     parsed.pathname = fallbackPath;
   }

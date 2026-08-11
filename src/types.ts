@@ -125,6 +125,10 @@ export interface ServerConfig {
   transport: ServerTransportMode;
   httpPort: number;
   httpPath: string;
+  /** Bearer token required for streamable HTTP MCP requests when configured. */
+  httpBearerToken?: string;
+  /** Dev-only opt-in for binding plaintext HTTP beyond exact loopback names. */
+  allowInsecureHttp?: boolean;
   allowedHosts?: string[];
   /** Remote relay UUID — when set, connects to public relay instead of local */
   remoteUuid?: string;

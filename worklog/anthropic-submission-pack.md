@@ -11,8 +11,9 @@ Anthropic property. Submission is a founder-only action (§9).
 official docs on that date, and every URL/claim was measured against production
 the same day (§7). Nothing here is from memory.
 
-**Read §8 before you paste anything.** There are two blockers that will stop the
-submission cold, and one of them is a docs fix outside this repo.
+**Read §8 before you paste anything.** One blocker remains: §8.1, the Claude
+plan gate. The docs blocker (§8.2) was **resolved on 2026-08-11** — the public
+connector docs now lead with OAuth and are verified live.
 
 ---
 
@@ -50,7 +51,7 @@ Verbatim from [submission](https://claude.com/docs/connectors/building/submissio
 | 2 | **Tool annotations** — all tools must include a `title` and the applicable `readOnlyHint`/`destructiveHint` | Met — 27/27, live on the hosted path (§5) |
 | 3 | **Authentication** — use OAuth 2.0 for authenticated services | Met — `oauth_dcr`, "supported out of the box" |
 | 4 | **Privacy Policy** | Met — <https://www.vibebrowser.app/privacy> (200) |
-| 5 | **Documentation** — clear setup and usage instructions | **NOT met on the canonical path** — see §8.2 |
+| 5 | **Documentation** — clear setup and usage instructions | Met — public docs lead with the canonical OAuth path as of 2026-08-11 (§8.2) |
 
 ---
 
@@ -201,9 +202,11 @@ the 16 that act on the page are marked as writes.
 https://www.vibebrowser.app/integrations/claude-connector
 ```
 
-> ⚠️ This page currently documents the **legacy UUID-in-URL** path, not OAuth.
-> Read §8.2 — this must be fixed before you submit, or a reviewer following our
-> own docs will not reproduce the connector they are reviewing.
+> ✅ As of 2026-08-11 this page leads with the canonical OAuth flow
+> (`https://relay.api.vibebrowser.app/mcp` + consent), with the legacy
+> UUID-in-URL path demoted to a labelled section for headless clients. A
+> reviewer following these docs reproduces the connector being submitted.
+> See §8.2.
 
 **Privacy policy URL:**
 
@@ -445,7 +448,7 @@ don't skim:
 | AI media generation | **We generate no images, video, or audio.** |
 | Prompt injection | No tool description instructs Claude to call other tools, override system instructions, fetch behavioural instructions externally, or promote products. Descriptions state only what each tool does. |
 | Conversation data collection | We collect no conversation data, and query no Claude memory, chat history, conversation summaries, or user files. The relay logs request metadata only (IP, Origin, User-Agent) for abuse control — disclosed in the privacy policy. |
-| Public documentation | Public docs exist at `vibebrowser.app/mcp`, `/integrations`, `/integrations/claude-connector`, `/cli` — **subject to the §8.2 fix.** |
+| Public documentation | Public docs exist at `vibebrowser.app/mcp`, `/integrations`, `/integrations/claude-connector`, `/cli` — OAuth-first as of 2026-08-11 (§8.2 resolved). |
 
 ### 4.11 Fields we deliberately leave blank
 
@@ -683,7 +686,7 @@ the exported map (see §5 table) and by `npm run test:e2e:tool-annotations` in C
 
 ## 8. Gaps — read this before submitting
 
-Four items. Two are blockers.
+Four items. One blocker remains (§8.1); §8.2 was resolved on 2026-08-11.
 
 ### 8.1 BLOCKER — the portal needs a Team or Enterprise Claude organization
 
@@ -711,9 +714,43 @@ directories now appear to gate submission behind a paid tier.
 **Action:** confirm the plan first. If it is not Team/Enterprise, upgrading is
 the prerequisite, not a nice-to-have.
 
-### 8.2 BLOCKER — our public docs describe the wrong connection method
+### 8.2 ~~BLOCKER~~ RESOLVED 2026-08-11 — public docs now lead with OAuth
 
-The documentation URL we would submit,
+**Status: fixed and live in production.** Shipped in
+[dzianisv/VibeBrowserProductPage#226](https://github.com/dzianisv/VibeBrowserProductPage/pull/226),
+merged to `main`, deployed via GitHub Actions, and verified against the live
+site. `/integrations/claude-connector`, `/integrations/chatgpt-connector`,
+`/mcp` and `/integrations` now:
+
+- lead with **OAuth (recommended)** and hand out the canonical, credential-free
+  URL `https://relay.api.vibebrowser.app/mcp`;
+- explain concretely what `browser:read` and `browser:control` each grant, and
+  how to revoke a grant;
+- keep the per-UUID URL as a clearly-labelled secondary section, *"Direct URL —
+  for headless and automation clients"*, with its bearer-credential warning
+  intact;
+- contain **zero** remaining "no OAuth" claims.
+
+Live verification (`curl` against `https://www.vibebrowser.app`, all `200`):
+
+| Check | claude-connector | chatgpt-connector | /mcp | /integrations |
+|---|---|---|---|---|
+| canonical OAuth URL present | yes | yes | yes | yes |
+| stale "no OAuth" claim | 0 | 0 | 0 | 0 |
+| legacy per-UUID section + warning | yes | yes | yes | yes |
+| `browser:control` scope documented | yes | yes | yes | yes |
+
+A repo test (`lib/__tests__/connector-docs.test.ts`, wired into the `root-site`
+CI job) now fails the build if a "no OAuth" claim is reintroduced, if the
+canonical URL disappears from the numbered steps, or if a real routing UUID ever
+lands in a page.
+
+The §8.2 documentation blocker no longer gates submission. The original
+description is kept below for the record.
+
+---
+
+**(historical)** The documentation URL we would submit,
 `https://www.vibebrowser.app/integrations/claude-connector`, currently instructs
 users to paste `https://relay.api.vibebrowser.app/mcp/<routing-uuid>` and states,
 in several places, "no OAuth", "no domain verification", "the URL is the whole
@@ -813,15 +850,15 @@ Everything else Anthropic asks for exists and was measured today.
 
 ## 9. Founder: do exactly this
 
-Under five minutes once §8.1 and §8.2 are cleared. Do them first — the form will
+Under five minutes once §8.1 is cleared (§8.2 is already done). Do it first — the form will
 not work otherwise.
 
 **Before you open the portal:**
 
 - **0a.** Confirm your Claude account is on **Team or Enterprise** and you are an
   Owner. If not, upgrade. (§8.1)
-- **0b.** Confirm `https://www.vibebrowser.app/integrations/claude-connector`
-  documents the OAuth flow, not the UUID URL. (§8.2)
+- **0b.** ✅ Done 2026-08-11 — `https://www.vibebrowser.app/integrations/claude-connector`
+  documents the OAuth flow as the primary path, verified live. (§8.2)
 - **0c.** Open Chrome with the VibeBrowser extension running, Settings →
   "Enable external AI agent control" **ON**, mode **Remote (internet)**. Leave it
   open for the whole form — portal step 3 syncs tools live from your session.

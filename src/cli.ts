@@ -20,6 +20,7 @@ import { serve } from './ollama.js';
 import { getPackageVersion } from './version.js';
 
 const DEFAULT_REMOTE = process.env.VIBE_REMOTE_URL || process.env.VIBE_EXTENSION_UUID || process.env.VIBE_RELAY_UUID;
+const DEFAULT_HTTP_BEARER_TOKEN = process.env.VIBE_MCP_HTTP_BEARER_TOKEN;
 
 program
   .name('vibebrowser-mcp')
@@ -40,6 +41,7 @@ program
   .option('--host <host>', 'Host to bind the HTTP server to', '127.0.0.1')
   .option('--http-port <number>', 'Port for streamable HTTP MCP transport', String(DEFAULT_HTTP_PORT))
   .option('--http-path <path>', 'Path for streamable HTTP MCP transport', DEFAULT_HTTP_PATH)
+  .option('--http-bearer-token <token>', 'Bearer token required for streamable HTTP MCP requests (or VIBE_MCP_HTTP_BEARER_TOKEN)')
   .option('--allow-host <host>', 'Allowed host header for HTTP transport (repeatable)', collectRepeatedOption, [])
   .action(async (options) => {
     const transport = parseTransportMode(options.transport);
@@ -57,6 +59,7 @@ program
         transport,
         httpPort,
         httpPath: options.httpPath,
+        httpBearerToken: options.httpBearerToken ?? DEFAULT_HTTP_BEARER_TOKEN,
         allowedHosts: options.allowHost.length > 0 ? options.allowHost : undefined,
         remoteUuid: remote,
         sessionId: options.session,

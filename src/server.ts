@@ -4,7 +4,7 @@
  * MCP server that bridges AI clients with the Vibe browser extension.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
@@ -94,6 +94,7 @@ export class VibeMcpServer {
       transport: config.transport ?? 'stdio',
       httpPort: config.httpPort ?? DEFAULT_HTTP_PORT,
       httpPath: normalizeHttpPath(config.httpPath ?? DEFAULT_HTTP_PATH),
+      httpBearerToken: config.httpBearerToken,
       allowedHosts: config.allowedHosts,
       remoteUuid: config.remoteUuid,
       sessionId: config.sessionId,
@@ -121,6 +122,8 @@ export class VibeMcpServer {
    * Start the MCP server
    */
   async start(): Promise<void> {
+    this.validateHttpSecurity();
+
     try {
       await this.connection.start();
     } catch (error) {
@@ -513,12 +516,15 @@ export class VibeMcpServer {
     this.httpApp.get('/', healthHandler);
 
     this.httpApp.post(this.config.httpPath, async (req: HttpRequest, res: ServerResponse) => {
+      if (!this.authenticateHttpRequest(req, res)) return;
       await this.handleHttpRequest(req, res, req.body);
     });
     this.httpApp.get(this.config.httpPath, async (req: HttpRequest, res: ServerResponse) => {
+      if (!this.authenticateHttpRequest(req, res)) return;
       await this.handleHttpRequest(req, res);
     });
     this.httpApp.delete(this.config.httpPath, async (req: HttpRequest, res: ServerResponse) => {
+      if (!this.authenticateHttpRequest(req, res)) return;
       await this.handleHttpRequest(req, res);
     });
 
@@ -528,6 +534,45 @@ export class VibeMcpServer {
     });
 
     this.log(`MCP server started on ${this.getHttpUrl()}`);
+  }
+
+  private validateHttpSecurity(): void {
+    if (this.config.transport !== 'http') {
+      return;
+    }
+
+    const token = this.config.httpBearerToken;
+    if (token !== undefined && token.trim().length === 0) {
+      throw new Error('HTTP bearer token must not be empty');
+    }
+    if (!isLoopbackHost(this.config.host) && token === undefined) {
+      throw new Error('Non-loopback HTTP bindings require --http-bearer-token or VIBE_MCP_HTTP_BEARER_TOKEN');
+    }
+  }
+
+  private authenticateHttpRequest(req: IncomingMessage, res: ServerResponse): boolean {
+    const expected = this.config.httpBearerToken;
+    if (expected === undefined) {
+      return true;
+    }
+
+    const authorization = req.headers.authorization;
+    const supplied = typeof authorization === 'string'
+      ? /^Bearer (.+)$/.exec(authorization)?.[1]
+      : undefined;
+    if (supplied && tokensEqual(supplied, expected)) {
+      return true;
+    }
+
+    res.statusCode = 401;
+    res.setHeader('www-authenticate', 'Bearer realm="vibebrowser-mcp"');
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({
+      jsonrpc: '2.0',
+      error: { code: -32001, message: 'Unauthorized' },
+      id: null,
+    }));
+    return false;
   }
 
   /**
@@ -852,6 +897,23 @@ function normalizeHttpPath(path: string): string {
     return DEFAULT_HTTP_PATH;
   }
   return path.startsWith('/') ? path : `/${path}`;
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (normalized === 'localhost' || normalized === '::1') {
+    return true;
+  }
+  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(normalized);
+  return match !== null
+    && match.slice(1).every((part) => Number(part) <= 255)
+    && Number(match[1]) === 127;
+}
+
+function tokensEqual(supplied: string, expected: string): boolean {
+  const suppliedDigest = createHash('sha256').update(supplied, 'utf8').digest();
+  const expectedDigest = createHash('sha256').update(expected, 'utf8').digest();
+  return timingSafeEqual(suppliedDigest, expectedDigest);
 }
 
 function getSessionId(req: IncomingMessage): string | null {

@@ -424,7 +424,23 @@ npx -y @vibebrowser/mcp@latest start --transport http
 
 Defaults: `--host 127.0.0.1`, `--http-port 8788`, `--http-path /mcp`. Add
 `--allow-host <host>` (repeatable) if you front it with a proxy or bind it
-beyond localhost.
+beyond localhost. Loopback bindings are auth-free by default. A non-loopback
+binding refuses to start unless `--http-bearer-token` or
+`VIBE_MCP_HTTP_BEARER_TOKEN` supplies a non-empty token. Prefer the environment
+variable so the token does not appear in process arguments:
+
+```bash
+export VIBE_MCP_HTTP_BEARER_TOKEN="$(openssl rand -hex 32)"
+npx -y @vibebrowser/mcp@latest start --transport http --host 0.0.0.0
+```
+
+Clients must send the token on every `/mcp` request, including initialization:
+
+```http
+Authorization: Bearer <your-token>
+```
+
+The unauthenticated `/health` and `/` endpoints expose only bridge status.
 
 ### Multi-Agent Mode
 
@@ -623,6 +639,7 @@ npx -y @vibebrowser/mcp@latest [start] [options]
   --host <host>        Host to bind the HTTP server to (default: 127.0.0.1)
   --http-port <number> Port for streamable HTTP MCP transport (default: 8788)
   --http-path <path>   Path for streamable HTTP MCP transport (default: /mcp)
+  --http-bearer-token <token> Bearer token required for HTTP MCP requests (or VIBE_MCP_HTTP_BEARER_TOKEN)
   --allow-host <host>  Allowed host header for HTTP transport (repeatable)
   -r, --remote <uuid-or-url>  Extension UUID, or full ws(s) remote URL. This routing UUID is the sole bearer credential — treat it like a password.
   --devtools           Drive your real running Chrome directly over the DevTools Protocol (bypasses the extension relay)

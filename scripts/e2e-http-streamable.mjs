@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import http from 'node:http';
 import net from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
 import process from 'node:process';
@@ -21,8 +22,9 @@ RESERVED_PORTS.add(RELAY_PORT);
 const RELAY_PORT_B = await findFreePort(RESERVED_PORTS);
 const RELAY_URL = `ws://${RELAY_HOST}:${RELAY_PORT}`;
 const RELAY_URL_B = `ws://${RELAY_HOST}:${RELAY_PORT_B}`;
-const REMOTE_UUID = 'test-http-relay-uuid';
-const REMOTE_UUID_B = 'test-http-relay-uuid-b';
+const REMOTE_UUID = '00000000-0000-4000-8000-000000000132';
+const REMOTE_UUID_B = '00000000-0000-4000-8000-000000000133';
+const HTTP_BEARER_TOKEN = '00000000-0000-4000-8000-000000000134';
 const SESSION_ID = REMOTE_UUID;
 const SESSION_ID_B = REMOTE_UUID_B;
 const MCP_URL = `http://${RELAY_HOST}:${MCP_HTTP_PORT}/mcp`;
@@ -139,28 +141,19 @@ async function main() {
     remoteA = startFakeRemoteRelay(RELAY_PORT, REMOTE_UUID, SESSION_ID);
     remoteB = startFakeRemoteRelay(RELAY_PORT_B, REMOTE_UUID_B, SESSION_ID_B);
 
-    serverProcess = spawn(
-      process.execPath,
-      [
-        'dist/cli.js',
-        'start',
-        '--transport',
-        'http',
-        '--host',
-        RELAY_HOST,
-        '--http-port',
-        String(MCP_HTTP_PORT),
-        '--remote',
-        `${RELAY_URL}/${REMOTE_UUID}`,
-      ],
-      {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: {
-          ...process.env,
-          VIBE_MCP_STATE_DIR: stateDir,
-        },
-      },
-    );
+    await verifyNonLoopbackRefusal(stateDir, remoteA);
+
+    serverProcess = spawnHttpServer(stateDir);
+    await Promise.all([remoteA.nextConnection(), waitForPort(MCP_HTTP_PORT)]);
+    const compatibilityTransport = new StreamableHTTPClientTransport(new URL(MCP_URL));
+    const compatibilityClient = new Client({ name: 'vibe-mcp-http-loopback-e2e', version: '1.0.0' });
+    await withTimeout(compatibilityClient.connect(compatibilityTransport), 'loopback no-token MCP connect');
+    await withTimeout(compatibilityClient.close(), 'loopback no-token MCP close');
+    serverProcess.kill('SIGTERM');
+    await waitForProcessExit(serverProcess);
+    serverProcess = undefined;
+
+    serverProcess = spawnHttpServer(stateDir, HTTP_BEARER_TOKEN, '0.0.0.0');
 
     let stderr = '';
     serverProcess.stderr.on('data', (chunk) => {
@@ -168,11 +161,15 @@ async function main() {
     });
 
     const [extensionWs] = await Promise.all([
-      remoteA.connected,
+      remoteA.nextConnection(),
       waitForPort(MCP_HTTP_PORT),
     ]);
 
-    const transport = new StreamableHTTPClientTransport(new URL(MCP_URL));
+    await verifyHttpAuthentication();
+
+    const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {
+      requestInit: { headers: { Authorization: `Bearer ${HTTP_BEARER_TOKEN}` } },
+    });
     const client = new Client({ name: 'vibe-mcp-http-e2e', version: '1.0.0' });
 
     await withTimeout(client.connect(transport), 'MCP client connect');
@@ -305,7 +302,7 @@ async function main() {
       arguments: { url: `${RELAY_URL_B}/${REMOTE_UUID_B}` },
     });
     const [extensionWsB, setRemoteResult] = await withTimeout(Promise.all([
-      remoteB.connected,
+      remoteB.nextConnection(),
       setRemoteResultPromise,
     ]), 'set_remote response and relay B connection');
 
@@ -392,21 +389,138 @@ async function main() {
   }
 }
 
+function spawnHttpServer(stateDir, bearerToken, host = RELAY_HOST) {
+  const args = [
+    'dist/cli.js', 'start', '--transport', 'http', '--host', host,
+    '--http-port', String(MCP_HTTP_PORT), '--remote', `${RELAY_URL}/${REMOTE_UUID}`,
+  ];
+  if (host !== RELAY_HOST) {
+    args.push('--allow-host', RELAY_HOST);
+  }
+  return spawn(process.execPath, args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: childEnv(stateDir, bearerToken),
+  });
+}
+
+function childEnv(stateDir, bearerToken) {
+  const { VIBE_MCP_HTTP_BEARER_TOKEN: _ambientToken, ...env } = process.env;
+  return {
+    ...env,
+    VIBE_MCP_STATE_DIR: stateDir,
+    ...(bearerToken ? { VIBE_MCP_HTTP_BEARER_TOKEN: bearerToken } : {}),
+  };
+}
+
+async function verifyNonLoopbackRefusal(stateDir, remote) {
+  const port = await findFreePort(RESERVED_PORTS);
+  RESERVED_PORTS.add(port);
+  const child = spawn(process.execPath, [
+    'dist/cli.js', 'start', '--transport', 'http', '--host', '0.0.0.0',
+    '--http-port', String(port), '--remote', `${RELAY_URL}/${REMOTE_UUID}`,
+  ], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: childEnv(stateDir),
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+  const code = await withTimeout(new Promise((resolve) => child.once('exit', resolve)), 'non-loopback startup refusal');
+  if (code === 0 || !stderr.includes('Non-loopback HTTP bindings require')) {
+    throw new Error(`Expected non-loopback startup refusal, code=${code}, stderr=${stderr}`);
+  }
+  if (await probePort(port)) {
+    throw new Error('Non-loopback refusal must occur before HTTP listen');
+  }
+  if (remote.connectionCount !== 0) {
+    throw new Error('Non-loopback refusal must occur before relay connection');
+  }
+}
+
+async function verifyHttpAuthentication() {
+  const initialize = {
+    jsonrpc: '2.0', id: 1, method: 'initialize',
+    params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'auth-probe', version: '1.0.0' } },
+  };
+  const request = (method, authorization) => fetch(MCP_URL, {
+    method,
+    headers: {
+      'content-type': 'application/json',
+      accept: 'application/json, text/event-stream',
+      ...(authorization ? { Authorization: authorization } : {}),
+    },
+    ...(method === 'POST' ? { body: JSON.stringify(initialize) } : {}),
+  });
+
+  for (const method of ['POST', 'GET', 'DELETE']) {
+    for (const authorization of [undefined, 'Bearer invalid-token']) {
+      const response = await request(method, authorization);
+      if (response.status !== 401 || !response.headers.get('www-authenticate')?.startsWith('Bearer')) {
+        throw new Error(`Expected ${method} bearer challenge, got ${response.status}`);
+      }
+    }
+  }
+
+  for (const method of ['GET', 'DELETE']) {
+    const response = await request(method, `Bearer ${HTTP_BEARER_TOKEN}`);
+    if (response.status !== 400) {
+      throw new Error(`Expected authenticated ${method} to reach session routing, got ${response.status}`);
+    }
+  }
+
+  const hostStatus = await postWithHost(initialize, 'untrusted.example');
+  if (hostStatus !== 403) {
+    throw new Error(`Expected SDK Host validation with valid auth, got ${hostStatus}`);
+  }
+
+  const healthResponse = await fetch(`http://${RELAY_HOST}:${MCP_HTTP_PORT}/health`);
+  if (healthResponse.status !== 200) {
+    throw new Error(`Expected health endpoint to remain auth-free, got ${healthResponse.status}`);
+  }
+}
+
+function postWithHost(body, host) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(MCP_URL, {
+      method: 'POST',
+      headers: {
+        Host: host,
+        Authorization: `Bearer ${HTTP_BEARER_TOKEN}`,
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+    }, (res) => {
+      res.resume();
+      res.once('end', () => resolve(res.statusCode));
+    });
+    req.once('error', reject);
+    req.end(JSON.stringify(body));
+  });
+}
+
 function startFakeRemoteRelay(port, uuid, sessionId) {
   const server = new WebSocketServer({ host: RELAY_HOST, port });
-  const connected = new Promise((resolve) => {
-    server.on('connection', (ws, req) => {
+  const waiters = [];
+  const pending = [];
+  let connectionCount = 0;
+  server.on('connection', (ws, req) => {
       if (req.url !== `/${uuid}`) {
         ws.close();
         return;
       }
+      connectionCount += 1;
       ws.send(JSON.stringify({ type: 'extension_status', connected: true }));
       ws.send(JSON.stringify({ type: 'connected', sessionId }));
-      resolve(ws);
-    });
+      const waiter = waiters.shift();
+      if (waiter) waiter(ws);
+      else pending.push(ws);
+  });
+  const nextConnection = () => new Promise((resolve) => {
+    const ws = pending.shift();
+    if (ws) resolve(ws);
+    else waiters.push(resolve);
   });
 
-  return { server, connected };
+  return { server, nextConnection, get connectionCount() { return connectionCount; } };
 }
 
 async function closeFakeRemoteRelay(remote) {

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
-import { ExtensionConnection, REDACTED_REMOTE_ID } from './connection.js';
+import { ExtensionConnection, redactRemoteTarget, REDACTED_REMOTE_ID } from './connection.js';
 import { ChromeUseConnection, type CdpConnector } from './chrome-use-connection.js';
 import { DEFAULT_WS_PORT, type RelaySessionSummary, type ToolDefinition, type ToolResult } from './types.js';
 
@@ -508,7 +508,8 @@ async function runBrowserCommand(
     if (ctx) {
       emitError(Boolean(globalOptions.json), commandName, ctx, error);
     } else {
-      const message = error instanceof Error ? error.message : String(error);
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      const message = redactRemoteTarget(rawMessage, globalOptions.remote);
       if (Boolean(globalOptions.json)) {
         console.log(JSON.stringify({
           ok: false,
@@ -1477,6 +1478,12 @@ export class BrowserCliContext {
     return this.mode();
   }
 
+  redactErrorMessage(message: string): string {
+    return this.connection instanceof ExtensionConnection
+      ? this.connection.redactErrorMessage(message)
+      : message;
+  }
+
   outputContext(): Pick<CommandOutput, 'profile' | 'mode' | 'sessionId' | 'requestedSessionId' | 'ignoredCompatibilityOptions'> {
     return {
       profile: this.profile,
@@ -1714,7 +1721,8 @@ function emitError(
   ctx: BrowserCliContext,
   error: unknown,
 ): void {
-  let message = error instanceof Error ? error.message : String(error);
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  let message = ctx.redactErrorMessage(rawMessage);
   // Improve guidance when the extension requires a pageId that wasn't provided
   if (/\bpageId\b/i.test(message) && /\bmissing\b|\brequired\b/i.test(message)) {
     message += '\nHint: use `tabs` to list pages, then pass --page-id <id> to target a specific tab.';

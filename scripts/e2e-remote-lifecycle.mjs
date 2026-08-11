@@ -5,13 +5,17 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocketServer } from 'ws';
 import {
   ExtensionConnection,
+  isPermanentRelayCloseCode,
+  isPermanentRelayHttpStatus,
   parseRemoteRelayUrl,
+  redactRemoteTarget,
   REDACTED_REMOTE_ID,
 } from '../dist/connection.js';
 
 const HOST = '127.0.0.1';
-const UUID_A = '88888888-8888-4888-8888-888888888888';
-const UUID_B = '99999999-9999-4999-8999-999999999999';
+const UUID_A = 'abcdefab-cdef-4abc-8def-abcdefabcdef';
+const UUID_B = 'fedcbafe-dcba-4fed-8cba-fedcbafedcba';
+const RECONNECT_DELAY_MS = 40;
 const TOOL = {
   name: 'lifecycle_test',
   description: 'Lifecycle test tool',
@@ -112,6 +116,114 @@ function startRelay(port, uuid) {
   };
 }
 
+function startClosingRelay(port, uuid, code, reason = '') {
+  const wss = new WebSocketServer({ host: HOST, port });
+  let connectionCount = 0;
+  wss.on('connection', (ws, request) => {
+    assert(request.url === `/${uuid}`, `unexpected relay path: ${request.url}`);
+    connectionCount += 1;
+    setTimeout(() => ws.close(code, reason), 5);
+  });
+  return {
+    url: `ws://${HOST}:${port}/${uuid}`,
+    getConnectionCount: () => connectionCount,
+    close: async () => {
+      for (const client of wss.clients) client.terminate();
+      await new Promise((resolve, reject) => wss.close((error) => error ? reject(error) : resolve()));
+    },
+  };
+}
+
+function startErrorRelay(port, uuid) {
+  const wss = new WebSocketServer({ host: HOST, port });
+  const connected = new Promise((resolve) => {
+    wss.on('connection', (ws, request) => {
+      assert(request.url === `/${uuid}`, `unexpected relay path: ${request.url}`);
+      ws.send(JSON.stringify({ type: 'extension_status', connected: true }));
+      ws.send(JSON.stringify({ type: 'tools_list', data: [TOOL] }));
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString());
+        if (message.type === 'call_tool') {
+          ws.send(JSON.stringify({
+            type: 'error',
+            requestId: message.requestId,
+            error: `Relay rejected WSS://${HOST}:${port}/${uuid.toUpperCase()} for ${uuid.toUpperCase()}`,
+          }));
+        }
+      });
+      resolve(ws);
+    });
+  });
+  return {
+    url: `ws://${HOST}:${port}/${uuid}`,
+    connected,
+    close: async () => {
+      for (const client of wss.clients) client.terminate();
+      await new Promise((resolve, reject) => wss.close((error) => error ? reject(error) : resolve()));
+    },
+  };
+}
+
+async function startHttpRejectingRelay(port, statusCode) {
+  let attempts = 0;
+  const sockets = new Set();
+  const server = http.createServer();
+  server.on('upgrade', (_request, socket) => {
+    attempts += 1;
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+    socket.end(`HTTP/1.1 ${statusCode} Rejected\r\nConnection: close\r\n\r\n`);
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, HOST, resolve);
+  });
+  return {
+    getAttempts: () => attempts,
+    close: async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
+async function startStallingReconnectRelay(port, uuid) {
+  const sockets = new Set();
+  const wss = new WebSocketServer({ noServer: true });
+  const server = http.createServer();
+  let upgrades = 0;
+  let resolveReconnect;
+  const reconnectStarted = new Promise((resolve) => { resolveReconnect = resolve; });
+  server.on('upgrade', (request, socket, head) => {
+    sockets.add(socket);
+    socket.once('close', () => sockets.delete(socket));
+    upgrades += 1;
+    if (upgrades === 1) {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+        setTimeout(() => ws.close(1012, 'restart'), 5);
+      });
+      return;
+    }
+    resolveReconnect();
+    // Leave the stale reconnect handshake in CONNECTING until set_remote cancels it.
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, HOST, resolve);
+  });
+  return {
+    url: `ws://${HOST}:${port}/${uuid}`,
+    reconnectStarted,
+    getUpgradeCount: () => upgrades,
+    close: async () => {
+      for (const client of wss.clients) client.terminate();
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
 async function testUrlValidation() {
   const valid = parseRemoteRelayUrl(`wss://relay.example.test/nested/${UUID_A}`);
   assert(valid.uuid === UUID_A, 'valid WSS URL UUID was not parsed');
@@ -136,6 +248,31 @@ async function testUrlValidation() {
   );
 }
 
+function testRetryPolicyMatrix() {
+  for (const code of [1002, 1003, 1007, 1008, 4001, 4003, 4004, 4009, 4401, 4403]) {
+    assert(isPermanentRelayCloseCode(code), `WS close ${code} should be permanent`);
+  }
+  for (const code of [1000, 1001, 1006, 1011, 1012, 4000, 4008]) {
+    assert(!isPermanentRelayCloseCode(code), `WS close ${code} should be retryable`);
+  }
+  for (const status of [400, 401, 403, 404]) {
+    assert(isPermanentRelayHttpStatus(status), `HTTP ${status} should be permanent`);
+  }
+  for (const status of [408, 425, 429, 500, 502, 503, 504]) {
+    assert(!isPermanentRelayHttpStatus(status), `HTTP ${status} should be retryable`);
+  }
+}
+
+function testCaseInsensitiveRedaction() {
+  const fullUrl = `wss://relay.example.test/${UUID_A}`;
+  const upperUuid = UUID_A.toUpperCase();
+  const message = `Relay rejected ${fullUrl.toUpperCase()} and ${upperUuid}`;
+  const redacted = redactRemoteTarget(message, fullUrl);
+  assert(!redacted.toLowerCase().includes(UUID_A.toLowerCase()), `redactor leaked UUID: ${redacted}`);
+  assert(!redacted.toLowerCase().includes(fullUrl.toLowerCase()), `redactor leaked full URL: ${redacted}`);
+  assert(redacted.includes(REDACTED_REMOTE_ID), `redactor omitted placeholder: ${redacted}`);
+}
+
 async function testHandshakeTimeout() {
   const port = await findFreePort();
   const server = await startSilentTcpServer(port);
@@ -150,6 +287,31 @@ async function testHandshakeTimeout() {
   } finally {
     await connection.stop();
     await server.close();
+  }
+}
+
+async function testUntrustedRelayErrorRedaction() {
+  const port = await findFreePort();
+  const relay = startErrorRelay(port, UUID_A);
+  const debugOutput = [];
+  const originalConsoleError = console.error;
+  console.error = (...args) => debugOutput.push(args.map(String).join(' '));
+  const connection = new ExtensionConnection(0, true, { uuid: relay.url });
+  try {
+    await connection.start();
+    await relay.connected;
+    const message = await expectReject(
+      () => connection.callTool(TOOL.name, {}),
+      /\[redacted\]/,
+      'untrusted relay error redaction',
+    );
+    assert(!message.toLowerCase().includes(UUID_A.toLowerCase()), `relay error leaked UUID: ${message}`);
+    assert(!message.toLowerCase().includes(relay.url.toLowerCase()), `relay error leaked full URL: ${message}`);
+    assert(!debugOutput.join('\n').toLowerCase().includes(UUID_A.toLowerCase()), `debug output leaked UUID: ${debugOutput.join('\n')}`);
+  } finally {
+    await connection.stop();
+    await relay.close();
+    console.error = originalConsoleError;
   }
 }
 
@@ -205,6 +367,31 @@ async function testStateCleanupAndPermanentClose() {
   }
 }
 
+async function testPermanentRelayCloseMatrix() {
+  for (const code of [4004, 4009]) {
+    const port = await findFreePort();
+    const relay = startClosingRelay(port, UUID_A, code, code === 4004 ? 'unknown UUID' : 'revoked UUID');
+    const connection = new ExtensionConnection(
+      0,
+      false,
+      { uuid: relay.url },
+      undefined,
+      500,
+      RECONNECT_DELAY_MS,
+    );
+    try {
+      await connection.start();
+      const close = await waitForEvent(connection, 'disconnected');
+      assert(close.code === code && close.permanent === true, `WS ${code} was not permanent: ${JSON.stringify(close)}`);
+      await delay(RECONNECT_DELAY_MS * 3);
+      assert(relay.getConnectionCount() === 1, `WS ${code} retried ${relay.getConnectionCount()} times`);
+    } finally {
+      await connection.stop();
+      await relay.close();
+    }
+  }
+}
+
 async function testConcurrentSetRemote() {
   const slowPort = await findFreePort();
   const finalPort = await findFreePort();
@@ -232,6 +419,60 @@ async function testConcurrentSetRemote() {
   }
 }
 
+async function testReconnectRaceWithSetRemote() {
+  const oldPort = await findFreePort();
+  const finalPort = await findFreePort();
+  const oldRelay = await startStallingReconnectRelay(oldPort, UUID_A);
+  const finalRelay = startRelay(finalPort, UUID_B);
+  const connection = new ExtensionConnection(
+    0,
+    false,
+    { uuid: oldRelay.url },
+    undefined,
+    500,
+    RECONNECT_DELAY_MS,
+  );
+  try {
+    await connection.start();
+    await waitForEvent(connection, 'disconnected');
+    await withTimeout(oldRelay.reconnectStarted, 'stale reconnect start');
+    await connection.setRemoteUrl(finalRelay.url);
+    await finalRelay.connected;
+    await delay(RECONNECT_DELAY_MS * 3);
+    assert(connection.getRemoteConfig()?.uuid === UUID_B, 'reconnect race replaced final remote config');
+    assert(connection.getStatus() === 'connected', 'reconnect race disconnected final target');
+    assert(finalRelay.getConnectionCount() === 1, `reconnect race created ${finalRelay.getConnectionCount()} final sockets`);
+    assert(oldRelay.getUpgradeCount() === 2, `expected one stale reconnect, got ${oldRelay.getUpgradeCount() - 1}`);
+  } finally {
+    await connection.stop();
+    await oldRelay.close();
+    await finalRelay.close();
+  }
+}
+
+async function testStopCancelsQueuedSetRemote() {
+  const slowPort = await findFreePort();
+  const queuedPort = await findFreePort();
+  const slowServer = await startSilentTcpServer(slowPort);
+  const queuedRelay = startRelay(queuedPort, UUID_B);
+  const connection = new ExtensionConnection(0, false, undefined, undefined, 500, RECONNECT_DELAY_MS);
+  try {
+    const active = connection.setRemoteUrl(`ws://${HOST}:${slowPort}/${UUID_A}`);
+    const queued = connection.setRemoteUrl(queuedRelay.url);
+    await delay(25);
+    await connection.stop();
+    await expectReject(() => active, /closed before the connection was established|connection closed/i, 'active set_remote after stop');
+    await expectReject(() => queued, /Connection closed/, 'queued set_remote after stop');
+    await delay(RECONNECT_DELAY_MS * 2);
+    assert(queuedRelay.getConnectionCount() === 0, 'queued set_remote connected after stop');
+    assert(connection.getStatus() === 'disconnected', 'queued set_remote changed stopped status');
+  } finally {
+    await connection.stop();
+    await slowServer.close();
+    await queuedRelay.close();
+  }
+}
+
 async function testStopWhileConnecting() {
   const port = await findFreePort();
   const server = await startSilentTcpServer(port);
@@ -256,36 +497,47 @@ async function testStopWhileConnecting() {
   }
 }
 
-async function testHttpHandshakeRejection() {
-  const port = await findFreePort();
-  let attempts = 0;
-  const server = http.createServer();
-  server.on('upgrade', (_request, socket) => {
-    attempts += 1;
-    socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
-  });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(port, HOST, resolve);
-  });
-  const connection = new ExtensionConnection(0, false, {
-    uuid: UUID_A,
-    relayUrl: `ws://${HOST}:${port}`,
-  }, undefined, 500);
-  try {
-    await expectReject(() => connection.start(), /HTTP 403/, 'HTTP relay rejection');
-    await delay(2_250);
-    assert(attempts === 1, `HTTP 403 rejection retried ${attempts} times`);
-  } finally {
-    await connection.stop();
-    await new Promise((resolve) => server.close(resolve));
+async function testHttpHandshakeRejectionMatrix() {
+  for (const { status, permanent } of [
+    { status: 403, permanent: true },
+    { status: 408, permanent: false },
+    { status: 429, permanent: false },
+  ]) {
+    const port = await findFreePort();
+    const relay = await startHttpRejectingRelay(port, status);
+    const connection = new ExtensionConnection(0, false, {
+      uuid: UUID_A,
+      relayUrl: `ws://${HOST}:${port}`,
+    }, undefined, 500, RECONNECT_DELAY_MS);
+    try {
+      await expectReject(() => connection.start(), new RegExp(`HTTP ${status}`), `HTTP ${status} relay rejection`);
+      await delay(RECONNECT_DELAY_MS * 3);
+      const attempts = relay.getAttempts();
+      if (permanent) {
+        assert(attempts === 1, `HTTP ${status} retried ${attempts} times`);
+      } else {
+        assert(attempts >= 2, `HTTP ${status} did not retry: ${attempts} attempt(s)`);
+      }
+      const lastClose = connection.getLastClose();
+      assert(lastClose?.code === status, `HTTP ${status} diagnostic was overwritten: ${JSON.stringify(lastClose)}`);
+      assert(lastClose?.reason.includes(`HTTP ${status}`), `HTTP ${status} reason was overwritten: ${JSON.stringify(lastClose)}`);
+    } finally {
+      await connection.stop();
+      await relay.close();
+    }
   }
 }
 
 await testUrlValidation();
+testRetryPolicyMatrix();
+testCaseInsensitiveRedaction();
 await testHandshakeTimeout();
+await testUntrustedRelayErrorRedaction();
 await testStateCleanupAndPermanentClose();
+await testPermanentRelayCloseMatrix();
 await testConcurrentSetRemote();
+await testReconnectRaceWithSetRemote();
+await testStopCancelsQueuedSetRemote();
 await testStopWhileConnecting();
-await testHttpHandshakeRejection();
+await testHttpHandshakeRejectionMatrix();
 console.log('remote lifecycle e2e ok');

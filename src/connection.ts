@@ -39,7 +39,12 @@ export const REDACTED_REMOTE_ID = '[redacted]';
 
 const DEFAULT_RELAY_URL = 'wss://relay.api.vibebrowser.app';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const PERMANENT_RELAY_CLOSE_CODES = new Set([1002, 1003, 1007, 1008, 4001, 4003, 4401, 4403]);
+const PERMANENT_RELAY_CLOSE_CODES = new Set([
+  1002, 1003, 1007, 1008,
+  4001, 4003, 4004, 4009,
+  4401, 4403,
+]);
+const PERMANENT_RELAY_HTTP_STATUS_CODES = new Set([400, 401, 403, 404]);
 
 /**
  * Remote relay configuration.
@@ -62,6 +67,36 @@ export interface RelayCloseInfo {
   code: number;
   reason: string;
   permanent: boolean;
+}
+
+export function isPermanentRelayCloseCode(code: number): boolean {
+  return PERMANENT_RELAY_CLOSE_CODES.has(code);
+}
+
+export function isPermanentRelayHttpStatus(statusCode: number): boolean {
+  return PERMANENT_RELAY_HTTP_STATUS_CODES.has(statusCode);
+}
+
+export function redactRemoteTarget(message: string, target?: string): string {
+  if (!target) {
+    return message;
+  }
+
+  const candidates = new Set([target]);
+  try {
+    const parsed = new URL(target);
+    const uuid = parsed.pathname.split('/').filter(Boolean).at(-1);
+    if (uuid) candidates.add(uuid);
+  } catch {
+    // A bare UUID is already included as the target candidate.
+  }
+
+  return [...candidates]
+    .sort((a, b) => b.length - a.length)
+    .reduce((redacted, candidate) => {
+      const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return redacted.replace(new RegExp(escaped, 'gi'), REDACTED_REMOTE_ID);
+    }, message);
 }
 
 function isRemoteRelayUrl(value: string): boolean {
@@ -204,6 +239,8 @@ export class ExtensionConnection extends EventEmitter {
   private localSessionConfig: LocalSessionConfig;
   private stopping = false;
   private connectionGeneration = 0;
+  private lifecycleEpoch = 0;
+  private shutdownEpoch = 0;
   private remoteUpdate: Promise<void> = Promise.resolve();
   private reconnectSuppressed = false;
   private lastClose: { code: number; reason: string } | null = null;
@@ -215,6 +252,7 @@ export class ExtensionConnection extends EventEmitter {
     remote?: RemoteConfig,
     localSessionConfig?: LocalSessionConfig,
     handshakeTimeoutMs: number = DEFAULT_RELAY_HANDSHAKE_TIMEOUT_MS,
+    private readonly reconnectDelayMs: number = RELAY_RECONNECT_DELAY,
   ) {
     super();
     this.port = port;
@@ -232,9 +270,10 @@ export class ExtensionConnection extends EventEmitter {
   async start(): Promise<void> {
     this.stopping = false;
     this.reconnectSuppressed = false;
+    const lifecycleEpoch = ++this.lifecycleEpoch;
     if (this.remoteConfig) {
       this.log('Remote mode: connecting to configured relay target');
-      await this.connectToRelay();
+      await this.connectToRelay(lifecycleEpoch);
       return;
     }
 
@@ -247,14 +286,22 @@ export class ExtensionConnection extends EventEmitter {
     }
 
     // Connect to relay
-    await this.connectToRelay();
+    await this.connectToRelay(lifecycleEpoch);
   }
 
   async setRemoteUrl(url: string): Promise<ParsedRemoteRelayUrl> {
+    if (this.stopping) {
+      throw new Error('Connection closed');
+    }
+    const shutdownEpoch = this.shutdownEpoch;
     const update = this.remoteUpdate.then(async () => {
-      const parsed = parseRemoteTarget(url, this.remoteConfig?.relayUrl);
+      if (this.stopping || shutdownEpoch !== this.shutdownEpoch) {
+        throw new Error('Connection closed');
+      }
 
-      this.stopping = true;
+      const parsed = parseRemoteTarget(url, this.remoteConfig?.relayUrl);
+      const lifecycleEpoch = ++this.lifecycleEpoch;
+
       this.clearReconnectTimer();
       this.rejectPendingRequests(new Error('Remote relay changed'));
       this.closeSocket();
@@ -265,8 +312,7 @@ export class ExtensionConnection extends EventEmitter {
       this.reconnectSuppressed = false;
       this.clearExtensionState();
 
-      this.stopping = false;
-      await this.connectToRelay();
+      await this.connectToRelay(lifecycleEpoch);
       return parsed;
     });
 
@@ -358,13 +404,30 @@ export class ExtensionConnection extends EventEmitter {
   /**
    * Connect to the relay server (local or remote)
    */
-  private async connectToRelay(): Promise<void> {
+  private async connectToRelay(lifecycleEpoch: number): Promise<void> {
+    if (this.stopping || lifecycleEpoch !== this.lifecycleEpoch) {
+      throw new Error('Relay connection superseded');
+    }
+    if (this.ws) {
+      if (this.status === 'connected') {
+        return;
+      }
+      throw new Error('Relay connection already in progress');
+    }
+
     return new Promise((resolve, reject) => {
       const url = this.getRelayUrl();
       const generation = ++this.connectionGeneration;
       let settled = false;
       let handshakeTimer: NodeJS.Timeout | null = null;
+      let handshakeFailure: { error: Error; info: RelayCloseInfo } | null = null;
+      let ws: WebSocket;
       this.log(this.remoteConfig ? 'Connecting to configured remote relay...' : `Connecting to local relay at ${url}...`);
+
+      const isCurrent = () => lifecycleEpoch === this.lifecycleEpoch
+        && generation === this.connectionGeneration
+        && this.ws === ws
+        && url === this.getRelayUrl();
 
       const settleResolve = () => {
         if (settled) return;
@@ -380,7 +443,7 @@ export class ExtensionConnection extends EventEmitter {
       };
 
       try {
-        const ws = new WebSocket(url);
+        ws = new WebSocket(url);
         this.ws = ws;
         this.status = 'connecting';
         handshakeTimer = setTimeout(() => {
@@ -393,7 +456,7 @@ export class ExtensionConnection extends EventEmitter {
         }, this.handshakeTimeoutMs);
 
         ws.on('open', () => {
-          if (generation !== this.connectionGeneration || this.ws !== ws) {
+          if (!isCurrent()) {
             ws.terminate();
             settleReject(new Error('Relay connection superseded'));
             return;
@@ -406,7 +469,7 @@ export class ExtensionConnection extends EventEmitter {
         });
 
         ws.on('message', (data) => {
-          if (generation !== this.connectionGeneration || this.ws !== ws) {
+          if (!isCurrent()) {
             return;
           }
           try {
@@ -419,32 +482,38 @@ export class ExtensionConnection extends EventEmitter {
 
         ws.on('close', (code, reasonBuffer) => {
           const reason = reasonBuffer.toString();
-          const closeError = new Error(this.formatCloseMessage(code, reason));
+          const safeReason = this.redactRemoteCredential(reason);
+          const closeInfo = handshakeFailure?.info ?? {
+            code,
+            reason: safeReason,
+            permanent: isPermanentRelayCloseCode(code),
+          };
+          const closeError = handshakeFailure?.error ?? new Error(this.formatCloseMessage(code, reason));
           settleReject(closeError);
 
-          if (generation !== this.connectionGeneration || this.ws !== ws) {
+          if (!isCurrent()) {
             return;
           }
 
-          const safeReason = this.redactRemoteCredential(reason);
-          this.lastClose = { code, reason: safeReason };
-          this.reconnectSuppressed = this.reconnectSuppressed || PERMANENT_RELAY_CLOSE_CODES.has(code);
-          this.log(this.formatCloseMessage(code, reason));
+          this.lastClose = { code: closeInfo.code, reason: closeInfo.reason };
+          this.reconnectSuppressed = closeInfo.permanent;
+          if (!handshakeFailure) {
+            this.log(this.formatCloseMessage(code, reason));
+          }
           this.ws = null;
           this.status = 'disconnected';
           this.rejectPendingRequests(closeError);
           this.clearExtensionState();
-          this.emit('disconnected', { code, reason: safeReason, permanent: this.reconnectSuppressed });
+          this.emit('disconnected', closeInfo);
 
           if (!this.stopping && !this.reconnectSuppressed) {
-            // Schedule reconnect
-            this.scheduleReconnect();
+            this.scheduleReconnect(lifecycleEpoch);
           }
         });
 
         ws.on('error', (error) => {
           const safeError = new Error(this.redactRemoteCredential(error.message));
-          if (generation === this.connectionGeneration && this.ws === ws) {
+          if (isCurrent()) {
             this.log(`WebSocket error: ${safeError.message}`);
           }
           settleReject(safeError);
@@ -453,8 +522,13 @@ export class ExtensionConnection extends EventEmitter {
         ws.on('unexpected-response', (_request, response) => {
           const statusCode = response.statusCode ?? 0;
           const safeError = new Error(`Relay handshake rejected with HTTP ${statusCode || 'unknown status'}`);
-          if (generation === this.connectionGeneration && this.ws === ws) {
-            this.reconnectSuppressed = statusCode >= 400 && statusCode < 500;
+          const permanent = isPermanentRelayHttpStatus(statusCode);
+          handshakeFailure = {
+            error: safeError,
+            info: { code: statusCode, reason: safeError.message, permanent },
+          };
+          if (isCurrent()) {
+            this.reconnectSuppressed = permanent;
             this.lastClose = { code: statusCode, reason: safeError.message };
             this.status = 'disconnected';
             this.log(safeError.message);
@@ -474,8 +548,8 @@ export class ExtensionConnection extends EventEmitter {
   /**
    * Schedule reconnection attempt
    */
-  private scheduleReconnect(): void {
-    if (this.stopping || this.reconnectSuppressed) {
+  private scheduleReconnect(lifecycleEpoch: number): void {
+    if (this.stopping || this.reconnectSuppressed || lifecycleEpoch !== this.lifecycleEpoch || this.ws) {
       return;
     }
     if (this.reconnectTimer) {
@@ -483,14 +557,18 @@ export class ExtensionConnection extends EventEmitter {
     }
 
     this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
+      if (this.stopping || this.reconnectSuppressed || lifecycleEpoch !== this.lifecycleEpoch || this.ws) {
+        return;
+      }
       this.log('Attempting to reconnect to relay...');
       try {
-        await this.connectToRelay();
+        await this.connectToRelay(lifecycleEpoch);
       } catch (error) {
         this.log(`Reconnect failed: ${error}`);
-        this.scheduleReconnect();
+        this.scheduleReconnect(lifecycleEpoch);
       }
-    }, RELAY_RECONNECT_DELAY);
+    }, this.reconnectDelayMs);
   }
 
   /**
@@ -498,6 +576,8 @@ export class ExtensionConnection extends EventEmitter {
    */
   async stop(): Promise<void> {
     this.stopping = true;
+    ++this.shutdownEpoch;
+    ++this.lifecycleEpoch;
     this.clearReconnectTimer();
 
     this.rejectPendingRequests(new Error('Connection closed'));
@@ -591,7 +671,7 @@ export class ExtensionConnection extends EventEmitter {
         this.pendingRequests.delete(message.requestId);
 
         if (message.type === 'error') {
-          pending.reject(new Error(message.error || 'Unknown error'));
+          pending.reject(new Error(this.redactRemoteCredential(message.error || 'Unknown error')));
         } else {
           let payload: unknown = message.data;
           if (message.type === 'sessions_list') {
@@ -850,11 +930,11 @@ export class ExtensionConnection extends EventEmitter {
   }
 
   private redactRemoteCredential(message: string): string {
-    const uuid = this.remoteConfig?.uuid;
-    if (!uuid) {
-      return message;
-    }
-    return message.split(uuid).join(REDACTED_REMOTE_ID);
+    return redactRemoteTarget(message, this.remoteConfig ? this.getRelayUrl() : undefined);
+  }
+
+  redactErrorMessage(message: string): string {
+    return this.redactRemoteCredential(message);
   }
 
   private formatCloseMessage(code: number, reason: string): string {

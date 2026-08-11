@@ -15,7 +15,7 @@ import {
   isInitializeRequest,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { ExtensionConnection, type RemoteConfig } from './connection.js';
+import { ExtensionConnection, redactRemoteTarget, type RemoteConfig } from './connection.js';
 import { ChromeUseConnection } from './chrome-use-connection.js';
 import {
   DEFAULT_HTTP_PATH,
@@ -300,7 +300,9 @@ export class VibeMcpServer {
         try {
           return await this.handleSetRemoteTool(toRecord(args));
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const rawMessage = error instanceof Error ? error.message : String(error);
+          const target = typeof args?.url === 'string' ? args.url : undefined;
+          const message = redactRemoteTarget(rawMessage, target);
           return {
             content: [{ type: 'text', text: `Error: ${message}` }],
             isError: true,
@@ -329,7 +331,10 @@ export class VibeMcpServer {
           isError: enriched.isError,
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const rawMessage = error instanceof Error ? error.message : String(error);
+        const message = this.connection instanceof ExtensionConnection
+          ? this.connection.redactErrorMessage(rawMessage)
+          : rawMessage;
         return {
           content: [{ type: 'text', text: `Error: ${message}` }],
           isError: true,

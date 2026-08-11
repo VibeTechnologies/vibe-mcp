@@ -382,6 +382,26 @@ async function main() {
       throw new Error(`Unexpected relay B tool result: ${JSON.stringify(callResultB)}`);
     }
 
+    const redactedErrorRequestPromise = waitForWebSocketMessage(
+      extensionWsB,
+      (message) => message.type === 'call_tool' && message.data?.name === 'echo_b',
+    );
+    const redactedErrorResultPromise = client.callTool({
+      name: 'echo_b',
+      arguments: { text: 'reject' },
+    });
+    const redactedErrorRequest = await redactedErrorRequestPromise;
+    extensionWsB.send(JSON.stringify({
+      type: 'error',
+      requestId: redactedErrorRequest.requestId,
+      error: `Relay rejected ${REMOTE_UUID_B.toUpperCase()}`,
+    }));
+    const redactedErrorResult = await withTimeout(redactedErrorResultPromise, 'redacted relay error response');
+    const redactedErrorText = redactedErrorResult.content.find((item) => item.type === 'text')?.text ?? '';
+    if (!redactedErrorText.includes('[redacted]') || redactedErrorText.toLowerCase().includes(REMOTE_UUID_B.toLowerCase())) {
+      throw new Error(`MCP error leaked relay credential: ${JSON.stringify(redactedErrorResult)}`);
+    }
+
     await withTimeout(client.close(), 'MCP client close');
     console.log('http e2e ok');
   } finally {

@@ -48,7 +48,7 @@ The browser-automation MCP space moved fast. Most of what used to differentiate 
 
 Two rows are ours alone:
 
-- **Outbound, cross-machine control.** The Vibe extension opens an outbound WebSocket to a relay (`wss://relay.api.vibebrowser.app/<uuid>`). Nothing listens on the user's machine, nothing is port-forwarded, and the agent can live in a pod, a cron job, or a chat bot. No competitor documents an extension-initiated outbound connection to a remote MCP server.
+- **Outbound, cross-machine control.** The Vibe extension opens an outbound WebSocket to a relay (`wss://relay.api.vibebrowser.app/<uuid>`). Nothing listens on the user's machine, nothing is port-forwarded, and the agent can live in a pod, a cron job, or a chat bot. No competitor documents an extension-initiated outbound connection to a remote relay.
 - **Real profile without the dialog tax.** Chrome DevTools MCP needs approval for *each* WebSocket connection to Chrome ([#1794][cdp-1794], open; persistence was [closed won't-fix][cdp-825]). The maintainer's workaround — `--remote-debugging-port` with a dedicated `--user-data-dir` — avoids the dialog by giving up your logged-in profile. So: **skip the dialog, or use your real profile — not both.**
 
 Also worth knowing:
@@ -70,7 +70,7 @@ Also worth knowing:
 
 ### Multi-Agent Architecture
 
-Run Claude Desktop, Cursor, VS Code Copilot, and OpenCode at once — they share control of one browser through the relay, which multiplexes requests and routes each response back to the agent that asked.
+Run Claude Desktop, Cursor, VS Code Copilot, and OpenCode at once. Each client starts a local `@vibebrowser/mcp` process over stdio; those processes share the browser connection through the relay.
 
 ```
 Claude Desktop       Cursor          VS Code         OpenCode
@@ -81,7 +81,7 @@ Claude Desktop       Cursor          VS Code         OpenCode
      +------------------+----------------+---------------+
                         |
                         v
-                  [Relay Daemon]  <-- Auto-spawned, handles multiplexing
+                     [Local Relay]
                         |
                         v
                  [Vibe Extension]
@@ -132,7 +132,7 @@ Edit your Claude Desktop config file:
   "mcpServers": {
     "vibe": {
       "command": "npx",
-      "args": ["-y", "@vibebrowser/mcp"]
+      "args": ["-y", "@vibebrowser/mcp@latest", "start", "--remote", "wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"]
     }
   }
 }
@@ -145,34 +145,34 @@ Restart Claude Desktop after saving.
 <details>
 <summary><strong>Cursor</strong></summary>
 
-1. Open Cursor Settings (Cmd/Ctrl + ,)
-2. Go to "Features" -> "MCP Servers"
-3. Click "Add Server" and add:
+Edit `~/.cursor/mcp.json` (or use the Cursor MCP settings UI):
 
 ```json
 {
-  "vibe": {
-    "command": "npx",
-    "args": ["-y", "@vibebrowser/mcp"]
+  "mcpServers": {
+    "vibebrowser": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@vibebrowser/mcp@latest", "start", "--remote", "wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"]
+    }
   }
 }
 ```
-
-Or edit `~/.cursor/mcp.json` directly.
 
 </details>
 
 <details>
 <summary><strong>VS Code (GitHub Copilot)</strong></summary>
 
-Add to your VS Code settings.json:
+Edit `.vscode/mcp.json` (or run `MCP: Open User Configuration`):
 
 ```json
 {
-  "github.copilot.chat.mcpServers": {
-    "vibe": {
+  "servers": {
+    "vibebrowser": {
+      "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@vibebrowser/mcp"]
+      "args": ["-y", "@vibebrowser/mcp@latest", "start", "--remote", "wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"]
     }
   }
 }
@@ -190,7 +190,7 @@ Edit `~/.codeium/windsurf/mcp_config.json`:
   "mcpServers": {
     "vibe": {
       "command": "npx",
-      "args": ["-y", "@vibebrowser/mcp"]
+      "args": ["-y", "@vibebrowser/mcp@latest", "start", "--remote", "wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"]
     }
   }
 }
@@ -201,16 +201,16 @@ Edit `~/.codeium/windsurf/mcp_config.json`:
 <details>
 <summary><strong>OpenCode</strong></summary>
 
-Add to your `.opencode/config.json`:
+Add to your OpenCode configuration:
 
 ```json
 {
+  "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "servers": {
-      "vibe": {
-        "command": "npx",
-        "args": ["-y", "@vibebrowser/mcp"]
-      }
+    "vibebrowser": {
+      "type": "local",
+      "command": ["npx", "-y", "@vibebrowser/mcp@latest", "start", "--remote", "wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"],
+      "enabled": true
     }
   }
 }
@@ -228,7 +228,7 @@ Add to `~/.gemini/settings.json`:
   "mcpServers": {
     "vibe": {
       "command": "npx",
-      "args": ["-y", "@vibebrowser/mcp"]
+      "args": ["-y", "@vibebrowser/mcp@latest", "start", "--remote", "wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"]
     }
   }
 }
@@ -244,18 +244,18 @@ All three share one config file: `~/.codex/config.toml`. Configure once, use eve
 Easiest — let Codex write the entry:
 
 ```bash
-codex mcp add vibe -- npx -y @vibebrowser/mcp
+codex mcp add vibebrowser -- npx -y @vibebrowser/mcp@latest start --remote wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000
 ```
 
 Or add the table to `~/.codex/config.toml` by hand (Codex uses **TOML**, not JSON):
 
 ```toml
-[mcp_servers.vibe]
+[mcp_servers.vibebrowser]
 command = "npx"
-args = ["-y", "@vibebrowser/mcp"]
+args = ["-y", "@vibebrowser/mcp@latest", "start", "--remote", "wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"]
 ```
 
-In the ChatGPT desktop app you can also use the UI: **Settings → MCP servers → Add server**, choose **STDIO**, command `npx`, args `-y @vibebrowser/mcp`, then **Restart**.
+In the ChatGPT desktop app you can also use the UI: **Settings -> MCP servers -> Add server**, choose **STDIO**, command `npx`, and enter each argument separately: `-y`, `@vibebrowser/mcp@latest`, `start`, `--remote`, and the full placeholder WSS URL above. Then restart the app.
 
 Verify with `codex mcp list`, or type `/mcp` in the Codex TUI or the desktop composer.
 
@@ -280,7 +280,7 @@ npx -y -p @vibebrowser/mcp@latest vibebrowser-mcp --help
 npx -y -p @vibebrowser/mcp@latest vibe-mcp --help
 ```
 
-### Remote connector (hosted assistants — no install)
+### Hosted remote MCP (no local process)
 
 Everything above assumes the client can spawn a local process. Hosted
 assistants cannot: Claude on the web / in Cowork / on mobile, and ChatGPT on
@@ -291,10 +291,10 @@ no custom request headers.
 For those, skip `@vibebrowser/mcp` entirely. The extension alone is enough:
 
 ```
-https://relay.api.vibebrowser.app/mcp/<your-extension-uuid>
+https://mcp.api.vibebrowser.app/mcp/00000000-0000-0000-0000-000000000000
 ```
 
-Find `<your-extension-uuid>` in the extension: **Vibe icon → Settings → Agent
+Replace the placeholder UUID with the value from **Vibe icon -> Settings -> Agent
 connection URL**. It is the same UUID the CLI takes as
 `--remote wss://relay.api.vibebrowser.app/<uuid>`.
 
@@ -307,12 +307,6 @@ Where to paste it:
 
 Custom connectors are a paid-plan feature in both products.
 
-The relay also accepts the UUID as an `X-Remote-Session` or
-`Authorization: Bearer` header on a bare `POST /mcp`. Use the header form from
-anything that can send one (Codex CLI, scripts) — it keeps the credential out
-of URLs, logs, and browser history. The path form exists specifically for the
-UIs that cannot send a header.
-
 **Two things this path costs you, stated plainly:**
 
 1. **The URL is a credential.** Anyone who has that UUID can drive your
@@ -321,11 +315,11 @@ UIs that cannot send a header.
    a shared chat, an issue, a README, or a screenshot. If it leaks, revoke the
    session in the extension and generate a new one. (This is not hypothetical:
    a dev machine's UUID once shipped in these very docs.)
-2. **Page content leaves your machine.** On the local STDIO path, tool calls
-   and page content never leave `127.0.0.1`. On the remote-connector path they
-   traverse `relay.api.vibebrowser.app`, because the assistant is in the
-   vendor's cloud and has no other route to your browser. If you need
-   on-device-only, use a desktop client with the local server instead.
+2. **Page content leaves your machine on remote paths.** Only default local
+   stdio without `--remote` keeps browser-facing traffic on `127.0.0.1`. A
+   stdio MCP server configured with `--remote` sends that traffic over WSS. With
+   hosted MCP, browser traffic passes through the hosted MCP service and relay.
+   If you need on-device-only, use default local stdio without `--remote`.
 
 ### 3. Connect the Extension
 
@@ -399,19 +393,18 @@ Claude / Cursor / VS Code (stdio)
 3. The relay forwards commands to the extension on port `19889`
 4. Results flow back to the agent
 
-### Two legs, two protocols
+### Three supported paths
 
-Don't conflate them — the transport to the MCP server is configurable, the transport to the extension is not.
+Do not conflate the relay WebSocket protocol with MCP. The relay carries proprietary project JSON messages such as `list_tools`, `call_tool`, and `tool_result`; it does not carry MCP over WebSocket.
 
-| Leg | Protocol | Configurable? |
+| Path | Client-facing transport | Browser-facing transport |
 |---|---|---|
-| MCP client → `vibebrowser-mcp` | stdio **or** streamable HTTP | Yes — `--transport stdio\|http` |
-| `vibebrowser-mcp` ↔ relay ↔ extension | WebSocket only | No |
+| Direct `@vibebrowser/cli` | CLI process | `src/browser-cli.ts` -> `ExtensionConnection` -> WS/WSS relay JSON |
+| Local `@vibebrowser/mcp` | MCP over stdio (default) or Streamable HTTP at `http://127.0.0.1:8788/mcp` | `ExtensionConnection` -> local `ws://127.0.0.1:19888` or remote WS/WSS with `--remote` |
+| Hosted remote MCP | Streamable HTTP at `https://mcp.api.vibebrowser.app/mcp/<uuid>` | Hosted service routes to the extension relay |
 
 ```
-MCP client ──stdio──┐
-                    ├──> [vibebrowser-mcp] ──ws──> [relay] ──ws──> [extension]
-MCP client ──http───┘
+MCP client --stdio/http--> [vibebrowser-mcp] --project JSON over WS/WSS--> [relay] --> [extension]
 ```
 
 Streamable HTTP lets a remote or hosted agent — one that can't spawn a stdio
@@ -435,16 +428,14 @@ When multiple agents connect, Vibe MCP automatically spawns a relay daemon:
 - Relay multiplexes all agent requests to the single extension connection
 - Each agent receives only its own responses
 
-### Cloud OpenClaw -> Local Browser
+### Remote relay target
 
-> ⚠️ **Security:** The `--remote` value below is a live credential — a relay URL/UUID grants full control of the target browser session. It is the *sole* bearer credential (there is no second-factor token). Treat it like a password: keep it secret, never commit it or paste it into logs, and if it leaks, regenerate it in the Vibe extension Settings.
+> **Security:** The UUID path in `--remote` is a bearer capability. Treat the complete URL as a secret. There is no separate shared secret, authorization header, or query-string credential.
 
 If your agent runs in the cloud but you want it to control the user's real local browser, run `vibebrowser-mcp` in HTTP mode and connect it to the Vibe extension in remote relay mode. Pass either the extension UUID or the full WebSocket relay URL to `--remote`.
 
 ```bash
-VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-npx -y @vibebrowser/mcp@latest start --transport http --remote "$VIBE_REMOTE_UUID"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"
 npx -y @vibebrowser/mcp@latest start --transport http --remote "$VIBE_REMOTE_URL"
 ```
 
@@ -453,34 +444,28 @@ This exposes a local MCP endpoint at `http://127.0.0.1:8788/mcp` by default.
 When OpenClaw runs on a different machine (for example cloud-hosted), provide a reachable URL:
 
 ```bash
-VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"
 PUBLIC_MCP_URL="https://browser-bridge.example.com/mcp"
-npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID" --public-url "$PUBLIC_MCP_URL"
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL" --public-url "$PUBLIC_MCP_URL"
 ```
 
 You can print the exact OpenClaw-friendly setup with:
 
 ```bash
-VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_UUID"
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"
 npx -y @vibebrowser/mcp@latest openclaw --remote "$VIBE_REMOTE_URL"
 ```
 
-Use `--remote <uuid>` with the default public relay, or `--remote <full-ws-url>` when you need an explicit relay endpoint. The UUID is the only credential — never share it, log it, or paste it into an untrusted chat.
+Use `--remote <uuid>` with the default public relay, or `--remote <full-ws-url>` for an explicit relay endpoint. Source validation rejects relay URLs containing userinfo, query strings, or fragments.
 
 For direct browser CLI checks, always use `npx -y @vibebrowser/cli@latest`:
 
 ```bash
-VIBE_REMOTE_UUID="YOUR-EXTENSION-UUID"
-VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/YOUR-EXTENSION-UUID"
-npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_UUID" --json status
+VIBE_REMOTE_URL="wss://relay.api.vibebrowser.app/00000000-0000-0000-0000-000000000000"
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json status
 ```
 
-`--remote <uuid>` uses the default public relay. `--remote <full-ws-url>` targets an explicit relay endpoint. No second-factor secret is needed or accepted — the UUID alone authorizes the session.
+`@vibebrowser/cli` calls `ExtensionConnection` directly and exchanges project JSON messages over WS/WSS. This is explicitly not MCP-over-WebSocket.
 
 For the full walkthrough, see `docs/openclaw-local-browser.md`.
 

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
-import { ExtensionConnection } from './connection.js';
+import { ExtensionConnection, REDACTED_REMOTE_ID } from './connection.js';
 import { ChromeUseConnection, type CdpConnector } from './chrome-use-connection.js';
 import { DEFAULT_WS_PORT, type RelaySessionSummary, type ToolDefinition, type ToolResult } from './types.js';
 
@@ -661,6 +661,9 @@ export class BrowserCliContext {
       : false;
     const extensionConnected = this.isBackendConnected();
     const shouldFailClosed = failIfDisconnected && Boolean(this.remoteUuid) && !extensionConnected;
+    const relayClose = this.connection instanceof ExtensionConnection
+      ? this.connection.getLastClose()
+      : null;
 
     return {
       ok: !shouldFailClosed,
@@ -673,6 +676,9 @@ export class BrowserCliContext {
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       relayConnected,
       extensionConnected,
+      ...(relayClose
+        ? { relayCloseCode: relayClose.code, relayCloseReason: relayClose.reason }
+        : {}),
       managedLifecycle: false,
       transport: 'vibebrowser-mcp',
       toolCount: this.tools.length,
@@ -1437,9 +1443,7 @@ export class BrowserCliContext {
       return undefined;
     }
     if (this.remoteUuid) {
-      return this.connection instanceof ExtensionConnection
-        ? this.connection.getRemoteConfig()?.uuid ?? this.remoteUuid
-        : this.remoteUuid;
+      return REDACTED_REMOTE_ID;
     }
 
     const connectedSessionIds = new Set(
@@ -1739,6 +1743,8 @@ function formatHumanOutput(commandName: string, output: CommandOutput): string {
         output.sessionId ? `Session: ${String(output.sessionId)}` : null,
         output.requestedSessionId && output.requestedSessionId !== output.sessionId ? `Requested session: ${String(output.requestedSessionId)}` : null,
         `Relay connected: ${boolText(output.relayConnected)}`,
+        output.relayCloseCode !== undefined ? `Relay close code: ${String(output.relayCloseCode)}` : null,
+        output.relayCloseReason ? `Relay close reason: ${String(output.relayCloseReason)}` : null,
         `Extension connected: ${boolText(output.extensionConnected)}`,
         `Managed lifecycle: ${boolText(output.managedLifecycle)}`,
         output.toolCount !== undefined ? `Tools: ${String(output.toolCount)}` : null,

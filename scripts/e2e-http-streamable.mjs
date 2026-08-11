@@ -21,8 +21,8 @@ RESERVED_PORTS.add(RELAY_PORT);
 const RELAY_PORT_B = await findFreePort(RESERVED_PORTS);
 const RELAY_URL = `ws://${RELAY_HOST}:${RELAY_PORT}`;
 const RELAY_URL_B = `ws://${RELAY_HOST}:${RELAY_PORT_B}`;
-const REMOTE_UUID = 'test-http-relay-uuid';
-const REMOTE_UUID_B = 'test-http-relay-uuid-b';
+const REMOTE_UUID = '22222222-2222-4222-8222-222222222222';
+const REMOTE_UUID_B = '33333333-3333-4333-8333-333333333333';
 const SESSION_ID = REMOTE_UUID;
 const SESSION_ID_B = REMOTE_UUID_B;
 const MCP_URL = `http://${RELAY_HOST}:${MCP_HTTP_PORT}/mcp`;
@@ -314,8 +314,11 @@ async function main() {
       throw new Error(`Expected set_remote text result: ${JSON.stringify(setRemoteResult)}`);
     }
     const setRemotePayload = JSON.parse(setRemoteText.text);
-    if (setRemotePayload.ok !== true || setRemotePayload.mode !== 'remote' || setRemotePayload.relayUrl !== RELAY_URL_B || setRemotePayload.uuid !== REMOTE_UUID_B) {
+    if (setRemotePayload.ok !== true || setRemotePayload.mode !== 'remote' || setRemotePayload.target !== '[redacted]') {
       throw new Error(`Unexpected set_remote payload: ${JSON.stringify(setRemotePayload)}`);
+    }
+    if (setRemoteText.text.includes(REMOTE_UUID_B) || setRemoteText.text.includes(RELAY_URL_B)) {
+      throw new Error(`set_remote payload leaked relay credential: ${setRemoteText.text}`);
     }
 
     const listToolsBPromise = waitForWebSocketMessage(

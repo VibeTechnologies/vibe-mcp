@@ -9,6 +9,7 @@
 
 import { program } from 'commander';
 import { registerBrowserCommand } from './browser-cli.js';
+import { normalizeRemoteConfig } from './connection.js';
 import { createServer } from './server.js';
 import {
   DEFAULT_HTTP_PATH,
@@ -84,6 +85,7 @@ program
   .option('--allow-host <host>', 'Allowed host header for HTTP transport (repeatable)', collectRepeatedOption, [])
   .action((options) => {
     try {
+      normalizeRemoteConfig({ uuid: String(options.remote) });
       const httpPort = parsePort(options.httpPort, 'HTTP port');
       const httpPath = normalizePath(options.httpPath);
       const host = options.host;
@@ -105,7 +107,7 @@ program
         '--http-path',
         httpPath,
         '--remote',
-        options.remote,
+        '"$VIBE_REMOTE_URL"',
       ];
 
       for (const allowedHost of options.allowHost as string[]) {
@@ -121,6 +123,7 @@ program
       };
 
       console.log('Start a local bridge on the machine running the Vibe extension:');
+      console.log('Set VIBE_REMOTE_URL securely to the UUID or full relay URL, then run:');
       console.log(`npx ${cliArgs.join(' ')}`);
       console.log('');
       console.log('Local bridge MCP URL:');

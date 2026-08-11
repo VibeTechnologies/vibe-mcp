@@ -34,9 +34,12 @@ const NO_CONNECTION_REMOTE_MESSAGE = `No connection to Vibe extension via remote
 
 const RELAY_CONNECT_TIMEOUT = 10000;
 const RELAY_RECONNECT_DELAY = 2000;
+export const DEFAULT_RELAY_HANDSHAKE_TIMEOUT_MS = 10_000;
+export const REDACTED_REMOTE_ID = '[redacted]';
 
 const DEFAULT_RELAY_URL = 'wss://relay.api.vibebrowser.app';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PERMANENT_RELAY_CLOSE_CODES = new Set([1002, 1003, 1007, 1008, 4001, 4003, 4401, 4403]);
 
 /**
  * Remote relay configuration.
@@ -55,8 +58,53 @@ export interface ParsedRemoteRelayUrl {
   uuid: string;
 }
 
+export interface RelayCloseInfo {
+  code: number;
+  reason: string;
+  permanent: boolean;
+}
+
 function isRemoteRelayUrl(value: string): boolean {
   return /^wss?:\/\//i.test(value);
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+  if (normalized === 'localhost' || normalized === '::1') {
+    return true;
+  }
+
+  const octets = normalized.split('.');
+  return octets.length === 4
+    && octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255)
+    && Number(octets[0]) === 127;
+}
+
+function validateRelayUrl(parsed: URL): void {
+  if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
+    throw new Error('Invalid remote relay URL: protocol must be ws:// or wss://');
+  }
+  if (parsed.protocol === 'ws:' && !isLoopbackHostname(parsed.hostname)) {
+    throw new Error('Invalid remote relay URL: non-loopback relays must use wss://');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Invalid remote relay URL: credentials in URL are not allowed');
+  }
+  if (parsed.search || parsed.hash) {
+    throw new Error('Invalid remote relay URL: query/fragments are not allowed');
+  }
+}
+
+function normalizeRelayBaseUrl(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error('Invalid remote relay URL');
+  }
+
+  validateRelayUrl(parsed);
+  return parsed.toString().replace(/\/$/, '');
 }
 
 export function parseRemoteRelayUrl(value: string): ParsedRemoteRelayUrl {
@@ -68,22 +116,15 @@ export function parseRemoteRelayUrl(value: string): ParsedRemoteRelayUrl {
     throw new Error(`Invalid remote relay URL: ${message}`);
   }
 
-  if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') {
-    throw new Error('Invalid remote relay URL: protocol must be ws:// or wss://');
-  }
-
-  if (parsed.username || parsed.password) {
-    throw new Error('Invalid remote relay URL: credentials in URL are not allowed');
-  }
-
-  if (parsed.search || parsed.hash) {
-    throw new Error('Invalid remote relay URL: query/fragments are not allowed');
-  }
+  validateRelayUrl(parsed);
 
   const pathSegments = parsed.pathname.split('/').filter(Boolean);
   const uuid = pathSegments[pathSegments.length - 1];
   if (!uuid) {
     throw new Error('Invalid remote relay URL: missing UUID path segment');
+  }
+  if (!UUID_PATTERN.test(uuid)) {
+    throw new Error('Invalid remote relay URL: UUID path segment is not valid');
   }
 
   pathSegments.pop();
@@ -92,7 +133,7 @@ export function parseRemoteRelayUrl(value: string): ParsedRemoteRelayUrl {
   parsed.hash = '';
 
   return {
-    relayUrl: parsed.toString().replace(/\/$/, ''),
+    relayUrl: normalizeRelayBaseUrl(parsed.toString()),
     uuid,
   };
 }
@@ -107,7 +148,7 @@ function parseRemoteTarget(value: string, currentRelayUrl?: string): ParsedRemot
   }
 
   return {
-    relayUrl: (currentRelayUrl || DEFAULT_RELAY_URL).replace(/\/$/, ''),
+    relayUrl: normalizeRelayBaseUrl(currentRelayUrl || DEFAULT_RELAY_URL),
     uuid: value,
   };
 }
@@ -117,19 +158,15 @@ export function normalizeRemoteConfig(remote?: RemoteConfig): RemoteConfig | und
     return undefined;
   }
 
-  const relayUrl = remote.relayUrl?.replace(/\/$/, '');
-  if (!isRemoteRelayUrl(remote.uuid)) {
-    return { uuid: remote.uuid, relayUrl };
-  }
-
-  const parsed = parseRemoteRelayUrl(remote.uuid);
-  if (relayUrl && relayUrl !== parsed.relayUrl) {
-    throw new Error(`Remote relay URL mismatch: remote URL includes ${parsed.relayUrl}, but configured relay URL is ${relayUrl}`);
+  const relayUrl = remote.relayUrl ? normalizeRelayBaseUrl(remote.relayUrl) : undefined;
+  const parsed = parseRemoteTarget(remote.uuid, relayUrl);
+  if (relayUrl && isRemoteRelayUrl(remote.uuid) && relayUrl !== parsed.relayUrl) {
+    throw new Error('Remote relay URL mismatch');
   }
 
   return {
     uuid: parsed.uuid,
-    relayUrl: relayUrl || parsed.relayUrl,
+    relayUrl: parsed.relayUrl,
   };
 }
 
@@ -166,13 +203,25 @@ export class ExtensionConnection extends EventEmitter {
   private remoteConfig: RemoteConfig | null = null;
   private localSessionConfig: LocalSessionConfig;
   private stopping = false;
+  private connectionGeneration = 0;
+  private remoteUpdate: Promise<void> = Promise.resolve();
+  private reconnectSuppressed = false;
+  private lastClose: { code: number; reason: string } | null = null;
+  private readonly handshakeTimeoutMs: number;
 
-  constructor(port: number = AGENT_PORT, debug: boolean = false, remote?: RemoteConfig, localSessionConfig?: LocalSessionConfig) {
+  constructor(
+    port: number = AGENT_PORT,
+    debug: boolean = false,
+    remote?: RemoteConfig,
+    localSessionConfig?: LocalSessionConfig,
+    handshakeTimeoutMs: number = DEFAULT_RELAY_HANDSHAKE_TIMEOUT_MS,
+  ) {
     super();
     this.port = port;
     this.debug = debug;
     this.remoteConfig = normalizeRemoteConfig(remote) || null;
     this.localSessionConfig = localSessionConfig || {};
+    this.handshakeTimeoutMs = handshakeTimeoutMs;
   }
 
   /**
@@ -182,8 +231,9 @@ export class ExtensionConnection extends EventEmitter {
    */
   async start(): Promise<void> {
     this.stopping = false;
+    this.reconnectSuppressed = false;
     if (this.remoteConfig) {
-      this.log(`Remote mode: connecting to relay for UUID ${this.remoteConfig.uuid}`);
+      this.log('Remote mode: connecting to configured relay target');
       await this.connectToRelay();
       return;
     }
@@ -201,24 +251,27 @@ export class ExtensionConnection extends EventEmitter {
   }
 
   async setRemoteUrl(url: string): Promise<ParsedRemoteRelayUrl> {
-    const parsed = parseRemoteTarget(url, this.remoteConfig?.relayUrl);
+    const update = this.remoteUpdate.then(async () => {
+      const parsed = parseRemoteTarget(url, this.remoteConfig?.relayUrl);
 
-    this.stopping = true;
-    this.clearReconnectTimer();
-    this.rejectPendingRequests(new Error('Remote relay changed'));
-    this.closeSocket();
+      this.stopping = true;
+      this.clearReconnectTimer();
+      this.rejectPendingRequests(new Error('Remote relay changed'));
+      this.closeSocket();
 
-    this.remoteConfig = { uuid: parsed.uuid, relayUrl: parsed.relayUrl };
-    this.tools = [];
-    this.sessions = [];
-    this.extensionConnected = false;
-    this.status = 'disconnected';
-    this.emit('tools_updated', this.tools);
-    this.emit('extension_status', false);
+      this.remoteConfig = { uuid: parsed.uuid, relayUrl: parsed.relayUrl };
+      this.status = 'disconnected';
+      this.lastClose = null;
+      this.reconnectSuppressed = false;
+      this.clearExtensionState();
 
-    this.stopping = false;
-    await this.connectToRelay();
-    return parsed;
+      this.stopping = false;
+      await this.connectToRelay();
+      return parsed;
+    });
+
+    this.remoteUpdate = update.then(() => undefined, () => undefined);
+    return update;
   }
 
   /**
@@ -296,25 +349,66 @@ export class ExtensionConnection extends EventEmitter {
     return this.remoteConfig ? { ...this.remoteConfig } : null;
   }
 
+  getLastClose(): RelayCloseInfo | null {
+    return this.lastClose
+      ? { ...this.lastClose, permanent: this.reconnectSuppressed }
+      : null;
+  }
+
   /**
    * Connect to the relay server (local or remote)
    */
   private async connectToRelay(): Promise<void> {
     return new Promise((resolve, reject) => {
       const url = this.getRelayUrl();
-      this.log(`Connecting to relay at ${url}...`);
+      const generation = ++this.connectionGeneration;
+      let settled = false;
+      let handshakeTimer: NodeJS.Timeout | null = null;
+      this.log(this.remoteConfig ? 'Connecting to configured remote relay...' : `Connecting to local relay at ${url}...`);
+
+      const settleResolve = () => {
+        if (settled) return;
+        settled = true;
+        if (handshakeTimer) clearTimeout(handshakeTimer);
+        resolve();
+      };
+      const settleReject = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        if (handshakeTimer) clearTimeout(handshakeTimer);
+        reject(error);
+      };
 
       try {
-        this.ws = new WebSocket(url);
+        const ws = new WebSocket(url);
+        this.ws = ws;
+        this.status = 'connecting';
+        handshakeTimer = setTimeout(() => {
+          const error = new Error(`Relay handshake timed out after ${this.handshakeTimeoutMs}ms`);
+          this.log(error.message);
+          settleReject(error);
+          if (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN) {
+            ws.terminate();
+          }
+        }, this.handshakeTimeoutMs);
 
-        this.ws.on('open', () => {
+        ws.on('open', () => {
+          if (generation !== this.connectionGeneration || this.ws !== ws) {
+            ws.terminate();
+            settleReject(new Error('Relay connection superseded'));
+            return;
+          }
           this.log('Connected to relay');
           this.status = 'connected';
+          this.lastClose = null;
           this.emit('connected');
-          resolve();
+          settleResolve();
         });
 
-        this.ws.on('message', (data) => {
+        ws.on('message', (data) => {
+          if (generation !== this.connectionGeneration || this.ws !== ws) {
+            return;
+          }
           try {
             const message = JSON.parse(data.toString());
             this.handleMessage(message);
@@ -323,36 +417,56 @@ export class ExtensionConnection extends EventEmitter {
           }
         });
 
-        this.ws.on('close', () => {
-          this.log('Disconnected from relay');
+        ws.on('close', (code, reasonBuffer) => {
+          const reason = reasonBuffer.toString();
+          const closeError = new Error(this.formatCloseMessage(code, reason));
+          settleReject(closeError);
+
+          if (generation !== this.connectionGeneration || this.ws !== ws) {
+            return;
+          }
+
+          const safeReason = this.redactRemoteCredential(reason);
+          this.lastClose = { code, reason: safeReason };
+          this.reconnectSuppressed = this.reconnectSuppressed || PERMANENT_RELAY_CLOSE_CODES.has(code);
+          this.log(this.formatCloseMessage(code, reason));
           this.ws = null;
           this.status = 'disconnected';
+          this.rejectPendingRequests(closeError);
+          this.clearExtensionState();
+          this.emit('disconnected', { code, reason: safeReason, permanent: this.reconnectSuppressed });
 
-          // Reject all pending requests — responses will never arrive on a
-          // closed socket.  Without this, requests sit until their individual
-          // timeouts fire, and if the server reconnects before that the MCP
-          // client may retry, causing duplicate tool execution.
-          for (const [id, request] of this.pendingRequests) {
-            clearTimeout(request.timeout);
-            request.reject(new Error('Relay connection lost'));
-          }
-          this.pendingRequests.clear();
-
-          this.emit('disconnected');
-
-          if (!this.stopping) {
+          if (!this.stopping && !this.reconnectSuppressed) {
             // Schedule reconnect
             this.scheduleReconnect();
           }
         });
 
-        this.ws.on('error', (error) => {
-          this.log(`WebSocket error: ${error.message}`);
-          reject(error);
+        ws.on('error', (error) => {
+          const safeError = new Error(this.redactRemoteCredential(error.message));
+          if (generation === this.connectionGeneration && this.ws === ws) {
+            this.log(`WebSocket error: ${safeError.message}`);
+          }
+          settleReject(safeError);
+        });
+
+        ws.on('unexpected-response', (_request, response) => {
+          const statusCode = response.statusCode ?? 0;
+          const safeError = new Error(`Relay handshake rejected with HTTP ${statusCode || 'unknown status'}`);
+          if (generation === this.connectionGeneration && this.ws === ws) {
+            this.reconnectSuppressed = statusCode >= 400 && statusCode < 500;
+            this.lastClose = { code: statusCode, reason: safeError.message };
+            this.status = 'disconnected';
+            this.log(safeError.message);
+          }
+          settleReject(safeError);
+          response.resume();
+          ws.terminate();
         });
 
       } catch (error) {
-        reject(error);
+        const message = error instanceof Error ? error.message : String(error);
+        settleReject(new Error(this.redactRemoteCredential(message)));
       }
     });
   }
@@ -361,6 +475,9 @@ export class ExtensionConnection extends EventEmitter {
    * Schedule reconnection attempt
    */
   private scheduleReconnect(): void {
+    if (this.stopping || this.reconnectSuppressed) {
+      return;
+    }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
     }
@@ -387,6 +504,7 @@ export class ExtensionConnection extends EventEmitter {
     this.closeSocket();
 
     this.status = 'disconnected';
+    this.clearExtensionState();
   }
 
   private clearReconnectTimer(): void {
@@ -409,11 +527,23 @@ export class ExtensionConnection extends EventEmitter {
       return;
     }
 
-    // Remove listeners so a deliberate reconnect does not trigger stale close
-    // handlers or schedule a reconnect against the previous relay URL.
-    this.ws.removeAllListeners();
-    this.ws.terminate();
+    const ws = this.ws;
+    ++this.connectionGeneration;
     this.ws = null;
+    // Keep the attempt's error listener attached: terminating CONNECTING sockets
+    // emits an error before close. Generation checks make both callbacks stale.
+    ws.terminate();
+  }
+
+  private clearExtensionState(): void {
+    const toolsChanged = this.tools.length > 0;
+    const sessionsChanged = this.sessions.length > 0;
+    this.extensionConnected = false;
+    this.tools = [];
+    this.sessions = [];
+    if (toolsChanged) this.emit('tools_updated', this.tools);
+    if (sessionsChanged) this.emit('sessions_updated', this.sessions);
+    this.emit('extension_status', false);
   }
 
   /**
@@ -424,15 +554,19 @@ export class ExtensionConnection extends EventEmitter {
 
     // Handle extension status updates
     if (message.type === 'extension_status') {
-      this.extensionConnected = message.connected ?? false;
-      this.emit('extension_status', this.extensionConnected);
+      if (message.connected) {
+        this.extensionConnected = true;
+        this.emit('extension_status', true);
+      } else {
+        this.rejectPendingRequests(new Error('Extension disconnected from relay'));
+        this.clearExtensionState();
+      }
       return;
     }
 
     if (message.type === 'extension_disconnected') {
-      this.extensionConnected = false;
-      this.tools = [];
-      this.sessions = [];
+      this.rejectPendingRequests(new Error('Extension disconnected from relay'));
+      this.clearExtensionState();
       this.emit('extension_disconnected');
       return;
     }
@@ -473,6 +607,9 @@ export class ExtensionConnection extends EventEmitter {
         }
         return;
       }
+    }
+    if (message.requestId) {
+      return;
     }
 
     if (message.type === 'sessions_list') {
@@ -583,6 +720,9 @@ export class ExtensionConnection extends EventEmitter {
 
   getConnectionErrorMessage(): string {
     if (this.remoteConfig) {
+      if (this.lastClose) {
+        return `${this.formatCloseMessage(this.lastClose.code, this.lastClose.reason)}. ${NO_CONNECTION_REMOTE_MESSAGE}`;
+      }
       return NO_CONNECTION_REMOTE_MESSAGE;
     }
 
@@ -601,7 +741,7 @@ export class ExtensionConnection extends EventEmitter {
   async listSessions(timeoutMs: number = 5_000): Promise<RelaySessionSummary[]> {
     if (this.remoteConfig) {
       const session: RelaySessionSummary = {
-        sessionId: this.remoteConfig.uuid,
+        sessionId: REDACTED_REMOTE_ID,
         connected: this.extensionConnected,
         toolCount: this.tools.length,
       };
@@ -705,7 +845,22 @@ export class ExtensionConnection extends EventEmitter {
    */
   private log(message: string): void {
     if (this.debug) {
-      console.error(`[vibebrowser-mcp] ${message}`);
+      console.error(`[vibebrowser-mcp] ${this.redactRemoteCredential(message)}`);
     }
+  }
+
+  private redactRemoteCredential(message: string): string {
+    const uuid = this.remoteConfig?.uuid;
+    if (!uuid) {
+      return message;
+    }
+    return message.split(uuid).join(REDACTED_REMOTE_ID);
+  }
+
+  private formatCloseMessage(code: number, reason: string): string {
+    const safeReason = this.redactRemoteCredential(reason.trim());
+    return safeReason
+      ? `Relay connection closed (code ${code}: ${safeReason})`
+      : `Relay connection closed (code ${code})`;
   }
 }

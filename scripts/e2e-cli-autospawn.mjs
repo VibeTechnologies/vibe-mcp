@@ -208,7 +208,7 @@ function attachFakeExtension(extensionPort, sessionId) {
 // Fake remote relay (agent-facing protocol) for the --remote bypass test
 // ---------------------------------------------------------------------------
 
-const REMOTE_UUID = 'autospawn-remote-uuid';
+const REMOTE_UUID = '55555555-5555-4555-8555-555555555555';
 
 function startFakeRemoteRelay(port) {
   const wss = new WebSocketServer({ host: HOST, port });
@@ -366,13 +366,13 @@ async function main() {
       assert(data.ok === true, `D: remote status not ok: ${JSON.stringify(data)}`);
       assert(data.mode === 'remote', `D: expected remote mode: ${JSON.stringify(data)}`);
       assert(data.extensionConnected === true, `D: remote extension should be connected: ${JSON.stringify(data)}`);
-      assert(data.sessionId === REMOTE_UUID, `D: expected sessionId=${REMOTE_UUID}: ${JSON.stringify(data)}`);
+      assert(data.sessionId === '[redacted]', `D: expected redacted remote session: ${JSON.stringify(data)}`);
 
       // Proof of bypass: no local relay was spawned → no local pidfile, and the
       // local agent port stays closed.
       assert(!existsSync(pidFileD), `D: --remote must NOT create a local pidfile, found ${pidFileD}`);
       assert(!(await probePort(remoteAgentPort)), `D: --remote must NOT open a local relay agent port ${remoteAgentPort}`);
-      console.log(`  D remote bypass: no local relay/pidfile, connected to remote ${REMOTE_UUID} ✓`);
+      console.log('  D remote bypass: no local relay/pidfile, connected to configured remote target ✓');
 
       rmSync(stateDirD, { recursive: true, force: true });
     }

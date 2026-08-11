@@ -9,7 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 
 const HOST = '127.0.0.1';
-const REMOTE_UUID = 'browser-cli-test-uuid';
+const REMOTE_UUID = '11111111-1111-4111-8111-111111111111';
+const REDACTED_REMOTE_ID = '[redacted]';
 const RELAY_PORT = await findFreePort();
 const RELAY_URL = `ws://${HOST}:${RELAY_PORT}`;
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -159,14 +160,15 @@ try {
   assert(status.ok === true, `status failed: ${JSON.stringify(status)}`);
   assert(status.extensionConnected === true, `expected extension connected: ${JSON.stringify(status)}`);
   assert(Number(status.toolCount) >= 10, `expected toolCount >= 10: ${JSON.stringify(status)}`);
-  assert(status.sessionId === REMOTE_UUID, `expected status sessionId=${REMOTE_UUID}: ${JSON.stringify(status)}`);
+  assert(status.sessionId === REDACTED_REMOTE_ID, `expected redacted remote session: ${JSON.stringify(status)}`);
+  assert(!JSON.stringify(status).includes(REMOTE_UUID), `status leaked remote UUID: ${JSON.stringify(status)}`);
 
   const uuidStatus = await runCli(['status'], { remoteValue: REMOTE_UUID });
   if (E2E_BROWSER_CLI_SOURCE === 'local') {
     assert(uuidStatus.ok === true, `UUID-only remote should return structured status locally: ${JSON.stringify(uuidStatus)}`);
     assert(uuidStatus.mode === 'remote', `UUID-only status should still be remote mode: ${JSON.stringify(uuidStatus)}`);
     assert(uuidStatus.extensionConnected === false, `UUID-only remote without public relay should report disconnected extension locally: ${JSON.stringify(uuidStatus)}`);
-    assert(uuidStatus.sessionId === REMOTE_UUID, `UUID-only status should parse UUID as sessionId: ${JSON.stringify(uuidStatus)}`);
+    assert(uuidStatus.sessionId === REDACTED_REMOTE_ID, `UUID-only status should redact sessionId: ${JSON.stringify(uuidStatus)}`);
   }
 
   const envStatus = await runCli(['status'], {
@@ -175,11 +177,11 @@ try {
   });
   assert(envStatus.ok === true, `status via VIBE_REMOTE_URL failed: ${JSON.stringify(envStatus)}`);
   assert(envStatus.extensionConnected === true, `VIBE_REMOTE_URL should connect extension: ${JSON.stringify(envStatus)}`);
-  assert(envStatus.sessionId === REMOTE_UUID, `VIBE_REMOTE_URL should target ${REMOTE_UUID}: ${JSON.stringify(envStatus)}`);
+  assert(envStatus.sessionId === REDACTED_REMOTE_ID, `VIBE_REMOTE_URL should redact sessionId: ${JSON.stringify(envStatus)}`);
 
   const sessions = await runCli(['sessions']);
   assert(Array.isArray(sessions.sessions) && sessions.sessions.length === 1, `sessions missing session list: ${JSON.stringify(sessions)}`);
-  assert(sessions.sessions[0].sessionId === REMOTE_UUID, `wrong remote session id: ${JSON.stringify(sessions)}`);
+  assert(sessions.sessions[0].sessionId === REDACTED_REMOTE_ID, `remote session id should be redacted: ${JSON.stringify(sessions)}`);
 
   const tabs = await runCli(['tabs']);
   assert(Array.isArray(tabs.pages) && tabs.pages.length === 2, `tabs missing pages: ${JSON.stringify(tabs)}`);

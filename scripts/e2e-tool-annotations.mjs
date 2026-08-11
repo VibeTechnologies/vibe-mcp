@@ -40,7 +40,7 @@ import { CHROME_USE_TOOLS } from '../dist/chrome-use-connection.js';
 import { SET_REMOTE_TOOL } from '../dist/server.js';
 
 const RELAY_HOST = '127.0.0.1';
-const REMOTE_UUID = 'test-annotations-uuid';
+const REMOTE_UUID = '66666666-6666-4666-8666-666666666667';
 
 const REQUIRED_HINTS = ['readOnlyHint', 'destructiveHint', 'idempotentHint', 'openWorldHint'];
 

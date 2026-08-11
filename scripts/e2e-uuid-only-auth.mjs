@@ -234,8 +234,18 @@ async function main() {
     assert(!conn.authorization, `browser-cli must not send Authorization header (UUID-only auth): got "${conn.authorization}"`);
     assert(cliStatus.json?.ok === true, `browser-cli status failed: ${cliStatus.stdout}\n${cliStatus.stderr}`);
     assert(cliStatus.json?.mode === 'remote', `browser-cli status mode mismatch: ${cliStatus.stdout}`);
-    assert(cliStatus.json?.sessionId === UUID, `browser-cli status sessionId mismatch: ${cliStatus.stdout}`);
+    assert(cliStatus.json?.sessionId === '[redacted]', `browser-cli status sessionId should be redacted: ${cliStatus.stdout}`);
+    assert(!cliStatus.stdout.includes(UUID), `browser-cli status leaked remote UUID: ${cliStatus.stdout}`);
     console.log('  browser-cli UUID-only connect, no Authorization header sent: PASS');
+
+    const openClaw = await runNodeProcess(MCP_CLI, [
+      'openclaw',
+      '--remote', relay.url,
+    ], { expectCode: 0 });
+    assert(!openClaw.stdout.includes(UUID), `openclaw output leaked remote UUID: ${openClaw.stdout}`);
+    assert(!openClaw.stdout.includes(relay.url), `openclaw output leaked full relay URL: ${openClaw.stdout}`);
+    assert(openClaw.stdout.includes('VIBE_REMOTE_URL'), `openclaw output omitted secure env placeholder: ${openClaw.stdout}`);
+    console.log('  openclaw output redacts relay credential: PASS');
 
     // 2. --remote-secret is a removed flag: commander must reject it outright.
     const rejectSecretFlag = await runNodeProcess(BROWSER_CLI, [

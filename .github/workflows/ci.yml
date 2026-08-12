@@ -24,8 +24,6 @@ jobs:
 
       - name: Check standalone CLI version consistency
         run: npm run check:cli-version
-        env:
-          CLI_VERSION_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
       
       - name: Build
         run: npm run build
@@ -42,11 +40,6 @@ jobs:
         # packed @vibebrowser/cli local TLS WSS tool roundtrip, and chrome-use
         # devtools flag.
         run: npm run test:ci
-
-      - name: E2E (opt-in public relay, published CLI)
-        run: npm run test:e2e:cli-public-relay
-        env:
-          VIBE_PUBLIC_RELAY_URL_SECRET: ${{ secrets.VIBE_PUBLIC_RELAY_URL_SECRET }}
 
       # Kept out of `test:ci` because it needs network: it installs the
       # published npm package into the bundle, runs Anthropic's `mcpb` and

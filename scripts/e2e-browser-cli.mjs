@@ -30,6 +30,7 @@ let delayToolResultMs = 0;
 let missingPageIdMode = false;
 let fillCompatibilityErrorMode = false;
 let credentialErrorMode = false;
+let credentialToolResultMode = false;
 
 const ONE_PIXEL_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5W6n8AAAAASUVORK5CYII=';
@@ -108,6 +109,19 @@ try {
       }
 
       if (message.type === 'call_tool') {
+        if (credentialToolResultMode) {
+          ws.send(JSON.stringify({
+            type: 'tool_result',
+            requestId: message.requestId,
+            data: {
+              success: false,
+              isError: true,
+              detail: `Relay rejected ${REMOTE_UUID.toUpperCase()}`,
+              content: [{ type: 'text', text: `Relay rejected ${REMOTE_UUID.toUpperCase()}` }],
+            },
+          }));
+          return;
+        }
         if (credentialErrorMode) {
           ws.send(JSON.stringify({
             type: 'error',
@@ -325,6 +339,11 @@ try {
   const redactedRelayError = await expectCliFailure(['tabs'], /\[redacted\]/);
   assert(!redactedRelayError.toLowerCase().includes(REMOTE_UUID.toLowerCase()), `CLI error leaked remote UUID: ${redactedRelayError}`);
   credentialErrorMode = false;
+
+  credentialToolResultMode = true;
+  const redactedToolResult = await expectCliFailure(['tabs'], /\[redacted\]/);
+  assert(!redactedToolResult.toLowerCase().includes(REMOTE_UUID.toLowerCase()), `CLI tool_result leaked remote UUID: ${redactedToolResult}`);
+  credentialToolResultMode = false;
 
   console.log('browser cli e2e ok');
 } finally {

@@ -392,13 +392,18 @@ async function main() {
     });
     const redactedErrorRequest = await redactedErrorRequestPromise;
     extensionWsB.send(JSON.stringify({
-      type: 'error',
+      type: 'tool_result',
       requestId: redactedErrorRequest.requestId,
-      error: `Relay rejected ${REMOTE_UUID_B.toUpperCase()}`,
+      data: {
+        success: false,
+        isError: true,
+        detail: `Relay rejected ${REMOTE_UUID_B.toUpperCase()}`,
+        content: [{ type: 'text', text: `Relay rejected ${REMOTE_UUID_B.toUpperCase()}` }],
+      },
     }));
     const redactedErrorResult = await withTimeout(redactedErrorResultPromise, 'redacted relay error response');
     const redactedErrorText = redactedErrorResult.content.find((item) => item.type === 'text')?.text ?? '';
-    if (!redactedErrorText.includes('[redacted]') || redactedErrorText.toLowerCase().includes(REMOTE_UUID_B.toLowerCase())) {
+    if (redactedErrorResult.isError !== true || !redactedErrorText.includes('[redacted]') || redactedErrorText.toLowerCase().includes(REMOTE_UUID_B.toLowerCase())) {
       throw new Error(`MCP error leaked relay credential: ${JSON.stringify(redactedErrorResult)}`);
     }
 

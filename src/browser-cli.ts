@@ -1206,6 +1206,9 @@ export class BrowserCliContext {
         }
         try {
           const result = await this.connection.callTool(tool.name, args, this.timeoutMs);
+          if (result.isError === true || result.success === false) {
+            throw new Error(firstText(result as ToolResult & Record<string, unknown>) || `Browser tool ${tool.name} failed`);
+          }
           return { tool: tool.name, args, result: result as ToolResult & Record<string, unknown> };
         } catch (error) {
           if (!isToolArgumentCompatibilityError(error)) {

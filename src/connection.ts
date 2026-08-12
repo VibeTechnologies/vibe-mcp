@@ -241,6 +241,7 @@ export class ExtensionConnection extends EventEmitter {
   private connectionGeneration = 0;
   private lifecycleEpoch = 0;
   private shutdownEpoch = 0;
+  private startPromise: Promise<void> | null = null;
   private remoteUpdate: Promise<void> = Promise.resolve();
   private reconnectSuppressed = false;
   private lastClose: { code: number; reason: string } | null = null;
@@ -267,26 +268,43 @@ export class ExtensionConnection extends EventEmitter {
    * In local mode: spawns relay daemon if needed, then connects.
    * In remote mode: connects directly to public relay.
    */
-  async start(): Promise<void> {
-    this.stopping = false;
-    this.reconnectSuppressed = false;
-    const lifecycleEpoch = ++this.lifecycleEpoch;
-    if (this.remoteConfig) {
-      this.log('Remote mode: connecting to configured relay target');
+  start(): Promise<void> {
+    if (this.ws && this.status === 'connected') {
+      return Promise.resolve();
+    }
+    if (this.startPromise) {
+      return this.startPromise;
+    }
+
+    const operation = (async () => {
+      this.stopping = false;
+      this.reconnectSuppressed = false;
+      const lifecycleEpoch = ++this.lifecycleEpoch;
+      if (this.remoteConfig) {
+        this.log('Remote mode: connecting to configured relay target');
+        await this.connectToRelay(lifecycleEpoch);
+        return;
+      }
+
+      // Local mode: check if relay is already running
+      if (!isRelayRunning()) {
+        this.log('Starting relay daemon...');
+        await this.spawnRelay();
+        // Wait for relay to start
+        await this.waitForRelay();
+      }
+
+      // Connect to relay
       await this.connectToRelay(lifecycleEpoch);
-      return;
-    }
+    })();
 
-    // Local mode: check if relay is already running
-    if (!isRelayRunning()) {
-      this.log('Starting relay daemon...');
-      await this.spawnRelay();
-      // Wait for relay to start
-      await this.waitForRelay();
-    }
-
-    // Connect to relay
-    await this.connectToRelay(lifecycleEpoch);
+    this.startPromise = operation;
+    void operation.finally(() => {
+      if (this.startPromise === operation) {
+        this.startPromise = null;
+      }
+    }).catch(() => {});
+    return operation;
   }
 
   async setRemoteUrl(url: string): Promise<ParsedRemoteRelayUrl> {
@@ -578,6 +596,7 @@ export class ExtensionConnection extends EventEmitter {
     this.stopping = true;
     ++this.shutdownEpoch;
     ++this.lifecycleEpoch;
+    this.startPromise = null;
     this.clearReconnectTimer();
 
     this.rejectPendingRequests(new Error('Connection closed'));
@@ -667,13 +686,18 @@ export class ExtensionConnection extends EventEmitter {
           return;
         }
 
-        clearTimeout(pending.timeout);
-        this.pendingRequests.delete(message.requestId);
-
         if (message.type === 'error') {
-          pending.reject(new Error(this.redactRemoteCredential(message.error || 'Unknown error')));
+          const errorMessage = typeof message.error === 'string' ? message.error : 'Unknown relay error';
+          clearTimeout(pending.timeout);
+          this.pendingRequests.delete(message.requestId);
+          pending.reject(new Error(this.redactRemoteCredential(errorMessage)));
         } else {
           let payload: unknown = message.data;
+          if (message.type === 'tool_result') {
+            payload = this.redactErrorToolResult(payload);
+          }
+          clearTimeout(pending.timeout);
+          this.pendingRequests.delete(message.requestId);
           if (message.type === 'sessions_list') {
             payload = Array.isArray(message.sessions) ? message.sessions : message.data;
             this.sessions = Array.isArray(payload) ? payload as RelaySessionSummary[] : [];
@@ -931,6 +955,34 @@ export class ExtensionConnection extends EventEmitter {
 
   private redactRemoteCredential(message: string): string {
     return redactRemoteTarget(message, this.remoteConfig ? this.getRelayUrl() : undefined);
+  }
+
+  private redactErrorToolResult(payload: unknown): unknown {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return payload;
+    }
+
+    const result = payload as Record<string, unknown>;
+    if (result.isError !== true && result.success !== false) {
+      return payload;
+    }
+
+    return this.redactUnknownStrings(result);
+  }
+
+  private redactUnknownStrings(value: unknown): unknown {
+    if (typeof value === 'string') {
+      return this.redactRemoteCredential(value);
+    }
+    if (Array.isArray(value)) {
+      return value.map((entry) => this.redactUnknownStrings(entry));
+    }
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [key, this.redactUnknownStrings(entry)]),
+      );
+    }
+    return value;
   }
 
   redactErrorMessage(message: string): string {

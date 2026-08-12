@@ -164,6 +164,47 @@ function startErrorRelay(port, uuid) {
   };
 }
 
+function startAdversarialErrorRelay(port, uuid) {
+  const wss = new WebSocketServer({ host: HOST, port });
+  const connected = new Promise((resolve) => {
+    wss.on('connection', (ws, request) => {
+      assert(request.url === `/${uuid}`, `unexpected relay path: ${request.url}`);
+      ws.send(JSON.stringify({ type: 'extension_status', connected: true }));
+      ws.send(JSON.stringify({ type: 'tools_list', data: [TOOL] }));
+      ws.on('message', (raw) => {
+        const message = JSON.parse(raw.toString());
+        if (message.type !== 'call_tool') return;
+        if (message.data?.arguments?.malformed) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            requestId: message.requestId,
+            error: { credential: uuid.toUpperCase() },
+          }));
+          return;
+        }
+        ws.send(JSON.stringify({
+          type: 'tool_result',
+          requestId: message.requestId,
+          data: {
+            success: false,
+            isError: true,
+            content: [{ type: 'text', text: `Relay rejected ${uuid.toUpperCase()}` }],
+          },
+        }));
+      });
+      resolve(ws);
+    });
+  });
+  return {
+    url: `ws://${HOST}:${port}/${uuid}`,
+    connected,
+    close: async () => {
+      for (const client of wss.clients) client.terminate();
+      await new Promise((resolve, reject) => wss.close((error) => error ? reject(error) : resolve()));
+    },
+  };
+}
+
 async function startHttpRejectingRelay(port, statusCode) {
   let attempts = 0;
   const sockets = new Set();
@@ -312,6 +353,61 @@ async function testUntrustedRelayErrorRedaction() {
     await connection.stop();
     await relay.close();
     console.error = originalConsoleError;
+  }
+}
+
+async function testAdversarialRelayErrorsSettleAndRedact() {
+  const port = await findFreePort();
+  const relay = startAdversarialErrorRelay(port, UUID_A);
+  const connection = new ExtensionConnection(0, false, { uuid: relay.url });
+  try {
+    await connection.start();
+    await relay.connected;
+
+    const malformed = await expectReject(
+      () => withTimeout(connection.callTool(TOOL.name, { malformed: true }), 'malformed relay error settlement', 500),
+      /Unknown relay error/,
+      'malformed relay error',
+    );
+    assert(!malformed.toLowerCase().includes(UUID_A.toLowerCase()), `malformed relay error leaked UUID: ${malformed}`);
+
+    const result = await connection.callTool(TOOL.name, {});
+    const resultText = result.content?.find((entry) => entry.type === 'text')?.text ?? '';
+    assert(result.isError === true, `expected error tool_result: ${JSON.stringify(result)}`);
+    assert(resultText.includes(REDACTED_REMOTE_ID), `error tool_result omitted redaction: ${JSON.stringify(result)}`);
+    assert(!JSON.stringify(result).toLowerCase().includes(UUID_A.toLowerCase()), `error tool_result leaked UUID: ${JSON.stringify(result)}`);
+  } finally {
+    await connection.stop();
+    await relay.close();
+  }
+}
+
+async function testRepeatedStartIsIdempotent() {
+  const port = await findFreePort();
+  const relay = startRelay(port, UUID_A);
+  const connection = new ExtensionConnection(0, false, { uuid: relay.url }, undefined, 500, RECONNECT_DELAY_MS);
+  try {
+    await Promise.all([connection.start(), connection.start()]);
+    const socket = await relay.connected;
+    await connection.start();
+
+    const toolsUpdated = waitForEvent(connection, 'tools_updated', (tools) => tools.some((tool) => tool.name === 'after_repeat_start'));
+    socket.send(JSON.stringify({
+      type: 'tools_list',
+      data: [{ ...TOOL, name: 'after_repeat_start' }],
+    }));
+    await toolsUpdated;
+    assert(relay.getConnectionCount() === 1, `repeated start created ${relay.getConnectionCount()} sockets`);
+
+    const disconnected = waitForEvent(connection, 'disconnected');
+    socket.close(1012, 'restart');
+    await disconnected;
+    await delay(RECONNECT_DELAY_MS * 3);
+    assert(relay.getConnectionCount() >= 2, 'repeated start invalidated reconnect callbacks');
+    assert(connection.getStatus() === 'connected', `repeated start left status ${connection.getStatus()}`);
+  } finally {
+    await connection.stop();
+    await relay.close();
   }
 }
 
@@ -533,6 +629,8 @@ testRetryPolicyMatrix();
 testCaseInsensitiveRedaction();
 await testHandshakeTimeout();
 await testUntrustedRelayErrorRedaction();
+await testAdversarialRelayErrorsSettleAndRedact();
+await testRepeatedStartIsIdempotent();
 await testStateCleanupAndPermanentClose();
 await testPermanentRelayCloseMatrix();
 await testConcurrentSetRemote();

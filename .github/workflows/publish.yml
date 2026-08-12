@@ -13,6 +13,11 @@ on:
       - 'docs/**'
       - 'packages/cli/**'
       - 'scripts/prepare-cli-package.mjs'
+      - 'scripts/check-cli-version.mjs'
+      - 'scripts/e2e-cli-package-smoke.mjs'
+      - 'scripts/e2e-cli-public-relay.mjs'
+      - 'scripts/test-release-gates.mjs'
+      - 'tsconfig*.json'
       - '.github/workflows/publish.yml'
   release:
     types: [published]
@@ -61,6 +66,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Check standalone CLI version consistency
+        run: npm run check:cli-version
       
       - name: Build
         run: npm run build
@@ -307,3 +315,34 @@ jobs:
       - name: Skip publish (version unchanged)
         if: steps.versions.outputs.root_changed == 'false' && steps.versions.outputs.cli_changed == 'false'
         run: echo "@vibebrowser/mcp ${{ steps.versions.outputs.root_current }} and @vibebrowser/cli ${{ steps.versions.outputs.cli_current }} already published, skipping"
+
+  public-relay-post-publish:
+    name: Public relay post-publish
+    needs: publish
+    if: >-
+      (github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')) ||
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
+    runs-on: ubuntu-latest
+    environment: public-relay
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.1'
+
+      - name: Read exact standalone CLI version
+        id: cli-version
+        run: |
+          version=$(node -p "require('./packages/cli/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test exact published CLI against public relay
+        run: node scripts/e2e-cli-public-relay.mjs
+        env:
+          VIBE_PUBLIC_CLI_VERSION: ${{ steps.cli-version.outputs.version }}
+          VIBE_PUBLIC_RELAY_URL_SECRET: ${{ secrets.VIBE_PUBLIC_RELAY_URL_SECRET }}

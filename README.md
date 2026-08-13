@@ -294,18 +294,25 @@ For those, skip `@vibebrowser/mcp` entirely. The extension alone is enough:
 https://relay.api.vibebrowser.app/mcp/<your-extension-uuid>
 ```
 
-Find `<your-extension-uuid>` in the extension: **Vibe icon → Settings → Agent
-connection URL**. It is the same UUID the CLI takes as
-`--remote wss://relay.api.vibebrowser.app/<uuid>`.
+Find `<your-extension-uuid>` in the extension: **Vibe icon → Settings → AI Agent
+Control → Remote (internet) → Relay access**. It is the same UUID the CLI takes
+as `--remote wss://relay.api.vibebrowser.app/<uuid>`.
+
+This is a plain **Streamable HTTP** MCP endpoint. There is **no OAuth consent
+flow, no dynamic client registration, and no scope setup** on this path — the
+UUID in the URL (or header, below) is the entire credential. If a client insists
+on an OAuth login before it will add the server, that client is not supported
+here; use the local stdio path instead.
 
 Where to paste it:
 
 | Client | Where |
 |---|---|
 | Claude (web, Cowork, mobile, Desktop) | Settings → Connectors → Add custom connector |
+| Codex desktop app | Settings → Connectors → add MCP server URL |
 | ChatGPT (web) | Settings → Connectors → developer mode |
 
-Custom connectors are a paid-plan feature in both products.
+Custom connectors are a paid-plan feature in these products.
 
 The relay also accepts the UUID as an `X-Remote-Session` or
 `Authorization: Bearer` header on a bare `POST /mcp`. Use the header form from

@@ -7,7 +7,9 @@ import {
   ExtensionConnection,
   isPermanentRelayCloseCode,
   isPermanentRelayHttpStatus,
+  parseHttpMcpConnectorUrl,
   parseRemoteRelayUrl,
+  parseRemoteTarget,
   redactRemoteTarget,
   REDACTED_REMOTE_ID,
 } from '../dist/connection.js';
@@ -287,6 +289,304 @@ async function testUrlValidation() {
     /must use wss/,
     'private/development non-loopback plaintext relay',
   );
+}
+
+// Fabricated, non-routable stand-ins for a leaked secret. Never real values.
+const FAKE_URL_USER = 'connector-user';
+const FAKE_URL_SECRET = 'connector-secret';
+const FAKE_QUERY_TOKEN = 'connector-query-token';
+const AT = String.fromCharCode(64);
+
+function assertNoLeak(message, label) {
+  const lower = message.toLowerCase();
+  assert(!lower.includes(UUID_A.toLowerCase()), `${label}: message leaked UUID_A: ${message}`);
+  assert(!lower.includes(UUID_B.toLowerCase()), `${label}: message leaked UUID_B: ${message}`);
+  assert(!lower.includes(FAKE_URL_USER), `${label}: message leaked URL username: ${message}`);
+  assert(!lower.includes(FAKE_URL_SECRET), `${label}: message leaked URL password: ${message}`);
+  assert(!lower.includes(FAKE_QUERY_TOKEN), `${label}: message leaked query token value: ${message}`);
+  assert(!lower.includes('relay.example.test'), `${label}: message leaked target host: ${message}`);
+}
+
+async function testConnectorUrlNormalization() {
+  // Canonical form: https://host/mcp/<uuid> -> wss://host
+  const basic = parseRemoteTarget(`https://relay.example.test/mcp/${UUID_A}`);
+  assert(basic.relayUrl === 'wss://relay.example.test', `basic connector relayUrl wrong: ${JSON.stringify(basic)}`);
+  assert(basic.uuid === UUID_A, `basic connector uuid wrong: ${JSON.stringify(basic)}`);
+
+  // Self-hosted single-segment prefix
+  const prefixed = parseRemoteTarget(`https://relay.example.test/vibe/mcp/${UUID_A}`);
+  assert(prefixed.relayUrl === 'wss://relay.example.test/vibe', `prefixed connector relayUrl wrong: ${JSON.stringify(prefixed)}`);
+  assert(prefixed.uuid === UUID_A, `prefixed connector uuid wrong: ${JSON.stringify(prefixed)}`);
+
+  // Deeper prefix
+  const deepPrefixed = parseRemoteTarget(`https://relay.example.test/a/b/mcp/${UUID_A}`);
+  assert(deepPrefixed.relayUrl === 'wss://relay.example.test/a/b', `deep prefixed connector relayUrl wrong: ${JSON.stringify(deepPrefixed)}`);
+  assert(deepPrefixed.uuid === UUID_A, `deep prefixed connector uuid wrong: ${JSON.stringify(deepPrefixed)}`);
+
+  // Non-default port preserved
+  const portPreserved = parseRemoteTarget(`https://relay.example.test:8443/mcp/${UUID_A}`);
+  assert(portPreserved.relayUrl === 'wss://relay.example.test:8443', `port-preserved connector relayUrl wrong: ${JSON.stringify(portPreserved)}`);
+  assert(portPreserved.uuid === UUID_A, `port-preserved connector uuid wrong: ${JSON.stringify(portPreserved)}`);
+
+  // Loopback plaintext maps to ws
+  const loopback1 = parseRemoteTarget(`http://127.0.0.1:19889/mcp/${UUID_A}`);
+  assert(loopback1.relayUrl === 'ws://127.0.0.1:19889', `loopback IPv4 connector relayUrl wrong: ${JSON.stringify(loopback1)}`);
+  const loopback2 = parseRemoteTarget(`http://localhost:19889/mcp/${UUID_A}`);
+  assert(loopback2.relayUrl === 'ws://localhost:19889', `loopback hostname connector relayUrl wrong: ${JSON.stringify(loopback2)}`);
+  const loopback3 = parseRemoteTarget(`http://[::1]:19889/mcp/${UUID_A}`);
+  assert(loopback3.relayUrl === 'ws://[::1]:19889', `loopback IPv6 connector relayUrl wrong: ${JSON.stringify(loopback3)}`);
+
+  // Bare UUID and ws(s) relay URL still normalize as before
+  const bareUuid = parseRemoteTarget(UUID_A, 'wss://relay.example.test');
+  assert(bareUuid.uuid === UUID_A && bareUuid.relayUrl === 'wss://relay.example.test', `bare uuid regression: ${JSON.stringify(bareUuid)}`);
+  const wssForm = parseRemoteTarget(`wss://relay.example.test/${UUID_B}`);
+  assert(wssForm.uuid === UUID_B && wssForm.relayUrl === 'wss://relay.example.test', `wss form regression: ${JSON.stringify(wssForm)}`);
+
+  // parseHttpMcpConnectorUrl direct export matches parseRemoteTarget for the connector form
+  const direct = parseHttpMcpConnectorUrl(`https://relay.example.test/mcp/${UUID_A}`);
+  assert(direct.relayUrl === basic.relayUrl && direct.uuid === basic.uuid, 'parseHttpMcpConnectorUrl and parseRemoteTarget disagree');
+
+  // Rejections
+  const rejections = [
+    [`https://relay.example.test/${UUID_A}`, /expected an MCP connector path/, 'no /mcp/ segment'],
+    [`https://relay.example.test/mcp`, /expected an MCP connector path/, 'missing uuid'],
+    [`https://relay.example.test/mcp/not-a-uuid`, /UUID path segment is not valid/, 'invalid uuid'],
+    [`https://relay.example.test/MCP/${UUID_A}`, /expected an MCP connector path/, 'wrong-case mcp segment'],
+    [`https://relay.example.test/mcp/${UUID_A}/extra`, /expected an MCP connector path/, 'trailing extra segment'],
+    [`http://relay.example.test/mcp/${UUID_A}`, /non-loopback|must use wss/i, 'non-loopback plaintext connector'],
+    [
+      `https://${FAKE_URL_USER}:${FAKE_URL_SECRET}${AT}relay.example.test/mcp/${UUID_A}`,
+      /credentials/,
+      'credentials in connector URL',
+    ],
+    [`https://relay.example.test/mcp/${UUID_A}?token=${FAKE_QUERY_TOKEN}`, /query|fragment/, 'query in connector URL'],
+    [`https://relay.example.test/mcp/${UUID_A}#frag`, /query|fragment/, 'fragment in connector URL'],
+    [`https://relay.example.test/`, /expected an MCP connector path/, 'generic http URL (root)'],
+    [`https://relay.example.test/api/tools`, /expected an MCP connector path/, 'generic http URL (path)'],
+  ];
+
+  for (const [input, pattern, label] of rejections) {
+    const message = await expectReject(
+      () => Promise.resolve(parseRemoteTarget(input)),
+      pattern,
+      label,
+    );
+    assertNoLeak(message, label);
+  }
+
+  const finalRedacted = redactRemoteTarget(
+    `boom https://relay.example.test/mcp/${UUID_A} ${UUID_A.toUpperCase()}`,
+    `https://relay.example.test/mcp/${UUID_A}`,
+  );
+  assert(
+    !finalRedacted.toLowerCase().includes(UUID_A.toLowerCase()),
+    `redactRemoteTarget leaked connector UUID: ${finalRedacted}`,
+  );
+}
+
+// Synthetic (never-issued) but structurally valid UUIDs used only for redaction proofs.
+const UUID_C = '0a1b2c3d-4e5f-4a6b-9c7d-8e9f0a1b2c3d';
+const UUID_D = '1b2c3d4e-5f6a-4b7c-abcd-1234567890ab';
+
+function assertRedacted(redacted, secrets, label) {
+  const lower = redacted.toLowerCase();
+  for (const secret of secrets) {
+    assert(!lower.includes(secret.toLowerCase()), `${label}: leaked ${secret} in: ${redacted}`);
+  }
+  assert(redacted.includes(REDACTED_REMOTE_ID), `${label}: placeholder missing in: ${redacted}`);
+}
+
+// A malformed-but-parseable https://host/mcp/<u1>/mcp/<u2> target folds u1 into the
+// derived relay base, so redaction must cover every UUID-shaped segment, not just the last.
+async function testDoubleMcpPathRedaction() {
+  const target = `https://relay.example.test/mcp/${UUID_C}/mcp/${UUID_D}`;
+  const parsed = parseRemoteTarget(target);
+  assert(
+    parsed.relayUrl === `wss://relay.example.test/mcp/${UUID_C}`,
+    `double-/mcp/ relayUrl wrong: ${JSON.stringify(parsed)}`,
+  );
+  assert(parsed.uuid === UUID_D, `double-/mcp/ uuid wrong: ${JSON.stringify(parsed)}`);
+
+  // Exactly what ExtensionConnection.getRelayUrl() builds and passes to the redactor.
+  const derivedTarget = `${parsed.relayUrl}/${parsed.uuid}`;
+  const message = [
+    `connect failed for ${derivedTarget}`,
+    `base ${parsed.relayUrl}`,
+    `base upper ${parsed.relayUrl.toUpperCase()}`,
+    `first ${UUID_C.toUpperCase()}`,
+    `second ${UUID_D}`,
+    `origin ${target}`,
+  ].join(' | ');
+
+  assertRedacted(
+    redactRemoteTarget(message, derivedTarget),
+    [UUID_C, UUID_D],
+    'double-/mcp/ derived relay target',
+  );
+  assertRedacted(
+    redactRemoteTarget(message, target),
+    [UUID_C, UUID_D, target],
+    'double-/mcp/ original connector target',
+  );
+
+  // Percent-encoded UUID segments in the target must redact their decoded form too.
+  const encodedTarget = `wss://relay.example.test/mcp/${encodeURIComponent(UUID_C)}/${UUID_D}`;
+  assertRedacted(
+    redactRemoteTarget(`boom ${UUID_C} and ${UUID_D}`, encodedTarget),
+    [UUID_C, UUID_D],
+    'encoded uuid segment redaction',
+  );
+
+  // Regressions: single-UUID and bare-UUID targets still redact fully.
+  assertRedacted(
+    redactRemoteTarget(`fail wss://relay.example.test/${UUID_C} ${UUID_C.toUpperCase()}`, `wss://relay.example.test/${UUID_C}`),
+    [UUID_C],
+    'single uuid target regression',
+  );
+  assertRedacted(
+    redactRemoteTarget(`fail ${UUID_C.toUpperCase()}`, UUID_C),
+    [UUID_C],
+    'bare uuid target regression',
+  );
+
+  // A non-UUID final segment is still redacted verbatim (unchanged behaviour).
+  const opaque = redactRemoteTarget('fail wss://relay.example.test/opaque-id', 'wss://relay.example.test/opaque-id');
+  assert(!opaque.includes('opaque-id'), `final-segment redaction regressed: ${opaque}`);
+}
+
+// Hostnames that only look like loopback must never downgrade to plaintext ws/http.
+async function testLoopbackBypassHostnames() {
+  const bypassHosts = [
+    ['127.0.0.1.evil.test', 'suffixed IPv4 loopback'],
+    ['localhost.evil.test', 'suffixed localhost'],
+    ['[::ffff:127.0.0.1]', 'IPv4-mapped IPv6 loopback'],
+    ['[::ffff:7f00:1]', 'IPv4-mapped IPv6 loopback (hex form)'],
+    ['[0:0:0:0:0:ffff:127.0.0.1]', 'expanded IPv4-mapped IPv6 loopback'],
+  ];
+
+  for (const [host, label] of bypassHosts) {
+    const connectorMessage = await expectReject(
+      () => Promise.resolve(parseRemoteTarget(`http://${host}:19889/mcp/${UUID_C}`)),
+      /non-loopback|must use wss/i,
+      `${label}: plaintext connector`,
+    );
+    assert(!connectorMessage.includes(UUID_C), `${label}: connector error leaked uuid: ${connectorMessage}`);
+
+    const relayMessage = await expectReject(
+      () => Promise.resolve(parseRemoteTarget(`ws://${host}:19888/${UUID_C}`)),
+      /must use wss/i,
+      `${label}: plaintext relay`,
+    );
+    assert(!relayMessage.includes(UUID_C), `${label}: relay error leaked uuid: ${relayMessage}`);
+
+    // TLS to the same hostname stays allowed; only the plaintext downgrade is refused.
+    const secure = parseRemoteTarget(`https://${host}:8443/mcp/${UUID_C}`);
+    assert(secure.uuid === UUID_C, `${label}: https connector uuid wrong: ${JSON.stringify(secure)}`);
+    assert(secure.relayUrl.startsWith('wss://'), `${label}: https connector must map to wss: ${JSON.stringify(secure)}`);
+  }
+}
+
+// Genuine loopback literals that WHATWG URL canonicalizes to 127.0.0.1 must be accepted.
+async function testNumericLoopbackCanonicalization() {
+  const shorthands = ['127.1', '127.0.1', '0x7f.0.0.1', '0177.0.0.1', '2130706433'];
+  let canonicalized = 0;
+
+  for (const host of shorthands) {
+    let hostname;
+    try {
+      hostname = new URL(`http://${host}:19889/`).hostname;
+    } catch {
+      continue; // This Node build refuses the literal outright; nothing to assert.
+    }
+    if (hostname !== '127.0.0.1') continue;
+
+    canonicalized += 1;
+    const parsed = parseRemoteTarget(`http://${host}:19889/mcp/${UUID_C}`);
+    assert(
+      parsed.relayUrl === 'ws://127.0.0.1:19889',
+      `${host}: canonical loopback relayUrl wrong: ${JSON.stringify(parsed)}`,
+    );
+    assert(parsed.uuid === UUID_C, `${host}: canonical loopback uuid wrong: ${JSON.stringify(parsed)}`);
+  }
+
+  assert(canonicalized > 0, 'no numeric loopback shorthand was canonicalized by this Node build');
+
+  // Fully-qualified loopback (trailing root dot) is loopback too.
+  const trailingDotHostname = new URL('http://127.0.0.1./').hostname;
+  if (trailingDotHostname === '127.0.0.1.') {
+    const parsed = parseRemoteTarget(`http://127.0.0.1.:19889/mcp/${UUID_C}`);
+    assert(
+      parsed.relayUrl === 'ws://127.0.0.1.:19889',
+      `trailing-dot loopback relayUrl wrong: ${JSON.stringify(parsed)}`,
+    );
+  }
+}
+
+// Encoded and path-confusion variants must resolve to exactly one accept/reject outcome.
+async function testEncodedPathConfusion() {
+  const accepted = [
+    [`https://relay.example.test/mcp/x/../${UUID_C}`, 'wss://relay.example.test', UUID_C, 'dot-dot traversal to canonical /mcp/<uuid>'],
+    [`https://relay.example.test/a/../mcp/${UUID_C}`, 'wss://relay.example.test', UUID_C, 'dot-dot traversal over prefix'],
+    [`https://relay.example.test/a/b/../mcp/${UUID_C}`, 'wss://relay.example.test/a', UUID_C, 'dot-dot traversal keeping prefix'],
+    [`https://relay.example.test/mcp//${UUID_C}`, 'wss://relay.example.test', UUID_C, 'double slash before uuid'],
+    [`https://relay.example.test//mcp/${UUID_C}`, 'wss://relay.example.test', UUID_C, 'double slash before mcp'],
+    [`https://relay.example.test/vibe//mcp/${UUID_C}`, 'wss://relay.example.test/vibe', UUID_C, 'double slash inside prefix'],
+    [`https://relay.example.test/mcp/${UUID_C.toUpperCase()}`, 'wss://relay.example.test', UUID_C.toUpperCase(), 'uppercase uuid segment'],
+    [`https://relay.example.test/mcp/${UUID_C}/`, 'wss://relay.example.test', UUID_C, 'trailing slash after uuid'],
+  ];
+
+  for (const [input, relayUrl, uuid, label] of accepted) {
+    const parsed = parseRemoteTarget(input);
+    assert(parsed.relayUrl === relayUrl, `${label}: relayUrl wrong: ${JSON.stringify(parsed)}`);
+    assert(parsed.uuid === uuid, `${label}: uuid wrong: ${JSON.stringify(parsed)}`);
+  }
+
+  const rejected = [
+    [`https://relay.example.test/%6dcp/${UUID_C}`, /expected an MCP connector path/, 'lowercase percent-encoded mcp segment'],
+    [`https://relay.example.test/%6Dcp/${UUID_C}`, /expected an MCP connector path/, 'uppercase percent-encoded mcp segment'],
+    [`https://relay.example.test/mcp%2f${UUID_C}`, /expected an MCP connector path/, 'encoded slash after mcp'],
+    [`https://relay.example.test/mcp%2F${UUID_C}`, /expected an MCP connector path/, 'encoded slash after mcp (upper)'],
+    [`https://relay.example.test/mcp/..%2f${UUID_C}`, /UUID path segment is not valid/, 'encoded traversal in uuid segment'],
+    [`https://relay.example.test/mcp/${UUID_C}/..`, /expected an MCP connector path/, 'traversal removing the uuid segment'],
+    [`https://relay.example.test/mcp/${encodeURIComponent(`${UUID_C}/mcp/${UUID_D}`)}`, /UUID path segment is not valid/, 'fully encoded nested connector path'],
+  ];
+
+  for (const [input, pattern, label] of rejected) {
+    const message = await expectReject(
+      () => Promise.resolve(parseRemoteTarget(input)),
+      pattern,
+      label,
+    );
+    assertNoLeak(message, label);
+    assert(!message.includes(UUID_C), `${label}: error leaked UUID_C: ${message}`);
+    assert(!message.includes(UUID_D), `${label}: error leaked UUID_D: ${message}`);
+  }
+}
+
+async function testSetRemoteAcceptsConnectorUrl() {
+  const port = await findFreePort();
+  const relay = startRelay(port, UUID_A);
+  const connection = new ExtensionConnection(0, false, undefined, undefined, 2_000, RECONNECT_DELAY_MS);
+  try {
+    const parsed = await withTimeout(
+      connection.setRemoteUrl(`http://${HOST}:${port}/mcp/${UUID_A}`),
+      'set_remote with http connector URL',
+    );
+    assert(parsed.uuid === UUID_A, `set_remote connector uuid wrong: ${JSON.stringify(parsed)}`);
+    assert(parsed.relayUrl === `ws://${HOST}:${port}`, `set_remote connector relayUrl wrong: ${JSON.stringify(parsed)}`);
+    await withTimeout(relay.connected, 'connector-url relay upgrade');
+    assert(connection.getStatus() === 'connected', `set_remote connector did not connect: ${connection.getStatus()}`);
+    assert(connection.getRemoteConfig()?.uuid === UUID_A, 'set_remote connector did not store uuid');
+
+    await expectReject(
+      () => connection.setRemoteUrl(`https://relay.example.test/api/tools`),
+      /expected an MCP connector path/,
+      'set_remote rejects generic http URL',
+    );
+  } finally {
+    await connection.stop();
+    await relay.close();
+  }
 }
 
 function testRetryPolicyMatrix() {
@@ -625,6 +925,12 @@ async function testHttpHandshakeRejectionMatrix() {
 }
 
 await testUrlValidation();
+await testConnectorUrlNormalization();
+await testDoubleMcpPathRedaction();
+await testLoopbackBypassHostnames();
+await testNumericLoopbackCanonicalization();
+await testEncodedPathConfusion();
+await testSetRemoteAcceptsConnectorUrl();
 testRetryPolicyMatrix();
 testCaseInsensitiveRedaction();
 await testHandshakeTimeout();

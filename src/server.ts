@@ -50,13 +50,13 @@ const STARTUP_TOOLS_LIST_BUDGET_MS = 3_000;
 const CALL_TOOL_TIMEOUT_MS = 120_000;
 export const SET_REMOTE_TOOL: ToolDefinition = {
   name: 'set_remote',
-  description: 'Set the remote relay target for this MCP server. If browser tools are missing, call set_remote first to connect to a Vibe relay. The routing UUID in the URL is the sole bearer credential for the relay session.',
+  description: 'Set the remote relay target for this MCP server. If browser tools are missing, call set_remote first to connect to a Vibe relay using the MCP connector URL from extension Settings, a bare extension UUID, or a ws(s) relay URL. The UUID is the sole bearer credential for the relay session.',
   inputSchema: {
     type: 'object',
     properties: {
       url: {
         type: 'string',
-        description: 'Remote target as either an extension UUID or a full websocket relay URL (for example wss://relay.api.vibebrowser.app/<extension-uuid>). Call set_remote first when browser tools are unavailable.',
+        description: 'Remote target: the MCP connector URL from the Vibe extension (https://relay.api.vibebrowser.app/mcp/<extension-uuid>), a bare extension UUID, or a ws(s) relay URL. Call set_remote first when browser tools are unavailable.',
       },
     },
     required: ['url'],

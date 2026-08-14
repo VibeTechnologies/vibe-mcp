@@ -79,6 +79,13 @@ function main() {
     throw new Error(`CLI help output missing usage marker\nstdout=${helpResult.stdout}\nstderr=${helpResult.stderr}`);
   }
   console.log('CLI_PACK_GATE:HELP_OK');
+
+  const remoteHelpIndex = helpOutput.indexOf('--remote');
+  const remoteHelpText = remoteHelpIndex >= 0 ? helpOutput.slice(remoteHelpIndex, remoteHelpIndex + 600) : '';
+  if (!remoteHelpText.includes('/mcp/<uuid>')) {
+    throw new Error(`CLI --remote help does not advertise the /mcp/<uuid> connector URL form\nhelp=${helpOutput}`);
+  }
+  console.log('CLI_PACK_GATE:REMOTE_HELP_OK');
   console.log('CLI_PACK_GATE:PASS');
 }
 

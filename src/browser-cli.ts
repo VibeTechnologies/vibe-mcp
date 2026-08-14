@@ -120,7 +120,7 @@ function buildBrowserCommand(command: Command): Command {
     .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
     .option('-d, --debug', 'Enable debug logging', false)
     .option('--devtools', 'Drive your real running Chrome directly over the DevTools Protocol (bypasses the extension relay)', false)
-    .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide extension UUID or full ws(s) relay URL). This routing UUID is the sole bearer credential — treat it like a password; regenerate it in extension Settings if exposed.', DEFAULT_REMOTE)
+    .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay. Accepts the connector URL from extension Settings (https://relay.api.vibebrowser.app/mcp/<uuid>), a bare extension UUID, or a ws(s) relay URL. This value is the sole bearer credential — treat it like a password; regenerate it in extension Settings if exposed.', DEFAULT_REMOTE)
     .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
     .option('--json', 'Emit machine-readable JSON output', false)
     .option('--timeout <ms>', 'Command timeout in milliseconds', String(DEFAULT_TIMEOUT_MS))

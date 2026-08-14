@@ -40,6 +40,30 @@ function run(cmd, args, opts = {}) {
 fs.rmSync(stageDir, { recursive: true, force: true });
 fs.mkdirSync(path.join(stageDir, 'server'), { recursive: true });
 
+// Bundle THIS checkout, not whatever the registry happens to hold.
+//
+// This used to depend on `${name}@${version}` and let npm resolve it from the
+// registry, which made the build — and the plugin-bundle e2e that runs it — fail
+// on every version bump, because the new version is by definition not published
+// yet. That is a release deadlock: you cannot publish without green CI and CI
+// cannot go green until you publish. Packing the local package also makes the
+// bundle byte-for-byte the code in this commit instead of a same-numbered
+// release that may have been built from something else.
+const packDir = path.join(repoRoot, 'build');
+fs.mkdirSync(packDir, { recursive: true });
+const tarballName = execFileSync('npm', ['pack', '--silent', '--pack-destination', packDir], {
+  cwd: repoRoot,
+  encoding: 'utf8',
+})
+  .trim()
+  .split('\n')
+  .pop()
+  .trim();
+const tarballPath = path.join(packDir, tarballName);
+if (!fs.existsSync(tarballPath)) {
+  throw new Error(`npm pack did not produce ${tarballPath}`);
+}
+
 fs.copyFileSync(manifestPath, path.join(stageDir, 'manifest.json'));
 fs.copyFileSync(path.join(here, 'server-entry.mjs'), path.join(stageDir, 'server', 'index.js'));
 
@@ -53,7 +77,7 @@ fs.writeFileSync(
       version: manifest.version,
       private: true,
       type: 'module',
-      dependencies: { [rootPkg.name]: rootPkg.version },
+      dependencies: { [rootPkg.name]: `file:${tarballPath}` },
     },
     null,
     2,
@@ -69,6 +93,14 @@ run('npm', ['install', '--omit=dev', '--omit=optional', '--no-audit', '--no-fund
 
 // npm writes a lockfile into the stage dir; harmless, but keep the bundle tidy.
 fs.rmSync(path.join(stageDir, 'package-lock.json'), { force: true });
+fs.rmSync(tarballPath, { force: true });
+
+// The staged package.json must not leak the absolute `file:` path of a build
+// host into the shipped bundle.
+const stagedPkgPath = path.join(stageDir, 'package.json');
+const stagedPkg = JSON.parse(fs.readFileSync(stagedPkgPath, 'utf8'));
+stagedPkg.dependencies = { [rootPkg.name]: rootPkg.version };
+fs.writeFileSync(stagedPkgPath, `${JSON.stringify(stagedPkg, null, 2)}\n`);
 
 const entry = path.join(stageDir, manifest.server.entry_point);
 if (!fs.existsSync(entry)) {

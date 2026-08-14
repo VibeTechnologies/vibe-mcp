@@ -1,7 +1,7 @@
 # status — public MCP docs aligned to the direct HTTP connector
 
 ```
-ROADMAP  ████████████████████  7/7 done
+ROADMAP  ████████████████████  8/8 done
  [x] 1. Audit docs: no relay OAuth guidance, no stale hosted claims
  [x] 2. README remote-connector section = direct HTTP /mcp/<uuid> only
  [x] 3. Credential warning + real Settings onboarding path documented
@@ -10,6 +10,8 @@ ROADMAP  ████████████████████  7/7 done
  [x] 6. Re-verify pass: no OAuth instructions, no worklog links, worktree clean
  [x] 7. Review fixes: server.json onboarding, ChatGPT-desktop=stdio label,
         hermetic docs-contract guard in test/test:ci
+ [x] 8. Cross-review: contract pins HTTPS-only hosted table, exact
+        `codex mcp add vibe --url`, migration note, pack section superseded
 
 WHY SLOW
  - not slow; docs-only change, no blockers

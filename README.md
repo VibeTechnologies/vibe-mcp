@@ -306,18 +306,33 @@ here; use the local stdio path instead.
 
 Where to paste it:
 
+<!-- docs-contract: hosted-table start -->
 | Client | Where |
 |---|---|
 | Claude (web, Cowork, mobile, Desktop) | Settings → Connectors → Add custom connector |
 | ChatGPT (web) | Settings → Connectors → developer mode |
+| Codex Desktop / Codex CLI (remote form) | `codex mcp add vibe --url https://relay.api.vibebrowser.app/mcp/<your-extension-uuid>` |
+<!-- docs-contract: hosted-table end -->
 
-Custom connectors are a paid-plan feature in both products.
+Custom connectors are a paid-plan feature in the Claude and ChatGPT products.
 
-> **ChatGPT desktop app / Codex CLI / Codex IDE extension do not belong here.**
-> They all read the local `~/.codex/config.toml` and can spawn a process, so use
-> the local stdio path above — it keeps traffic on `127.0.0.1` and keeps the
-> UUID out of a URL. Only use the hosted URL for surfaces that genuinely run in
-> a vendor cloud (Claude web/Cowork/mobile/Desktop connectors, ChatGPT web).
+> **Codex Desktop, Codex CLI and the Codex IDE extension can spawn a local
+> process**, and they all share `~/.codex/config.toml`. Prefer the local stdio
+> entry above — it keeps traffic on `127.0.0.1` and keeps the UUID out of a URL.
+> Use `codex mcp add vibe --url …` only when the browser you want to drive is on
+> a different machine from Codex. The ChatGPT **desktop app** is Codex-backed and
+> reads the same config, so it is a local-stdio surface too; only ChatGPT **web**
+> needs the hosted URL.
+
+#### Migrating away from the retired OAuth-style connector guidance
+
+Earlier drafts of these docs (and the Aug 2026 directory-submission research in
+`worklog/`) described a retired OAuth 2.1 + DCR consent flow at a bare `/mcp`.
+That
+path is **retired and unsupported for users**. If you previously added Vibe as a
+connector and were sent to a consent screen, remove that connector and re-add it
+with the direct `https://relay.api.vibebrowser.app/mcp/<uuid>` URL above. Nothing
+to authorize, nothing to register, no scopes to pick.
 
 The relay also accepts the UUID as an `X-Remote-Session` or
 `Authorization: Bearer` header on a bare `POST /mcp`. Use the header form from

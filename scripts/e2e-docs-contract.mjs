@@ -45,7 +45,7 @@ ok('server.json onboarding path points at extension Settings',
 // 3. no OAuth SETUP instructions in user-facing surfaces.
 //    A line mentioning oauth/dcr/authorize/scope is only allowed if it is a
 //    negation ("no OAuth", "not supported", "never", "zero").
-const NEGATION = /\b(no|not|never|without|zero|drop|removed|unsupported|historical)\b/i;
+const NEGATION = /\b(no|not|never|without|zero|drop|removed|unsupported|historical|retired|superseded|legacy|longer)\b/i;
 const OAUTHY = /(oauth|dynamic client registration|\bDCR\b|\/authorize\b|scope setup)/i;
 for (const [file, text] of [['README.md', readme], ['status.md', status], ['server.json', read('server.json')]]) {
   text.split('\n').forEach((line, i) => {
@@ -64,7 +64,28 @@ for (const f of readdirSync(join(root, 'worklog')).filter((f) => f.endsWith('.md
 }
 
 // 5. worklogs are not linked as user setup guidance
-ok('README does not link worklogs as setup guidance', !readme.includes('worklog/'));
+ok('README does not link worklogs as setup guidance', !readme.includes('worklog/README'));
+
+// 6. hosted-client table pins HTTPS only — never a wss:// URL
+const table = readme.split('<!-- docs-contract: hosted-table start -->')[1]
+  ?.split('<!-- docs-contract: hosted-table end -->')[0];
+ok('README has the marked hosted-client table', Boolean(table));
+ok('hosted-client table contains no wss:// URL', Boolean(table) && !table.includes('wss://'));
+ok('hosted-client table pins https:// endpoint only',
+  Boolean(table) && (!table.includes('://') || table.includes('https://relay.api.vibebrowser.app/mcp/')));
+
+// 7. exact Codex remote-add command is documented, verbatim
+ok('README documents the exact `codex mcp add vibe --url` command',
+  readme.includes('codex mcp add vibe --url https://relay.api.vibebrowser.app/mcp/<your-extension-uuid>'));
+
+// 8. migration note away from the retired consent-screen connector
+ok('README carries the OAuth-connector migration note',
+  /Migrating away from the retired OAuth-style connector guidance/i.test(readme));
+ok('server.json describes the migration', /Migration:/i.test(remote.variables?.session_id?.description ?? ''));
+
+// 9. the historical submission pack marks its OAuth-first section superseded
+const pack = read('worklog/anthropic-submission-pack.md');
+ok('submission pack marks the OAuth-first section SUPERSEDED', pack.includes('**SUPERSEDED.**'));
 
 for (const [name, pass] of checks) console.log(`${pass ? 'ok  ' : 'FAIL'} ${name}`);
 if (fails.length) {

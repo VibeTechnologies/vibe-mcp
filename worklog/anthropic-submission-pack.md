@@ -722,7 +722,13 @@ directories now appear to gate submission behind a paid tier.
 **Action:** confirm the plan first. If it is not Team/Enterprise, upgrading is
 the prerequisite, not a nice-to-have.
 
-### 8.2 ~~BLOCKER~~ RESOLVED 2026-08-11 — public docs now lead with OAuth
+### 8.2 ~~BLOCKER~~ ~~RESOLVED 2026-08-11 — public docs now lead with OAuth~~
+
+> **SUPERSEDED.** The OAuth-first direction described in this section was later
+> retired. The supported user-facing path is the direct Streamable HTTP endpoint
+> `https://relay.api.vibebrowser.app/mcp/<extension-uuid>` — no OAuth consent, no
+> DCR, no scopes. Everything below is kept verbatim as a record of what was true
+> on 2026-08-11 only; do not follow it as setup guidance.
 
 **Status: fixed and live in production.** Shipped in
 [dzianisv/VibeBrowserProductPage#226](https://github.com/dzianisv/VibeBrowserProductPage/pull/226),

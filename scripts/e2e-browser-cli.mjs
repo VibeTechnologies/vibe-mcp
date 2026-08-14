@@ -166,7 +166,7 @@ try {
     });
   });
 
-  const { parseRemoteRelayUrl } = await import(DIST_CONNECTION);
+  const { parseRemoteRelayUrl, parseRemoteTarget } = await import(DIST_CONNECTION);
   const parsedWssRemote = parseRemoteRelayUrl(`wss://relay.example.test/nested/${REMOTE_UUID}`);
   assert(parsedWssRemote.relayUrl === 'wss://relay.example.test/nested', `wss remote relay base parsed incorrectly: ${JSON.stringify(parsedWssRemote)}`);
   assert(parsedWssRemote.uuid === REMOTE_UUID, `wss remote UUID parsed incorrectly: ${JSON.stringify(parsedWssRemote)}`);
@@ -179,12 +179,25 @@ try {
   }
   assert(queryRejected, 'remote relay URL with query params should be rejected (token must be separate)');
 
+  const parsedHttpConnector = parseRemoteTarget(`https://relay.example.test/nested/mcp/${REMOTE_UUID}`);
+  assert(parsedHttpConnector.relayUrl === 'wss://relay.example.test/nested', `https connector relay base parsed incorrectly: ${JSON.stringify(parsedHttpConnector)}`);
+  assert(parsedHttpConnector.uuid === REMOTE_UUID, `https connector UUID parsed incorrectly: ${JSON.stringify(parsedHttpConnector)}`);
+
   const status = await runCli(['status']);
   assert(status.ok === true, `status failed: ${JSON.stringify(status)}`);
   assert(status.extensionConnected === true, `expected extension connected: ${JSON.stringify(status)}`);
   assert(Number(status.toolCount) >= 10, `expected toolCount >= 10: ${JSON.stringify(status)}`);
   assert(status.sessionId === REDACTED_REMOTE_ID, `expected redacted remote session: ${JSON.stringify(status)}`);
   assert(!JSON.stringify(status).includes(REMOTE_UUID), `status leaked remote UUID: ${JSON.stringify(status)}`);
+
+  const connectorStatus = await runCli(['status'], { remoteValue: `http://${HOST}:${RELAY_PORT}/mcp/${REMOTE_UUID}` });
+  assert(connectorStatus.ok === true, `connector-url status failed: ${JSON.stringify(connectorStatus)}`);
+  assert(connectorStatus.mode === 'remote', `connector-url status should be remote mode: ${JSON.stringify(connectorStatus)}`);
+  assert(connectorStatus.extensionConnected === true, `connector-url status should connect extension: ${JSON.stringify(connectorStatus)}`);
+  assert(connectorStatus.sessionId === REDACTED_REMOTE_ID, `connector-url status should redact sessionId: ${JSON.stringify(connectorStatus)}`);
+  assert(!JSON.stringify(connectorStatus).includes(REMOTE_UUID), `connector-url status leaked remote UUID: ${JSON.stringify(connectorStatus)}`);
+  assert(connectorStatus.toolCount === status.toolCount, `connector-url status toolCount mismatch: ${JSON.stringify(connectorStatus)} vs ${JSON.stringify(status)}`);
+  assert(Array.isArray(connectorStatus.sessions) && connectorStatus.sessions.length === status.sessions.length, `connector-url status sessions mismatch: ${JSON.stringify(connectorStatus)} vs ${JSON.stringify(status)}`);
 
   const uuidStatus = await runCli(['status'], { remoteValue: REMOTE_UUID });
   if (E2E_BROWSER_CLI_SOURCE === 'local') {

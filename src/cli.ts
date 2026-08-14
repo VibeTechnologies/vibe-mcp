@@ -4,7 +4,9 @@
  *
  * Modes:
  *   Local (default): connects to local relay daemon on localhost
- *   Remote (--remote <uuid-or-url>): connects to public relay at relay.api.vibebrowser.app
+ *   Remote (--remote <uuid-or-url>): connects to a Vibe relay using the MCP
+ *     connector URL from extension Settings (https://relay.api.vibebrowser.app/mcp/<uuid>),
+ *     a bare extension UUID, or a ws(s) relay URL.
  */
 
 import { program } from 'commander';
@@ -35,7 +37,7 @@ program
   .option('-p, --port <number>', 'WebSocket port for local relay (agent) connection', String(DEFAULT_WS_PORT))
   .option('-d, --debug', 'Enable debug logging', false)
   .option('--devtools', 'Drive your real running Chrome directly over the DevTools Protocol (bypasses the extension relay)', false)
-  .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay (provide extension UUID or full ws(s) relay URL). This routing UUID is the sole bearer credential — treat it like a password; regenerate it in extension Settings if exposed.')
+  .option('-r, --remote <uuid-or-url>', 'Connect to a remote extension via relay. Accepts the connector URL from extension Settings (https://relay.api.vibebrowser.app/mcp/<uuid>), a bare extension UUID, or a ws(s) relay URL. This value is the sole bearer credential — treat it like a password; regenerate it in extension Settings if exposed.')
   .option('-s, --session <id>', 'Target a specific local browser session ID; defaults to the first connected session')
   .option('--transport <mode>', 'MCP transport to expose: stdio or http', 'stdio')
   .option('--host <host>', 'Host to bind the HTTP server to', '127.0.0.1')
@@ -77,7 +79,7 @@ program
 program
   .command('openclaw')
   .description('Print OpenClaw-friendly configuration for cloud agent -> local browser relay')
-  .requiredOption('-r, --remote <uuid-or-url>', 'Extension UUID or full ws(s) relay URL from Vibe extension Settings > MCP External > Remote. Treat this routing UUID like a password; regenerate it in Settings if exposed.')
+  .requiredOption('-r, --remote <uuid-or-url>', 'MCP connector URL (https://relay.api.vibebrowser.app/mcp/<uuid>), extension UUID, or ws(s) relay URL from Vibe extension Settings > MCP External > Remote. Treat this value like a password; regenerate it in Settings if exposed.')
   .option('--host <host>', 'Host to bind the HTTP server to', '127.0.0.1')
   .option('--http-port <number>', 'Port for streamable HTTP MCP transport', String(DEFAULT_HTTP_PORT))
   .option('--http-path <path>', 'Path for streamable HTTP MCP transport', DEFAULT_HTTP_PATH)
@@ -123,7 +125,7 @@ program
       };
 
       console.log('Start a local bridge on the machine running the Vibe extension:');
-      console.log('Set VIBE_REMOTE_URL securely to the UUID or full relay URL, then run:');
+      console.log('Set VIBE_REMOTE_URL securely to the connector URL (https://relay.api.vibebrowser.app/mcp/<uuid>), a bare UUID, or a full ws(s) relay URL, then run:');
       console.log(`npx ${cliArgs.join(' ')}`);
       console.log('');
       console.log('Local bridge MCP URL:');

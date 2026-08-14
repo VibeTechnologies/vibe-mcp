@@ -294,18 +294,46 @@ For those, skip `@vibebrowser/mcp` entirely. The extension alone is enough:
 https://relay.api.vibebrowser.app/mcp/<your-extension-uuid>
 ```
 
-Find `<your-extension-uuid>` in the extension: **Vibe icon → Settings → Agent
-connection URL**. It is the same UUID the CLI takes as
-`--remote wss://relay.api.vibebrowser.app/<uuid>`.
+Find `<your-extension-uuid>` in the extension: **Vibe icon → Settings → AI Agent
+Control → Remote (internet) → Relay access**. It is the same UUID the CLI takes
+as `--remote wss://relay.api.vibebrowser.app/<uuid>`.
+
+This is a plain **Streamable HTTP** MCP endpoint. There is **no OAuth consent
+flow, no dynamic client registration, and no scope setup** on this path — the
+UUID in the URL (or header, below) is the entire credential. If a client insists
+on an OAuth login before it will add the server, that client is not supported
+here; use the local stdio path instead.
 
 Where to paste it:
 
+<!-- docs-contract: hosted-table start -->
 | Client | Where |
 |---|---|
-| Claude (web, Cowork, mobile, Desktop) | Settings → Connectors → Add custom connector |
+| Claude (web, Cowork, mobile) | Settings → Connectors → Add custom connector |
+| Claude Desktop — **alternative only**; prefer the local stdio entry above when Chrome runs on the same machine | Settings → Connectors → Add custom connector |
 | ChatGPT (web) | Settings → Connectors → developer mode |
+| Codex Desktop / Codex CLI (remote form) | `codex mcp add vibe --url https://relay.api.vibebrowser.app/mcp/<your-extension-uuid>` |
+<!-- docs-contract: hosted-table end -->
 
-Custom connectors are a paid-plan feature in both products.
+Custom connectors are a paid-plan feature in the Claude and ChatGPT products.
+
+> **Codex Desktop, Codex CLI and the Codex IDE extension can spawn a local
+> process**, and they all share `~/.codex/config.toml`. Prefer the local stdio
+> entry above — it keeps traffic on `127.0.0.1` and keeps the UUID out of a URL.
+> Use `codex mcp add vibe --url …` only when the browser you want to drive is on
+> a different machine from Codex. The ChatGPT **desktop app** is Codex-backed and
+> reads the same config, so it is a local-stdio surface too; only ChatGPT **web**
+> needs the hosted URL.
+
+#### Migrating away from the retired OAuth-style connector guidance
+
+Earlier drafts of these docs (and the Aug 2026 directory-submission research
+kept under `worklog/`) described a retired OAuth 2.1 + DCR consent flow at a
+bare `/mcp`. That path is **retired and unsupported for users**. If you
+previously added Vibe as a connector and were sent to a retired consent screen,
+remove that connector and re-add it with the direct
+`https://relay.api.vibebrowser.app/mcp/<uuid>` URL above. Nothing to authorize,
+nothing to register, no scopes to pick.
 
 The relay also accepts the UUID as an `X-Remote-Session` or
 `Authorization: Bearer` header on a bare `POST /mcp`. Use the header form from

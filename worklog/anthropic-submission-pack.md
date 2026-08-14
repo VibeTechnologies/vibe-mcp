@@ -1,5 +1,13 @@
 # Anthropic Connectors Directory — submission pack
 
+> ⚠️ **HISTORICAL INTERNAL NOTE — NOT CURRENT USER GUIDANCE.**
+> Point-in-time research from August 2026. It explores an OAuth 2.1 / DCR /
+> consent-flow direction for the relay. That is **not** the supported path.
+> The supported hosted-client path is the direct Streamable HTTP endpoint
+> `https://relay.api.vibebrowser.app/mcp/<extension-uuid>` with the UUID as the
+> sole credential — no OAuth, no DCR, no scopes. See `README.md` and
+> `status.md` for current setup instructions. Kept for provenance only.
+
 **Purpose:** every field of Anthropic's submission portal, pre-filled and
 copy-paste ready, so the founder can complete the submission in under five
 minutes.
@@ -714,7 +722,13 @@ directories now appear to gate submission behind a paid tier.
 **Action:** confirm the plan first. If it is not Team/Enterprise, upgrading is
 the prerequisite, not a nice-to-have.
 
-### 8.2 ~~BLOCKER~~ RESOLVED 2026-08-11 — public docs now lead with OAuth
+### 8.2 ~~BLOCKER~~ ~~RESOLVED 2026-08-11 — public docs now lead with OAuth~~
+
+> **SUPERSEDED.** The OAuth-first direction described in this section was later
+> retired. The supported user-facing path is the direct Streamable HTTP endpoint
+> `https://relay.api.vibebrowser.app/mcp/<extension-uuid>` — no OAuth consent, no
+> DCR, no scopes. Everything below is kept verbatim as a record of what was true
+> on 2026-08-11 only; do not follow it as setup guidance.
 
 **Status: fixed and live in production.** Shipped in
 [dzianisv/VibeBrowserProductPage#226](https://github.com/dzianisv/VibeBrowserProductPage/pull/226),

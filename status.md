@@ -1,53 +1,58 @@
-# status — Anthropic Connectors Directory submission pack
+# status — public MCP docs aligned to the direct HTTP connector
 
 ```
-ROADMAP  ██████████████████░░  9/10 done
- [x] 1. Fetch CURRENT Anthropic docs — portal, not a GitHub repo
- [x] 2. Enumerate all 11 portal steps + every field
- [x] 3. Screenshots: NOT required (MCP Apps only) — icon IS required
- [x] 4. Verify 10 URLs + 401 handshake + both .well-known + DCR 201 live
- [x] 5. Dump 27-tool inventory w/ annotations (11 read-only / 16 write / 5 destr)
- [x] 6. Icon 512x512 verified visually, no PII -> assets/directory-icon-512.png
- [x] 7. Write worklog/anthropic-submission-pack.md, every field pre-filled
- [x] 8. Name 2 blockers: Team/Enterprise plan gate; docs still show UUID path
- [x] 9. build + tsc + validate:skill + test:ci all green; PR merged
- [~] 10. Founder-only: clear 2 blockers, then paste the form  <-- YOU ARE HERE
+ROADMAP  ████████████████████  10/10 done
+ [x] 1. Audit docs: no relay OAuth guidance, no stale hosted claims
+ [x] 2. README remote-connector section = direct HTTP /mcp/<uuid> only
+ [x] 3. Credential warning + real Settings onboarding path documented
+ [x] 4. Historical internal worklogs banner-marked, not current guidance
+ [x] 5. build + tsc + validate:skill green; committed 62b1c74
+ [x] 6. Re-verify pass: no OAuth instructions, no worklog links, worktree clean
+ [x] 7. Review fixes: server.json onboarding, ChatGPT-desktop=stdio label,
+        hermetic docs-contract guard in test/test:ci
+ [x] 8. Cross-review: contract pins HTTPS-only hosted table, exact
+        `codex mcp add vibe --url`, migration note, pack section superseded
+ [x] 9. Guard hardened: same-line denial required, real markdown-link check,
+        scan covers SKILL.md/docs/mcpb; Claude Desktop marked alternative
+ [x] 10. Branch pushed, PR #142 opened; stale PR #141 already CLOSED and
+         annotated as superseded
+
+WHY SLOW
+ - not slow; docs-only change, no blockers
+
+NEXT
+ - review + merge PR #142
 ```
 
-## Key findings
+## Supported user-facing shape
 
-- Submission is a **web portal inside Claude.ai admin settings**
-  (`https://claude.ai/admin-settings/directory/submissions/new`), not a GitHub
-  PR. The earlier `claude-plugins-official` / `claude-community` repo theory is
-  wrong and appears nowhere in the current docs.
-- **Screenshots are NOT required.** Carousel screenshots apply only to *MCP
-  Apps* (servers with interactive UI). We are a plain remote MCP server. One
-  image is required: the listing icon.
-- **Functional testing confirmed as escalation-only.** Automated policy scan →
-  Community listing by default; a human runs every tool only if Anthropic
-  escalates to Verified, which we cannot request. Prior conclusion holds.
-  Caveat: portal step 3 syncs `tools/list` **live**, so the founder must have
-  their browser + extension connected while filling in the form.
-- **Blocker 1 — plan gate.** The portal needs a **Team or Enterprise** org;
-  admin settings do not exist on individual plans. Could not check which plan
-  the founder is on (not authorized to log into claude.ai).
-- **Blocker 2 — docs mismatch.** `/integrations/claude-connector` and `/mcp`
-  still document the legacy `/mcp/<uuid>` credential-in-URL path and say "no
-  OAuth". `oauth` appears zero times on `/mcp`. Must be fixed in
-  `VibeBrowserProductPage` before submitting.
+| Path | Transport | Credential |
+|---|---|---|
+| Hosted Claude (web, Cowork, mobile, Desktop), Codex desktop, ChatGPT web | `https://relay.api.vibebrowser.app/mcp/<uuid>` (Streamable HTTP) | UUID in URL |
+| Anything that can send headers (Codex CLI, scripts) | `POST /mcp` + `X-Remote-Session` / `Authorization: Bearer` | UUID in header |
+| Local MCP clients (Claude Desktop, Cursor, VS Code, OpenCode) | stdio via `npx -y @vibebrowser/mcp` | none (localhost) |
+| CLI / OpenClaw skill | `wss://relay.api.vibebrowser.app/<uuid>` | UUID in URL |
 
-## Proof (measured in prod 2026-08-11)
+Onboarding path for the UUID: **Vibe icon → Settings → AI Agent Control →
+Remote (internet) → Relay access**.
 
-```
-POST /mcp (no creds) -> 401
-  www-authenticate: Bearer resource_metadata="…", scope="browser:read browser:control"
-/.well-known/oauth-protected-resource   -> 200   (resource matches entered URL exactly)
-/.well-known/oauth-authorization-server -> 200   (S256 + offline_access advertised)
-POST /oauth/register                    -> 201   (accepts claude.ai/api/mcp/auth_callback)
-privacy, terms, mcp, integrations, claude-connector, chatgpt-connector, cli, / -> 200
-```
+## Not supported in the user-facing path
+
+- Never document as setup: relay OAuth consent, `/oauth/authorize` (not a
+  supported endpoint for users), token exchange, no dynamic client registration,
+  no scope configuration. No public doc may instruct a user to do any of these.
+- The UUID is the sole bearer credential. It grants live control of the
+  logged-in browser session — treat it like a password; regenerate in extension
+  Settings if it leaks.
+
+## Historical material
+
+`worklog/anthropic-submission-pack.md`, `worklog/openai-verification-pack.md`
+and `worklog/mcp-distribution-channels.md` are point-in-time internal research
+from Aug 2026. The OAuth/DCR direction they describe is retired and is **not**
+the supported user path. Each now carries a HISTORICAL banner. Kept for provenance,
+not as setup instructions.
 
 ## Next
 
-- Founder: confirm Claude plan is Team/Enterprise; fix the two docs pages; then
-  run §9 of `worklog/anthropic-submission-pack.md`.
+- None for docs. Reopen only if the relay's supported transport changes.

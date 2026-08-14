@@ -1,8 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.VibeTechnologies/vibe-mcp",
-  "title": "Vibe MCP — Real Chrome, Remotely",
-  "description": "Drive your real, logged-in Chrome from any MCP client — even from a remote machine, no inbound port.",
+  "title": "Vibe MCP \u2014 Real Chrome, Remotely",
+  "description": "Drive your real, logged-in Chrome from any MCP client \u2014 even from a remote machine, no inbound port.",
   "repository": {
     "url": "https://github.com/VibeTechnologies/vibe-mcp",
     "source": "github"
@@ -26,7 +26,7 @@
       "url": "https://relay.api.vibebrowser.app/mcp/{session_id}",
       "variables": {
         "session_id": {
-          "description": "Your personal agent-connection ID from the Vibe extension (Settings -> external agent control -> Remote (internet) -> Agent connection URL). It is a bearer capability granting full control of that browser: never share it, and regenerate the session in the extension to revoke it.",
+          "description": "Your personal agent-connection ID from the Vibe extension (Vibe icon -> Settings -> AI Agent Control -> Remote (internet) -> Relay access). Paste the URL as-is: this endpoint is plain Streamable HTTP with no OAuth, no dynamic client registration and no scope setup. Migration: the retired consent-screen connector at a bare /mcp is unsupported -- remove it and re-add this direct URL. The ID is a bearer capability granting full control of that browser: never share it, and regenerate the session in the extension to revoke it.",
           "isRequired": true,
           "isSecret": true
         }

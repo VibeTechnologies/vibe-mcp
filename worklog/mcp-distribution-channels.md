@@ -1,5 +1,13 @@
 # MCP distribution channels — where we can list vibe-mcp
 
+> ⚠️ **HISTORICAL INTERNAL NOTE — NOT CURRENT USER GUIDANCE.**
+> Point-in-time research from August 2026. It explores an OAuth 2.1 / DCR /
+> consent-flow direction for the relay. That is **not** the supported path.
+> The supported hosted-client path is the direct Streamable HTTP endpoint
+> `https://relay.api.vibebrowser.app/mcp/<extension-uuid>` with the UUID as the
+> sole credential — no OAuth, no DCR, no scopes. See `README.md` and
+> `status.md` for current setup instructions. Kept for provenance only.
+
 Re-assessed **2026-08-07** against freshly fetched official docs. Supersedes the
 version written earlier the same day, whose central premise is now wrong.
 

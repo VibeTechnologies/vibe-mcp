@@ -1,7 +1,7 @@
 # status — public MCP docs aligned to the direct HTTP connector
 
 ```
-ROADMAP  ████████████████████  9/9 done
+ROADMAP  ████████████████████  10/10 done
  [x] 1. Audit docs: no relay OAuth guidance, no stale hosted claims
  [x] 2. README remote-connector section = direct HTTP /mcp/<uuid> only
  [x] 3. Credential warning + real Settings onboarding path documented
@@ -14,12 +14,14 @@ ROADMAP  ████████████████████  9/9 done
         `codex mcp add vibe --url`, migration note, pack section superseded
  [x] 9. Guard hardened: same-line denial required, real markdown-link check,
         scan covers SKILL.md/docs/mcpb; Claude Desktop marked alternative
+ [x] 10. Branch pushed, PR #142 opened; stale PR #141 already CLOSED and
+         annotated as superseded
 
 WHY SLOW
  - not slow; docs-only change, no blockers
 
 NEXT
- - open PR; close/supersede stale PR #141 (no longer valid guidance)
+ - review + merge PR #142
 ```
 
 ## Supported user-facing shape

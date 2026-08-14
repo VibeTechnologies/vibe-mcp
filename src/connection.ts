@@ -78,6 +78,23 @@ export function isPermanentRelayHttpStatus(statusCode: number): boolean {
   return PERMANENT_RELAY_HTTP_STATUS_CODES.has(statusCode);
 }
 
+function collectUuidPathSegments(pathname: string): string[] {
+  const found: string[] = [];
+  for (const segment of pathname.split('/')) {
+    if (!segment) continue;
+    const variants = new Set([segment]);
+    try {
+      variants.add(decodeURIComponent(segment));
+    } catch {
+      // Malformed percent-escape: only the raw segment is usable.
+    }
+    for (const variant of variants) {
+      if (UUID_PATTERN.test(variant)) found.push(variant);
+    }
+  }
+  return found;
+}
+
 export function redactRemoteTarget(message: string, target?: string): string {
   if (!target) {
     return message;
@@ -86,8 +103,13 @@ export function redactRemoteTarget(message: string, target?: string): string {
   const candidates = new Set([target]);
   try {
     const parsed = new URL(target);
-    const uuid = parsed.pathname.split('/').filter(Boolean).at(-1);
-    if (uuid) candidates.add(uuid);
+    // The final segment is the routing UUID for well-formed targets; keep redacting
+    // it verbatim even when it is not UUID-shaped.
+    const lastSegment = parsed.pathname.split('/').filter(Boolean).at(-1);
+    if (lastSegment) candidates.add(lastSegment);
+    // A malformed-but-parseable target (e.g. /mcp/<u1>/mcp/<u2>) folds earlier UUIDs
+    // into the derived relay base, so every UUID-shaped segment must be redacted.
+    for (const uuid of collectUuidPathSegments(parsed.pathname)) candidates.add(uuid);
   } catch {
     // A bare UUID is already included as the target candidate.
   }

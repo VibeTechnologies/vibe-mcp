@@ -455,6 +455,23 @@ export class RelayServer extends EventEmitter {
     this.log(`Extension message (${session.sessionId}): ${message.type}`);
 
     if (message.type === 'connected') {
+      // Reply so the extension's pong watchdog does not fire.
+      //
+      // The extension (vibe lib/mcp/external-client.ts) sends `{type:'connected'}`
+      // every CLIENT_HEARTBEAT_INTERVAL_MS (15 s) and treats ANY inbound frame as
+      // the pong. After MAX_MISSED_PONGS (2) unanswered heartbeats it declares the
+      // socket dead and force-reconnects — so a relay that stays silent here churns
+      // the extension connection every ~30 s forever, and every in-flight tool call
+      // that spans a swap dies ("Extension reconnecting"). The hosted relay already
+      // answers this heartbeat (platform relay-service `handleExtensionMessage`);
+      // the local daemon must behave identically.
+      if (sourceWs.readyState === WebSocket.OPEN) {
+        try {
+          sourceWs.send(JSON.stringify({ type: 'pong' }));
+        } catch (error) {
+          this.log(`Failed to answer extension heartbeat: ${error}`);
+        }
+      }
       return;
     }
 

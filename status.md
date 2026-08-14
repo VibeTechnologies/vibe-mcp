@@ -1,12 +1,19 @@
 # status — public MCP docs aligned to the direct HTTP connector
 
 ```
-ROADMAP  ████████████████████  5/5 done
+ROADMAP  ████████████████████  6/6 done
  [x] 1. Audit README/docs/status/worklogs for relay OAuth + stale hosted claims
  [x] 2. README remote-connector section = direct HTTP /mcp/<uuid> only
  [x] 3. Credential warning + real Settings onboarding path documented
  [x] 4. Historical internal worklogs banner-marked, not current guidance
- [x] 5. build + tsc + validate:skill green; committed
+ [x] 5. build + tsc + validate:skill green; committed 62b1c74
+ [x] 6. Re-verify pass: no OAuth instructions, no worklog links, worktree clean
+
+WHY SLOW
+ - not slow; docs-only change, no blockers
+
+NEXT
+ - open PR for 62b1c74 if it should merge
 ```
 
 ## Supported user-facing shape

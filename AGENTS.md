@@ -14,6 +14,54 @@ Facts from production debugging that must not be forgotten.
 - If stale `close` sets `extensionWs = null`, agents will fail `call_tool` with `No extension connected` even while tools are still being broadcast.
 - Extension socket race fix lives in [src/relay.ts](/Users/engineer/workspace/vibebrowser/vibe-mcp/src/relay.ts).
 
+### "Extension reconnecting" errors (root-caused AGE-10 / AGE-133, fixed in #143 + #144)
+
+How Claude Desktop actually reaches the browser: **Claude -> hosted remote MCP
+connector (`https://relay.api.vibebrowser.app/mcp`, an account-level connector,
+not a local stdio server or `.mcpb` extension) -> extension WebSocket**. Confirm
+this before debugging anything else — `claude_desktop_config.json` normally has
+no `mcpServers` block for this path, and `~/Library/Logs/Claude/main.log` lists
+`vibebrowser` under `replaceRemoteMcpServers` alongside other remote connectors.
+
+Two independent faults can each produce the user-visible `Extension
+reconnecting` string (the relay's `notifyPendingRequests(session, 'Extension
+reconnecting')`, which fails every in-flight call instantly with no re-queue):
+
+1. **Local daemon never answered the extension heartbeat -> permanent ~30 s
+   reconnect churn (fixed in [#143](https://github.com/VibeTechnologies/vibe-mcp/pull/143)).**
+   The extension (`vibe/lib/mcp/external-client.ts`) sends `{type:'connected'}`
+   every `CLIENT_HEARTBEAT_INTERVAL_MS` (15 s) and treats any inbound frame as
+   the pong; after `MAX_MISSED_PONGS` (2) unanswered heartbeats it force-reconnects.
+   The local `relay.ts` used to return early on `connected` without replying —
+   the hosted relay already answered it, so only the local daemon churned.
+   Diagnose with 1s-interval `lsof` sampling of the extension's local port
+   (`19889`): a healthy connection is stable; the bug shows teardown/rebuild on
+   a new ephemeral port every ~17-27 s.
+2. **Publishing is not deploying — a stale global/npx install silently keeps
+   every already-fixed bug** (fixed in [#144](https://github.com/VibeTechnologies/vibe-mcp/pull/144)).
+   `npm view @vibebrowser/mcp version` reporting the fixed version proves
+   nothing about what is actually running. Check the *executing* binary:
+   `grep -c pong $(which -a node | xargs -I{} echo)/../lib/node_modules/@vibebrowser/mcp/dist/relay.js`,
+   or simpler, `lsof -p <relay-daemon pid> | grep cwd`/`ps -o command= -p <pid>`
+   to see which install (`-g`, `npx` cache, or a stale worktree) actually spawned
+   it. Since #144 the pong the relay sends back to the extension carries a
+   `version` field precisely so this stops requiring process forensics — a pong
+   with no `version` is by construction an install older than #144.
+
+Separately: `chrome.storage.local`'s `mcp_external_enabled: true` with
+`mcp_external_mode` **absent** resolves to `'local'` (`background.ts`'s
+`|| 'local'` fallback), so the extension can hold a perfectly healthy *local*
+relay connection while the *hosted* connector (what Claude/ChatGPT actually
+talk to) has no session for that UUID at all (`/api/v1/extensions/<uuid>/status`
+-> `connected: false`, `tools/list` -> `-32002`). This is a mode/settings
+mismatch, not a relay bug — verify Settings -> AI Agent Control -> Remote
+before assuming the relay is broken. Do not flip this automatically; it changes
+the browser's exposure posture and is the user's call.
+
+Full forensic write-up with every probe and timestamped measurement: the
+`investigation` document on [AGE-10](/AGE/issues/AGE-10) (frozen; live re-home
+is [AGE-133](/AGE/issues/AGE-133)).
+
 ## What Counts as Real E2E
 
 - `list_tools` success is not enough.

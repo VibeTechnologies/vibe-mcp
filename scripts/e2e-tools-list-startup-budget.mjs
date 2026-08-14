@@ -26,7 +26,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const HOST = '127.0.0.1';
-const REMOTE_UUID = 'test-tools-list-budget-uuid';
+const REMOTE_UUID = '77777777-7777-4777-8777-777777777777';
 const SESSION_ID = REMOTE_UUID;
 // Must beat a typical client startup budget (10s) and the old ~5.5s blocking path.
 const TOOLS_LIST_MAX_MS = 4_500;

@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
-import { ExtensionConnection } from './connection.js';
+import { ExtensionConnection, redactRemoteTarget, REDACTED_REMOTE_ID } from './connection.js';
 import { ChromeUseConnection, type CdpConnector } from './chrome-use-connection.js';
 import { DEFAULT_WS_PORT, type RelaySessionSummary, type ToolDefinition, type ToolResult } from './types.js';
 
@@ -508,7 +508,8 @@ async function runBrowserCommand(
     if (ctx) {
       emitError(Boolean(globalOptions.json), commandName, ctx, error);
     } else {
-      const message = error instanceof Error ? error.message : String(error);
+      const rawMessage = error instanceof Error ? error.message : String(error);
+      const message = redactRemoteTarget(rawMessage, globalOptions.remote);
       if (Boolean(globalOptions.json)) {
         console.log(JSON.stringify({
           ok: false,
@@ -661,6 +662,9 @@ export class BrowserCliContext {
       : false;
     const extensionConnected = this.isBackendConnected();
     const shouldFailClosed = failIfDisconnected && Boolean(this.remoteUuid) && !extensionConnected;
+    const relayClose = this.connection instanceof ExtensionConnection
+      ? this.connection.getLastClose()
+      : null;
 
     return {
       ok: !shouldFailClosed,
@@ -673,6 +677,9 @@ export class BrowserCliContext {
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       relayConnected,
       extensionConnected,
+      ...(relayClose
+        ? { relayCloseCode: relayClose.code, relayCloseReason: relayClose.reason }
+        : {}),
       managedLifecycle: false,
       transport: 'vibebrowser-mcp',
       toolCount: this.tools.length,
@@ -1199,6 +1206,9 @@ export class BrowserCliContext {
         }
         try {
           const result = await this.connection.callTool(tool.name, args, this.timeoutMs);
+          if (result.isError === true || result.success === false) {
+            throw new Error(firstText(result as ToolResult & Record<string, unknown>) || `Browser tool ${tool.name} failed`);
+          }
           return { tool: tool.name, args, result: result as ToolResult & Record<string, unknown> };
         } catch (error) {
           if (!isToolArgumentCompatibilityError(error)) {
@@ -1437,9 +1447,7 @@ export class BrowserCliContext {
       return undefined;
     }
     if (this.remoteUuid) {
-      return this.connection instanceof ExtensionConnection
-        ? this.connection.getRemoteConfig()?.uuid ?? this.remoteUuid
-        : this.remoteUuid;
+      return REDACTED_REMOTE_ID;
     }
 
     const connectedSessionIds = new Set(
@@ -1471,6 +1479,12 @@ export class BrowserCliContext {
 
   outputMode(): 'local' | 'remote' | 'devtools' {
     return this.mode();
+  }
+
+  redactErrorMessage(message: string): string {
+    return this.connection instanceof ExtensionConnection
+      ? this.connection.redactErrorMessage(message)
+      : message;
   }
 
   outputContext(): Pick<CommandOutput, 'profile' | 'mode' | 'sessionId' | 'requestedSessionId' | 'ignoredCompatibilityOptions'> {
@@ -1710,7 +1724,8 @@ function emitError(
   ctx: BrowserCliContext,
   error: unknown,
 ): void {
-  let message = error instanceof Error ? error.message : String(error);
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  let message = ctx.redactErrorMessage(rawMessage);
   // Improve guidance when the extension requires a pageId that wasn't provided
   if (/\bpageId\b/i.test(message) && /\bmissing\b|\brequired\b/i.test(message)) {
     message += '\nHint: use `tabs` to list pages, then pass --page-id <id> to target a specific tab.';
@@ -1739,6 +1754,8 @@ function formatHumanOutput(commandName: string, output: CommandOutput): string {
         output.sessionId ? `Session: ${String(output.sessionId)}` : null,
         output.requestedSessionId && output.requestedSessionId !== output.sessionId ? `Requested session: ${String(output.requestedSessionId)}` : null,
         `Relay connected: ${boolText(output.relayConnected)}`,
+        output.relayCloseCode !== undefined ? `Relay close code: ${String(output.relayCloseCode)}` : null,
+        output.relayCloseReason ? `Relay close reason: ${String(output.relayCloseReason)}` : null,
         `Extension connected: ${boolText(output.extensionConnected)}`,
         `Managed lifecycle: ${boolText(output.managedLifecycle)}`,
         output.toolCount !== undefined ? `Tools: ${String(output.toolCount)}` : null,

@@ -15,7 +15,7 @@ import {
   isInitializeRequest,
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
-import { ExtensionConnection, type RemoteConfig } from './connection.js';
+import { ExtensionConnection, redactRemoteTarget, type RemoteConfig } from './connection.js';
 import { ChromeUseConnection } from './chrome-use-connection.js';
 import {
   DEFAULT_HTTP_PATH,
@@ -140,7 +140,7 @@ export class VibeMcpServer {
         this.log('chrome-use DevTools backend unavailable; server started without tools');
       }
     } else if (this.config.remoteUuid) {
-      this.log(`Connected to remote relay for UUID ${this.config.remoteUuid}`);
+      this.log('Connected to configured remote relay target');
     } else {
       this.log(`Waiting for Vibe extension connection on port ${this.config.port}...`);
     }
@@ -300,7 +300,9 @@ export class VibeMcpServer {
         try {
           return await this.handleSetRemoteTool(toRecord(args));
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const rawMessage = error instanceof Error ? error.message : String(error);
+          const target = typeof args?.url === 'string' ? args.url : undefined;
+          const message = redactRemoteTarget(rawMessage, target);
           return {
             content: [{ type: 'text', text: `Error: ${message}` }],
             isError: true,
@@ -329,7 +331,10 @@ export class VibeMcpServer {
           isError: enriched.isError,
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const rawMessage = error instanceof Error ? error.message : String(error);
+        const message = this.connection instanceof ExtensionConnection
+          ? this.connection.redactErrorMessage(rawMessage)
+          : rawMessage;
         return {
           content: [{ type: 'text', text: `Error: ${message}` }],
           isError: true,
@@ -355,7 +360,7 @@ export class VibeMcpServer {
       };
     }
 
-    const remote = await this.connection.setRemoteUrl(args.url.trim());
+    await this.connection.setRemoteUrl(args.url.trim());
     this.notifyToolListChanged();
 
     return {
@@ -364,8 +369,7 @@ export class VibeMcpServer {
         text: JSON.stringify({
           ok: true,
           mode: 'remote',
-          relayUrl: remote.relayUrl,
-          uuid: remote.uuid,
+          target: '[redacted]',
         }),
       }],
     };

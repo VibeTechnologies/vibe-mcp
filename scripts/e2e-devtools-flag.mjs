@@ -15,7 +15,7 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(SCRIPT_DIR, '..');
 const BROWSER_CLI = resolve(PACKAGE_ROOT, 'dist', 'browser-main.js');
 const MCP_CLI = resolve(PACKAGE_ROOT, 'dist', 'cli.js');
-const REMOTE_UUID = 'devtools-mode-test-uuid';
+const REMOTE_UUID = '44444444-4444-4444-8444-444444444444';
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);

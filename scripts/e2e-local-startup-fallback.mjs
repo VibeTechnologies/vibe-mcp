@@ -98,8 +98,11 @@ async function main() {
       throw new Error(`Expected JSON response from set_remote with full URL, got: ${JSON.stringify(seedResult)}`);
     }
     const seedJson = JSON.parse(seedPayload.text);
-    if (!seedJson.ok || seedJson.uuid !== seedUuid || seedJson.relayUrl !== `ws://${HOST}:${remoteRelayPort}`) {
+    if (!seedJson.ok || seedJson.target !== '[redacted]') {
       throw new Error(`Unexpected set_remote full URL payload: ${seedPayload.text}`);
+    }
+    if (seedPayload.text.includes(seedUuid) || seedPayload.text.includes(String(remoteRelayPort))) {
+      throw new Error(`set_remote full URL payload leaked relay credential: ${seedPayload.text}`);
     }
 
     const uuidResult = await client.callTool({
@@ -111,8 +114,11 @@ async function main() {
       throw new Error(`Expected JSON response from set_remote with UUID, got: ${JSON.stringify(uuidResult)}`);
     }
     const uuidJson = JSON.parse(uuidPayload.text);
-    if (!uuidJson.ok || uuidJson.uuid !== switchedUuid || uuidJson.relayUrl !== `ws://${HOST}:${remoteRelayPort}`) {
+    if (!uuidJson.ok || uuidJson.target !== '[redacted]') {
       throw new Error(`Unexpected set_remote UUID payload: ${uuidPayload.text}`);
+    }
+    if (uuidPayload.text.includes(switchedUuid) || uuidPayload.text.includes(String(remoteRelayPort))) {
+      throw new Error(`set_remote UUID payload leaked relay credential: ${uuidPayload.text}`);
     }
 
     console.log(PASS_MARKER);

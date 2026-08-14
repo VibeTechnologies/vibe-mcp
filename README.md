@@ -309,10 +309,15 @@ Where to paste it:
 | Client | Where |
 |---|---|
 | Claude (web, Cowork, mobile, Desktop) | Settings → Connectors → Add custom connector |
-| Codex desktop app | Settings → Connectors → add MCP server URL |
 | ChatGPT (web) | Settings → Connectors → developer mode |
 
-Custom connectors are a paid-plan feature in these products.
+Custom connectors are a paid-plan feature in both products.
+
+> **ChatGPT desktop app / Codex CLI / Codex IDE extension do not belong here.**
+> They all read the local `~/.codex/config.toml` and can spawn a process, so use
+> the local stdio path above — it keeps traffic on `127.0.0.1` and keeps the
+> UUID out of a URL. Only use the hosted URL for surfaces that genuinely run in
+> a vendor cloud (Claude web/Cowork/mobile/Desktop connectors, ChatGPT web).
 
 The relay also accepts the UUID as an `X-Remote-Session` or
 `Authorization: Bearer` header on a bare `POST /mcp`. Use the header form from

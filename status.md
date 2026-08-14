@@ -1,19 +1,21 @@
 # status — public MCP docs aligned to the direct HTTP connector
 
 ```
-ROADMAP  ████████████████████  6/6 done
- [x] 1. Audit README/docs/status/worklogs for relay OAuth + stale hosted claims
+ROADMAP  ████████████████████  7/7 done
+ [x] 1. Audit docs: no relay OAuth guidance, no stale hosted claims
  [x] 2. README remote-connector section = direct HTTP /mcp/<uuid> only
  [x] 3. Credential warning + real Settings onboarding path documented
  [x] 4. Historical internal worklogs banner-marked, not current guidance
  [x] 5. build + tsc + validate:skill green; committed 62b1c74
  [x] 6. Re-verify pass: no OAuth instructions, no worklog links, worktree clean
+ [x] 7. Review fixes: server.json onboarding, ChatGPT-desktop=stdio label,
+        hermetic docs-contract guard in test/test:ci
 
 WHY SLOW
  - not slow; docs-only change, no blockers
 
 NEXT
- - open PR for 62b1c74 if it should merge
+ - open PR; close/supersede stale PR #141 (no longer valid guidance)
 ```
 
 ## Supported user-facing shape
@@ -30,9 +32,9 @@ Remote (internet) → Relay access**.
 
 ## Not supported in the user-facing path
 
-- Relay OAuth consent, `/oauth/authorize`, token exchange, dynamic client
-  registration, scope configuration. No public doc should instruct a user to
-  complete any of these.
+- Never document as setup: relay OAuth consent, `/oauth/authorize` (not a
+  supported endpoint for users), token exchange, no dynamic client registration,
+  no scope configuration. No public doc may instruct a user to do any of these.
 - The UUID is the sole bearer credential. It grants live control of the
   logged-in browser session — treat it like a password; regenerate in extension
   Settings if it leaks.

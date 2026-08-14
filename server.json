@@ -7,14 +7,14 @@
     "url": "https://github.com/VibeTechnologies/vibe-mcp",
     "source": "github"
   },
-  "version": "0.3.3",
+  "version": "0.3.4",
   "websiteUrl": "https://vibebrowser.app",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@vibebrowser/mcp",
-      "version": "0.3.3",
+      "version": "0.3.4",
       "transport": {
         "type": "stdio"
       }

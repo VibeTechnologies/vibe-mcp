@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "vibe-browser",
   "display_name": "Vibe Browser",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Drive your real, logged-in Chrome from Claude Desktop.",
   "long_description": "Vibe Browser lets Claude drive the Chrome you already use - with your tabs, your cookies, and your logged-in sessions - instead of a headless throwaway browser.\n\nThe browser can also run on a different machine from Claude, with no inbound port open on either side, by pairing them through a relay UUID.\n\nRequires the free Vibe Chrome extension. After installing this bundle, install the extension from the Chrome Web Store and enable 'MCP External Control' in its Settings.",
   "author": {

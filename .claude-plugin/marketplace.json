@@ -11,7 +11,7 @@
       "name": "vibe-browser",
       "source": "./plugins/vibe-browser",
       "description": "Drive your real, logged-in Chrome from Claude Code. Navigate, click, type, screenshot and read pages in the browser you already use - including a browser on a different machine, with no inbound port open.",
-      "version": "0.3.2",
+      "version": "0.3.3",
       "author": {
         "name": "Vibe Technologies",
         "url": "https://vibebrowser.app"

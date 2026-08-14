@@ -7,8 +7,9 @@
  * ---
  * A published relay fix does not reach a user whose `@vibebrowser/mcp` install
  * is stale, and nothing used to say so. Measured on a real machine on
- * 2026-08-14: npm served 0.3.3, but the daemon actually bound to
- * 127.0.0.1:19889 came from a *global* install pinned at 0.2.12
+ * 2026-08-14: npm's latest was 0.3.3 (0.3.4 by the time this landed), but the
+ * daemon actually bound to 127.0.0.1:19889 came from a *global* install
+ * pinned at 0.2.12
  * (`grep -c pong dist/relay.js` -> 0), so the merged heartbeat fix was live on
  * the registry while the ~30 s reconnect churn still reproduced locally. The
  * only way to find that out was process/socket forensics.
@@ -24,7 +25,7 @@
  * test is the whole contract on the daemon side.
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -36,16 +37,27 @@ import WebSocket from 'ws';
 const HOST = '127.0.0.1';
 const SESSION_ID = 'version-handshake-session';
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const EXPECTED_VERSION = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf-8')).version;
+const CLI_PACKAGE_ROOT = join(REPO_ROOT, 'packages', 'cli');
 // The extension's pong watchdog gives the relay 10 s; the version rides the
 // same frame, so anything slower than this is already a bug.
 const HANDSHAKE_TIMEOUT_MS = 5_000;
 
+function packageVersion(packageRoot) {
+  return JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf-8')).version;
+}
+
+// Both published packages ship and execute this relay: `@vibebrowser/mcp`
+// runs `dist/relay-daemon.js`, and `@vibebrowser/cli` gets a full copy of the
+// same `dist/` (scripts/prepare-cli-package.mjs) which `src/connection.ts`
+// autospawns from its own directory. They are versioned independently, so each
+// one must report *its own* version — a root-only constant would make the
+// standalone CLI claim a version it was never published under.
+const DAEMONS = [
+  { label: '@vibebrowser/mcp', cwd: REPO_ROOT, expected: packageVersion(REPO_ROOT) },
+  { label: '@vibebrowser/cli', cwd: CLI_PACKAGE_ROOT, expected: packageVersion(CLI_PACKAGE_ROOT) },
+];
+
 const RESERVED_PORTS = new Set();
-const AGENT_PORT = await findFreePort(RESERVED_PORTS);
-RESERVED_PORTS.add(AGENT_PORT);
-const EXTENSION_PORT = await findFreePort(RESERVED_PORTS);
-RESERVED_PORTS.add(EXTENSION_PORT);
 
 function findFreePort(exclude) {
   return new Promise((resolve, reject) => {
@@ -94,14 +106,18 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function main() {
+async function checkDaemon({ label, cwd, expected }) {
   let relay = null;
   let extension = null;
   const stateDir = mkdtempSync(join(tmpdir(), 'vibe-mcp-relay-ver-'));
+  const AGENT_PORT = await findFreePort(RESERVED_PORTS);
+  RESERVED_PORTS.add(AGENT_PORT);
+  const EXTENSION_PORT = await findFreePort(RESERVED_PORTS);
+  RESERVED_PORTS.add(EXTENSION_PORT);
 
   try {
     relay = spawn(process.execPath, ['dist/relay-daemon.js'], {
-      cwd: REPO_ROOT,
+      cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
@@ -131,17 +147,18 @@ async function main() {
 
     assert(
       typeof pong.version === 'string' && pong.version.length > 0,
-      'Relay pong carried no `version` field — Settings cannot tell the user their daemon is stale ' +
+      `${label} relay pong carried no \`version\` field — Settings cannot tell the user their daemon is stale ` +
       `(got ${JSON.stringify(pong)}).`,
     );
     assert(
-      pong.version === EXPECTED_VERSION,
-      `Relay reported version "${pong.version}" but package.json says "${EXPECTED_VERSION}" — ` +
-      'the reported version must be the running package version or the outdated warning lies.',
+      pong.version === expected,
+      `${label} relay reported version "${pong.version}" but its package.json says "${expected}" — ` +
+      'the reported version must come from the package actually executing the relay, ' +
+      'or the outdated warning lies.',
     );
     assert(
       /^\d+\.\d+\.\d+/.test(pong.version),
-      `Relay reported a non-semver version "${pong.version}"; the extension compares it numerically.`,
+      `${label} relay reported a non-semver version "${pong.version}"; the extension compares it numerically.`,
     );
 
     // Steady-state heartbeats must keep carrying it, so a service worker that
@@ -150,11 +167,11 @@ async function main() {
     extension.send(JSON.stringify({ type: 'connected', sessionId: SESSION_ID }));
     const heartbeatPong = await waitFor(pongs, 'steady-state heartbeat pong');
     assert(
-      heartbeatPong.version === EXPECTED_VERSION,
+      heartbeatPong.version === expected,
       `Heartbeat pong lost the version field (got ${JSON.stringify(heartbeatPong)}).`,
     );
 
-    console.log(`PASS: local relay daemon reports version ${EXPECTED_VERSION} on the extension handshake`);
+    console.log(`PASS: ${label} relay daemon reports version ${expected} on the extension handshake`);
   } finally {
     if (extension) { try { extension.terminate(); } catch { /* ignore */ } }
     if (relay) { try { relay.kill('SIGKILL'); } catch { /* ignore */ } }
@@ -169,6 +186,41 @@ async function waitFor(queue, label, timeoutMs = HANDSHAKE_TIMEOUT_MS) {
     await delay(10);
   }
   throw new Error(`Relay never sent a ${label} within ${timeoutMs}ms`);
+}
+
+/**
+ * Stage a third, synthetic package around the *same* build output and give it a
+ * version that appears nowhere in the repo. If the relay still reports it, the
+ * lookup is genuinely relative to the executing package; if it reports the root
+ * version instead, someone replaced it with a root-only constant. This keeps
+ * the guarantee provable even if the real packages ever share a version number.
+ *
+ * Staged under the repo so `import 'ws'` still resolves via node_modules.
+ */
+function stageSyntheticPackage() {
+  const root = join(REPO_ROOT, '.artifacts', 'relay-version-handshake', 'synthetic-pkg');
+  rmSync(root, { recursive: true, force: true });
+  mkdirSync(root, { recursive: true });
+  cpSync(join(REPO_ROOT, 'dist'), join(root, 'dist'), { recursive: true });
+  const version = '99.98.97-e2e';
+  writeFileSync(
+    join(root, 'package.json'),
+    `${JSON.stringify({ name: '@vibebrowser/relay-version-probe', version, type: 'module', private: true }, null, 2)}\n`,
+  );
+  return { label: 'synthetic package (per-package lookup probe)', cwd: root, expected: version, root };
+}
+
+async function main() {
+  for (const daemon of DAEMONS) {
+    await checkDaemon(daemon);
+  }
+
+  const synthetic = stageSyntheticPackage();
+  try {
+    await checkDaemon(synthetic);
+  } finally {
+    rmSync(synthetic.root, { recursive: true, force: true });
+  }
 }
 
 main().catch((error) => {

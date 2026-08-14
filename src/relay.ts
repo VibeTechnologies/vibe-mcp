@@ -19,16 +19,23 @@ import { getPackageVersion } from './version.js';
 import type { ToolDefinition } from './types.js';
 
 /**
- * The @vibebrowser/mcp version of the daemon that is actually serving this
- * socket (AGE-91).
+ * The version of the package that is actually serving this socket (AGE-91).
+ *
+ * Resolved from the executing package's own package.json, never hardcoded:
+ * this same build is published twice, as `@vibebrowser/mcp` and as
+ * `@vibebrowser/cli` (scripts/prepare-cli-package.mjs copies dist/ wholesale,
+ * and connection.ts autospawns relay-daemon.js from its own directory). The
+ * two are versioned independently, so a root-only constant would make the
+ * standalone CLI report a version it was never published under.
  *
  * A published relay fix does not reach a user whose install is stale, and
- * nothing in the extension UI used to say so: on 2026-08-14 npm had 0.3.3
- * while the daemon on 127.0.0.1:19889 was a *global* install pinned at
- * 0.2.12, so the merged heartbeat fix was live on the registry and the ~30 s
- * reconnect churn still reproduced locally. Reporting the version on the
- * handshake lets Settings show "Local relay 0.2.12 - outdated" instead of
- * making the user do process forensics.
+ * nothing in the extension UI used to say so: measured 2026-08-14, npm's
+ * latest was 0.3.3 (0.3.4 by the time this landed) while the daemon on
+ * 127.0.0.1:19889 was a *global* install pinned at 0.2.12, so the merged
+ * heartbeat fix was live on the registry and the ~30 s reconnect churn still
+ * reproduced locally. Reporting the version on the handshake lets Settings
+ * show "Local relay 0.2.12 - outdated" instead of making the user do process
+ * forensics.
  */
 const RELAY_VERSION = getPackageVersion();
 

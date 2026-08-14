@@ -15,7 +15,22 @@ import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
 import { DevtoolsFallbackConnection } from './devtools-fallback.js';
+import { getPackageVersion } from './version.js';
 import type { ToolDefinition } from './types.js';
+
+/**
+ * The @vibebrowser/mcp version of the daemon that is actually serving this
+ * socket (AGE-91).
+ *
+ * A published relay fix does not reach a user whose install is stale, and
+ * nothing in the extension UI used to say so: on 2026-08-14 npm had 0.3.3
+ * while the daemon on 127.0.0.1:19889 was a *global* install pinned at
+ * 0.2.12, so the merged heartbeat fix was live on the registry and the ~30 s
+ * reconnect churn still reproduced locally. Reporting the version on the
+ * handshake lets Settings show "Local relay 0.2.12 - outdated" instead of
+ * making the user do process forensics.
+ */
+const RELAY_VERSION = getPackageVersion();
 
 function parseEnvPort(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -465,9 +480,15 @@ export class RelayServer extends EventEmitter {
       // that spans a swap dies ("Extension reconnecting"). The hosted relay already
       // answers this heartbeat (platform relay-service `handleExtensionMessage`);
       // the local daemon must behave identically.
+      //
+      // The reply also carries this daemon's package version (AGE-91). The
+      // extension sends `connected` immediately on open, so the version is
+      // known within one roundtrip of the handshake; a relay that answers
+      // without a `version` field is by definition older than the build that
+      // added it, and the extension surfaces that as "outdated".
       if (sourceWs.readyState === WebSocket.OPEN) {
         try {
-          sourceWs.send(JSON.stringify({ type: 'pong' }));
+          sourceWs.send(JSON.stringify({ type: 'pong', version: RELAY_VERSION }));
         } catch (error) {
           this.log(`Failed to answer extension heartbeat: ${error}`);
         }

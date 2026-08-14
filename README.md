@@ -309,7 +309,8 @@ Where to paste it:
 <!-- docs-contract: hosted-table start -->
 | Client | Where |
 |---|---|
-| Claude (web, Cowork, mobile, Desktop) | Settings → Connectors → Add custom connector |
+| Claude (web, Cowork, mobile) | Settings → Connectors → Add custom connector |
+| Claude Desktop — **alternative only**; prefer the local stdio entry above when Chrome runs on the same machine | Settings → Connectors → Add custom connector |
 | ChatGPT (web) | Settings → Connectors → developer mode |
 | Codex Desktop / Codex CLI (remote form) | `codex mcp add vibe --url https://relay.api.vibebrowser.app/mcp/<your-extension-uuid>` |
 <!-- docs-contract: hosted-table end -->
@@ -326,13 +327,13 @@ Custom connectors are a paid-plan feature in the Claude and ChatGPT products.
 
 #### Migrating away from the retired OAuth-style connector guidance
 
-Earlier drafts of these docs (and the Aug 2026 directory-submission research in
-`worklog/`) described a retired OAuth 2.1 + DCR consent flow at a bare `/mcp`.
-That
-path is **retired and unsupported for users**. If you previously added Vibe as a
-connector and were sent to a consent screen, remove that connector and re-add it
-with the direct `https://relay.api.vibebrowser.app/mcp/<uuid>` URL above. Nothing
-to authorize, nothing to register, no scopes to pick.
+Earlier drafts of these docs (and the Aug 2026 directory-submission research
+kept under `worklog/`) described a retired OAuth 2.1 + DCR consent flow at a
+bare `/mcp`. That path is **retired and unsupported for users**. If you
+previously added Vibe as a connector and were sent to a retired consent screen,
+remove that connector and re-add it with the direct
+`https://relay.api.vibebrowser.app/mcp/<uuid>` URL above. Nothing to authorize,
+nothing to register, no scopes to pick.
 
 The relay also accepts the UUID as an `X-Remote-Session` or
 `Authorization: Bearer` header on a bare `POST /mcp`. Use the header form from

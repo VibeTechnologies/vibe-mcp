@@ -1,7 +1,7 @@
 # status — public MCP docs aligned to the direct HTTP connector
 
 ```
-ROADMAP  ████████████████████  8/8 done
+ROADMAP  ████████████████████  9/9 done
  [x] 1. Audit docs: no relay OAuth guidance, no stale hosted claims
  [x] 2. README remote-connector section = direct HTTP /mcp/<uuid> only
  [x] 3. Credential warning + real Settings onboarding path documented
@@ -12,6 +12,8 @@ ROADMAP  ████████████████████  8/8 done
         hermetic docs-contract guard in test/test:ci
  [x] 8. Cross-review: contract pins HTTPS-only hosted table, exact
         `codex mcp add vibe --url`, migration note, pack section superseded
+ [x] 9. Guard hardened: same-line denial required, real markdown-link check,
+        scan covers SKILL.md/docs/mcpb; Claude Desktop marked alternative
 
 WHY SLOW
  - not slow; docs-only change, no blockers
@@ -45,8 +47,8 @@ Remote (internet) → Relay access**.
 
 `worklog/anthropic-submission-pack.md`, `worklog/openai-verification-pack.md`
 and `worklog/mcp-distribution-channels.md` are point-in-time internal research
-from Aug 2026. They describe an OAuth/DCR direction that is **not** the current
-supported user path. Each now carries a HISTORICAL banner. Kept for provenance,
+from Aug 2026. The OAuth/DCR direction they describe is retired and is **not**
+the supported user path. Each now carries a HISTORICAL banner. Kept for provenance,
 not as setup instructions.
 
 ## Next

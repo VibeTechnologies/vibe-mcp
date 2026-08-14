@@ -42,19 +42,52 @@ ok('server.json onboarding path points at extension Settings',
   /Settings\s*->\s*AI Agent Control\s*->\s*Remote \(internet\)\s*->\s*Relay access/i
     .test(remote.variables?.session_id?.description ?? ''));
 
-// 3. no OAuth SETUP instructions in user-facing surfaces.
-//    A line mentioning oauth/dcr/authorize/scope is only allowed if it is a
-//    negation ("no OAuth", "not supported", "never", "zero").
-const NEGATION = /\b(no|not|never|without|zero|drop|removed|unsupported|historical|retired|superseded|legacy|longer)\b/i;
-const OAUTHY = /(oauth|dynamic client registration|\bDCR\b|\/authorize\b|scope setup)/i;
-for (const [file, text] of [['README.md', readme], ['status.md', status], ['server.json', read('server.json')]]) {
-  text.split('\n').forEach((line, i) => {
-    if (OAUTHY.test(line) && !NEGATION.test(line)) {
-      ok(`${file}:${i + 1} has no OAuth setup instruction`, false, line.trim().slice(0, 100));
-    }
+// 3. no OAuth SETUP instructions in any ACTIVE user-facing surface.
+//    Tightened: a mention is allowed only when the SAME line explicitly denies
+//    or retires the mechanism (e.g. "no OAuth", "OAuth is retired"), or when it
+//    sits under an explicit historical marker. Loose words elsewhere in the line
+//    ("no command", "not required") no longer buy a pass.
+// OAuth-specific vocabulary only. A bare "scope" is ordinary English and appears
+// in unrelated design docs, so only OAuth-shaped scope wording counts.
+const OAUTHY = /(oauth|dynamic client registration|\bDCR\b|\/authorize\b|\/oauth\/|scopes?[ _-]supported|scope setup|requested scopes|consent (flow|screen)|browser:(read|control))/i;
+const DENIAL = new RegExp(
+  String.raw`(\b(no|not|never|without|zero)\b[^.]{0,60}?` +
+  String.raw`(oauth|dynamic client registration|\bDCR\b|/authorize|scopes?|consent|register|authorize))` +
+  '|' +
+  String.raw`((oauth|dcr|consent flow|that path|this path|it)\b[^.]{0,60}?` +
+  String.raw`\b(retired|superseded|unsupported|removed|legacy|historical|no longer|not supported)\b)` +
+  '|' +
+  String.raw`\b(retired|superseded|unsupported|historical|legacy|no longer)\b[^.]{0,40}?\b(oauth|dcr|consent|scopes?)\b`,
+  'i',
+);
+// Lines inside an explicitly historical block are exempt.
+const HIST_MARK = /(HISTORICAL INTERNAL NOTE|\*\*SUPERSEDED\.\*\*)/;
+
+// ACTIVE surfaces = things a user is expected to follow right now.
+const ACTIVE = [
+  ['README.md', readme],
+  ['status.md', status],
+  ['server.json', read('server.json')],
+  ['openclaw/vibebrowser/SKILL.md', read('openclaw/vibebrowser/SKILL.md')],
+  ['mcpb/manifest.json', read('mcpb/manifest.json')],
+  ...readdirSync(join(root, 'docs'))
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => [`docs/${f}`, read(join('docs', f))]),
+];
+let oauthViolations = 0;
+for (const [file, text] of ACTIVE) {
+  const lines = text.split('\n');
+  const historical = HIST_MARK.test(lines.slice(0, 15).join('\n'));
+  ok(`${file} is an active (non-historical) surface`, !historical || file.startsWith('worklog/'));
+  lines.forEach((line, i) => {
+    if (!OAUTHY.test(line)) return;
+    if (DENIAL.test(line)) return;
+    oauthViolations += 1;
+    ok(`${file}:${i + 1} carries no OAuth setup instruction`, false, line.trim().slice(0, 110));
   });
 }
-ok('user-facing docs carry no OAuth setup instructions', !fails.some((f) => /has no OAuth setup/.test(f)));
+ok('active user-facing docs carry no OAuth setup instructions', oauthViolations === 0,
+  `${oauthViolations} line(s)`);
 
 // 4. historical worklogs stay labelled historical
 for (const f of readdirSync(join(root, 'worklog')).filter((f) => f.endsWith('.md'))) {
@@ -63,8 +96,13 @@ for (const f of readdirSync(join(root, 'worklog')).filter((f) => f.endsWith('.md
   ok(`worklog/${f} is marked HISTORICAL`, /HISTORICAL INTERNAL NOTE/.test(text));
 }
 
-// 5. worklogs are not linked as user setup guidance
-ok('README does not link worklogs as setup guidance', !readme.includes('worklog/README'));
+// 5. no markdown link from an active surface into worklog/ (historical material
+//     must never be reachable as clickable setup guidance)
+const MD_LINK_TO_WORKLOG = /\]\(\s*(\.\/)?worklog\/[^)]*\)/i;
+for (const [file, text] of ACTIVE) {
+  ok(`${file} has no markdown link into worklog/`, !MD_LINK_TO_WORKLOG.test(text),
+    (text.match(MD_LINK_TO_WORKLOG) || [''])[0]);
+}
 
 // 6. hosted-client table pins HTTPS only — never a wss:// URL
 const table = readme.split('<!-- docs-contract: hosted-table start -->')[1]

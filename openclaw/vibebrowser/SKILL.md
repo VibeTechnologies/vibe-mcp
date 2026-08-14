@@ -16,7 +16,7 @@ metadata:
 
 # Vibe Local Browser
 
-> ⚠️ **Security:** The remote value (a relay URL/UUID, `wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of the user's browser session** (read tabs, screenshots, page content). It is the *sole* bearer credential — there is no second-factor secret. Treat it like a password — never echo it back in chat with untrusted parties, log it, or commit it to a repo — and if it leaks, tell the user to regenerate it in the Vibe extension Settings. Store it only in private workspace/memory as described below. Example UUIDs are non-routable placeholders.
+> ⚠️ **Security:** The remote value (a connector URL, bare UUID, or relay URL — e.g. `https://relay.api.vibebrowser.app/mcp/<uuid>`) grants **live control of the user's browser session** (read tabs, screenshots, page content). It is the *sole* bearer credential — there is no second-factor secret. Treat it like a password — never echo it back in chat with untrusted parties, log it, or commit it to a repo — and if it leaks, tell the user to regenerate it in the Vibe extension Settings. Store it only in private workspace/memory as described below. Example UUIDs are non-routable placeholders.
 
 ## FIRST, EVERY TIME: load the saved remote before asking for it
 
@@ -76,13 +76,13 @@ remote). For those requests:
    - Open extension Settings → **AI Agent Control**
    - Toggle **Enable external AI agent control** to ON
    - Set **Connection mode** to **Remote (internet)**
-   - Copy the relay URL from the **Relay access** section
+   - Copy the **connector URL** from the **Relay access** section (`https://relay.api.vibebrowser.app/mcp/<uuid>`) — this is the preferred value; the bare UUID or `wss://` relay URL shown there also still work
 
 2. **Provide the remote value** (one of):
-   - Pass it directly on every command with `--remote <uuid-or-url>` — no environment variable needed.
+   - Pass it directly on every command with `--remote <connector-url-uuid-or-ws-url>` — no environment variable needed.
    - Or set it once as an environment variable so `--remote` can be omitted (the CLI picks it up automatically):
      ```bash
-     export VIBE_REMOTE_URL="<uuid-or-full-ws-url>"
+     export VIBE_REMOTE_URL="<connector-url-uuid-or-full-ws-url>"
      ```
    - **Preferred: save it for the session** — see [## Remembering the remote connection](#remembering-the-remote-connection) below.
 
@@ -108,14 +108,18 @@ Do not use this skill for OpenClaw tenant cloud browsing.
 
 ## Remote value
 
-Every command needs a remote value: the extension UUID (uses the default public relay) or a full `ws(s)` relay URL (explicit relay endpoint).
+Every command needs a remote value. Three forms are accepted, all normalized to the same relay connection:
 
-Pass it with `--remote <uuid-or-url>`. No environment variable is required when `--remote` is set.
+- **Connector URL (preferred):** `https://relay.api.vibebrowser.app/mcp/<uuid>` — the exact string shown in the extension's Settings → AI Agent Control → Relay access, the same one pasted into Claude/ChatGPT connectors.
+- Bare extension UUID — uses the default public relay (advanced/compatibility).
+- Full `ws(s)` relay URL — targets an explicit relay endpoint (advanced/compatibility).
+
+Pass it with `--remote <connector-url-uuid-or-ws-url>`. No environment variable is required when `--remote` is set.
 
 Optionally, set it once via environment instead — the CLI uses it as the default when `--remote` is omitted (checked in this order):
 
 ```bash
-export VIBE_REMOTE_URL="<uuid-or-full-ws-url>"
+export VIBE_REMOTE_URL="<connector-url-uuid-or-full-ws-url>"
 # Also honored: VIBE_EXTENSION_UUID, VIBE_RELAY_UUID
 
 # Optional compatibility label. Vibe always targets the real local browser path.
@@ -130,8 +134,9 @@ The user should only have to provide their remote value once. After receiving it
 
 ### What counts as a "remote value"
 
-Either of these forms is valid for `--remote`:
+Any of these forms is valid for `--remote`:
 
+- **Connector URL (preferred):** `https://relay.api.vibebrowser.app/mcp/<uuid>`
 - A bare UUID: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`
 - A full relay URL: `wss://relay.api.vibebrowser.app/<uuid>`
 

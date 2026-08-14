@@ -39,6 +39,7 @@ export const REDACTED_REMOTE_ID = '[redacted]';
 
 const DEFAULT_RELAY_URL = 'wss://relay.api.vibebrowser.app';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MCP_CONNECTOR_SEGMENT = 'mcp';
 const PERMANENT_RELAY_CLOSE_CODES = new Set([
   1002, 1003, 1007, 1008,
   4001, 4003, 4004, 4009,
@@ -101,6 +102,14 @@ export function redactRemoteTarget(message: string, target?: string): string {
 
 function isRemoteRelayUrl(value: string): boolean {
   return /^wss?:\/\//i.test(value);
+}
+
+function isHttpConnectorUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function isRemoteTargetUrl(value: string): boolean {
+  return isRemoteRelayUrl(value) || isHttpConnectorUrl(value);
 }
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -173,13 +182,65 @@ export function parseRemoteRelayUrl(value: string): ParsedRemoteRelayUrl {
   };
 }
 
-function parseRemoteTarget(value: string, currentRelayUrl?: string): ParsedRemoteRelayUrl {
+/**
+ * Parse the canonical HTTPS MCP connector URL exposed in the extension UI:
+ *   https://host[/prefix]/mcp/<uuid>  -> relayUrl wss://host[/prefix]
+ *   http://<loopback>[/prefix]/mcp/<uuid> -> relayUrl ws://<loopback>[/prefix]
+ *
+ * Error messages intentionally never echo the input value or the UUID, since
+ * this value is a bearer credential.
+ */
+export function parseHttpMcpConnectorUrl(value: string): ParsedRemoteRelayUrl {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error('Invalid MCP connector URL');
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('Invalid MCP connector URL: protocol must be http:// or https://');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('Invalid MCP connector URL: credentials in URL are not allowed');
+  }
+  if (parsed.search || parsed.hash) {
+    throw new Error('Invalid MCP connector URL: query/fragments are not allowed');
+  }
+
+  const segments = parsed.pathname.split('/').filter(Boolean);
+  const uuid = segments.pop();
+  const mcpSegment = segments.pop();
+  if (!uuid || mcpSegment !== MCP_CONNECTOR_SEGMENT) {
+    throw new Error('Invalid MCP connector URL: expected an MCP connector path ending in /mcp/<uuid>');
+  }
+  if (!UUID_PATTERN.test(uuid)) {
+    throw new Error('Invalid MCP connector URL: UUID path segment is not valid');
+  }
+
+  const relayProtocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+  parsed.pathname = segments.length > 0 ? `/${segments.join('/')}` : '';
+  parsed.search = '';
+  parsed.hash = '';
+  parsed.protocol = relayProtocol;
+
+  return {
+    relayUrl: normalizeRelayBaseUrl(parsed.toString()),
+    uuid,
+  };
+}
+
+export function parseRemoteTarget(value: string, currentRelayUrl?: string): ParsedRemoteRelayUrl {
   if (isRemoteRelayUrl(value)) {
     return parseRemoteRelayUrl(value);
   }
 
+  if (isHttpConnectorUrl(value)) {
+    return parseHttpMcpConnectorUrl(value);
+  }
+
   if (!UUID_PATTERN.test(value)) {
-    throw new Error('Invalid remote target: expected a UUID or ws(s) relay URL');
+    throw new Error('Invalid remote target: expected a UUID, an https://host/mcp/<uuid> connector URL, or a ws(s) relay URL');
   }
 
   return {
@@ -195,7 +256,7 @@ export function normalizeRemoteConfig(remote?: RemoteConfig): RemoteConfig | und
 
   const relayUrl = remote.relayUrl ? normalizeRelayBaseUrl(remote.relayUrl) : undefined;
   const parsed = parseRemoteTarget(remote.uuid, relayUrl);
-  if (relayUrl && isRemoteRelayUrl(remote.uuid) && relayUrl !== parsed.relayUrl) {
+  if (relayUrl && isRemoteTargetUrl(remote.uuid) && relayUrl !== parsed.relayUrl) {
     throw new Error('Remote relay URL mismatch');
   }
 

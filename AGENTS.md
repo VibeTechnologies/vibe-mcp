@@ -86,6 +86,10 @@ is [AGE-133](/AGE/issues/AGE-133)).
 - Always inspect relay logs for request flow around `call_tool` before changing agent prompts.
 - If failure says `No extension connected`, check relay state transitions first, not model output first.
 
+## Before Asserting a Relay Fix Is Live (AGE-606)
+
+- Before asserting a relay fix (e.g. anything in `src/relay.ts` / `dist/relay.js`) is live, run `npm run doctor -- --require-daemon` and paste the `RUNNING_VERSION=` line into the claim. A source read of `src/relay.ts` or `dist/relay.js` is not evidence — only the live `pong` handshake proves what is actually bound to 19889.
+
 ## Known Operational Reality
 
 - Local relay ports are fixed:

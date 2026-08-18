@@ -21,6 +21,7 @@
   "scripts": {
     "build": "tsc && node scripts/prepare-cli-package.mjs",
     "dev": "tsc --watch",
+    "doctor": "node scripts/doctor.mjs",
     "start": "node dist/cli.js",
     "validate:skill": "node scripts/validate-skill.mjs openclaw/vibebrowser/SKILL.md",
     "prepublishOnly": "npm run build",

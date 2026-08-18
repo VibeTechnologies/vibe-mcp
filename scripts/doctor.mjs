@@ -24,6 +24,17 @@
  * auto-kill of the daemon, no auto-install, no auto-unlink. Removing a
  * developer's `npm link` without asking is the surprise this ticket exists
  * to reduce, not add.
+ *
+ * AGE-606: "no daemon on 19889" used to print `DOCTOR: OK (daemon not
+ * running)` and exit 0 — a false green that a substring grep for
+ * `DOCTOR: OK` or a bare exit-code check could not distinguish from a
+ * proven-healthy relay. Two changes:
+ *   - `--require-daemon`: treats "no daemon on the port" as a FAIL and
+ *     exits non-zero. Without the flag, behavior is unchanged (exit 0).
+ *   - Regardless of the flag, when no `pong` was observed the final line
+ *     is now `DOCTOR: INCONCLUSIVE (daemon not running)`, never
+ *     `DOCTOR: OK ...`, so a substring match on `DOCTOR: OK` can no longer
+ *     read "nothing was proven" as a pass.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
@@ -34,6 +45,7 @@ import WebSocket from 'ws';
 const PORT = Number(process.env.VIBE_MCP_EXTENSION_PORT) || 19889;
 const HANDSHAKE_TIMEOUT_MS = 5_000;
 const PACKAGE_NAME = '@vibebrowser/mcp';
+const REQUIRE_DAEMON = process.argv.includes('--require-daemon');
 
 const failures = [];
 
@@ -336,6 +348,10 @@ async function main() {
 
   const { running, runningVersion } = await checkHandshake();
 
+  if (!running && REQUIRE_DAEMON) {
+    fail(`--require-daemon: no daemon listening on 127.0.0.1:${PORT} — the pong handshake (the only check that cannot be faked by a stale file) was never observed`);
+  }
+
   const globalRootResult = tryExec('npm', ['root', '-g']);
   if (!globalRootResult.ok) {
     fail(`could not run \`npm root -g\`: ${globalRootResult.error.message}`);
@@ -353,7 +369,7 @@ async function main() {
   }
 
   console.log('');
-  console.log(running ? 'DOCTOR: OK' : 'DOCTOR: OK (daemon not running)');
+  console.log(running ? 'DOCTOR: OK' : 'DOCTOR: INCONCLUSIVE (daemon not running)');
   process.exit(0);
 }
 

@@ -10,7 +10,6 @@ import { WebSocketServer } from 'ws';
 
 const HOST = '127.0.0.1';
 const REMOTE_UUID = '11111111-1111-4111-8111-111111111111';
-const REDACTED_REMOTE_ID = '[redacted]';
 const RELAY_PORT = await findFreePort();
 const RELAY_URL = `ws://${HOST}:${RELAY_PORT}`;
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
@@ -187,14 +186,14 @@ try {
   assert(status.ok === true, `status failed: ${JSON.stringify(status)}`);
   assert(status.extensionConnected === true, `expected extension connected: ${JSON.stringify(status)}`);
   assert(Number(status.toolCount) >= 10, `expected toolCount >= 10: ${JSON.stringify(status)}`);
-  assert(status.sessionId === REDACTED_REMOTE_ID, `expected redacted remote session: ${JSON.stringify(status)}`);
+  assert(status.sessionId === undefined, `expected no synthetic remote sessionId: ${JSON.stringify(status)}`);
   assert(!JSON.stringify(status).includes(REMOTE_UUID), `status leaked remote UUID: ${JSON.stringify(status)}`);
 
   const connectorStatus = await runCli(['status'], { remoteValue: `http://${HOST}:${RELAY_PORT}/mcp/${REMOTE_UUID}` });
   assert(connectorStatus.ok === true, `connector-url status failed: ${JSON.stringify(connectorStatus)}`);
   assert(connectorStatus.mode === 'remote', `connector-url status should be remote mode: ${JSON.stringify(connectorStatus)}`);
   assert(connectorStatus.extensionConnected === true, `connector-url status should connect extension: ${JSON.stringify(connectorStatus)}`);
-  assert(connectorStatus.sessionId === REDACTED_REMOTE_ID, `connector-url status should redact sessionId: ${JSON.stringify(connectorStatus)}`);
+  assert(connectorStatus.sessionId === undefined, `connector-url status should have no synthetic sessionId: ${JSON.stringify(connectorStatus)}`);
   assert(!JSON.stringify(connectorStatus).includes(REMOTE_UUID), `connector-url status leaked remote UUID: ${JSON.stringify(connectorStatus)}`);
   assert(connectorStatus.toolCount === status.toolCount, `connector-url status toolCount mismatch: ${JSON.stringify(connectorStatus)} vs ${JSON.stringify(status)}`);
   assert(Array.isArray(connectorStatus.sessions) && connectorStatus.sessions.length === status.sessions.length, `connector-url status sessions mismatch: ${JSON.stringify(connectorStatus)} vs ${JSON.stringify(status)}`);
@@ -204,7 +203,7 @@ try {
     assert(uuidStatus.ok === true, `UUID-only remote should return structured status locally: ${JSON.stringify(uuidStatus)}`);
     assert(uuidStatus.mode === 'remote', `UUID-only status should still be remote mode: ${JSON.stringify(uuidStatus)}`);
     assert(uuidStatus.extensionConnected === false, `UUID-only remote without public relay should report disconnected extension locally: ${JSON.stringify(uuidStatus)}`);
-    assert(uuidStatus.sessionId === REDACTED_REMOTE_ID, `UUID-only status should redact sessionId: ${JSON.stringify(uuidStatus)}`);
+    assert(uuidStatus.sessionId === undefined, `UUID-only status should have no synthetic sessionId: ${JSON.stringify(uuidStatus)}`);
   }
 
   const envStatus = await runCli(['status'], {
@@ -213,11 +212,11 @@ try {
   });
   assert(envStatus.ok === true, `status via VIBE_REMOTE_URL failed: ${JSON.stringify(envStatus)}`);
   assert(envStatus.extensionConnected === true, `VIBE_REMOTE_URL should connect extension: ${JSON.stringify(envStatus)}`);
-  assert(envStatus.sessionId === REDACTED_REMOTE_ID, `VIBE_REMOTE_URL should redact sessionId: ${JSON.stringify(envStatus)}`);
+  assert(envStatus.sessionId === undefined, `VIBE_REMOTE_URL status should have no synthetic sessionId: ${JSON.stringify(envStatus)}`);
 
   const sessions = await runCli(['sessions']);
   assert(Array.isArray(sessions.sessions) && sessions.sessions.length === 1, `sessions missing session list: ${JSON.stringify(sessions)}`);
-  assert(sessions.sessions[0].sessionId === REDACTED_REMOTE_ID, `remote session id should be redacted: ${JSON.stringify(sessions)}`);
+  assert(sessions.sessions[0].sessionId === undefined, `remote session id should be absent, not a placeholder: ${JSON.stringify(sessions)}`);
 
   const tabs = await runCli(['tabs']);
   assert(Array.isArray(tabs.pages) && tabs.pages.length === 2, `tabs missing pages: ${JSON.stringify(tabs)}`);

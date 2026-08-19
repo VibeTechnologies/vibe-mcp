@@ -234,7 +234,7 @@ async function main() {
     assert(!conn.authorization, `browser-cli must not send Authorization header (UUID-only auth): got "${conn.authorization}"`);
     assert(cliStatus.json?.ok === true, `browser-cli status failed: ${cliStatus.stdout}\n${cliStatus.stderr}`);
     assert(cliStatus.json?.mode === 'remote', `browser-cli status mode mismatch: ${cliStatus.stdout}`);
-    assert(cliStatus.json?.sessionId === '[redacted]', `browser-cli status sessionId should be redacted: ${cliStatus.stdout}`);
+    assert(cliStatus.json?.sessionId === undefined, `browser-cli status should have no synthetic sessionId: ${cliStatus.stdout}`);
     assert(!cliStatus.stdout.includes(UUID), `browser-cli status leaked remote UUID: ${cliStatus.stdout}`);
     console.log('  browser-cli UUID-only connect, no Authorization header sent: PASS');
 

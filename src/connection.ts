@@ -928,7 +928,6 @@ export class ExtensionConnection extends EventEmitter {
   async listSessions(timeoutMs: number = 5_000): Promise<RelaySessionSummary[]> {
     if (this.remoteConfig) {
       const session: RelaySessionSummary = {
-        sessionId: REDACTED_REMOTE_ID,
         connected: this.extensionConnected,
         toolCount: this.tools.length,
       };

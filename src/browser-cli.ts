@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, extname, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
-import { ExtensionConnection, redactRemoteTarget, REDACTED_REMOTE_ID } from './connection.js';
+import { ExtensionConnection, redactRemoteTarget } from './connection.js';
 import { ChromeUseConnection, type CdpConnector } from './chrome-use-connection.js';
 import { DEFAULT_WS_PORT, type RelaySessionSummary, type ToolDefinition, type ToolResult } from './types.js';
 
@@ -1447,7 +1447,7 @@ export class BrowserCliContext {
       return undefined;
     }
     if (this.remoteUuid) {
-      return REDACTED_REMOTE_ID;
+      return undefined;
     }
 
     const connectedSessionIds = new Set(
@@ -1768,10 +1768,11 @@ function formatHumanOutput(commandName: string, output: CommandOutput): string {
         return 'No browser sessions connected';
       }
       return sessions.map((session, index) => {
-        const selected = output.sessionId === session.sessionId ? ' [selected]' : '';
+        const selected = output.sessionId !== undefined && output.sessionId === session.sessionId ? ' [selected]' : '';
         const connected = session.connected ? 'connected' : 'disconnected';
         const tools = session.toolCount !== undefined ? ` tools=${session.toolCount}` : '';
-        return `${index + 1}. ${session.sessionId}${selected} - ${connected}${tools}`;
+        const label = session.sessionId !== undefined ? session.sessionId : '(remote)';
+        return `${index + 1}. ${label}${selected} - ${connected}${tools}`;
       }).join('\n');
     }
     case 'tabs':

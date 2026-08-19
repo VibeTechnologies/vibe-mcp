@@ -35,7 +35,7 @@ export type ServerTransportMode = 'stdio' | 'http';
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected';
 
 export interface RelaySessionSummary {
-  sessionId: string;
+  sessionId?: string;
   connected: boolean;
   connectedAt?: number;
   toolCount?: number;

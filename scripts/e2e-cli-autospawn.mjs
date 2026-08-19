@@ -366,7 +366,7 @@ async function main() {
       assert(data.ok === true, `D: remote status not ok: ${JSON.stringify(data)}`);
       assert(data.mode === 'remote', `D: expected remote mode: ${JSON.stringify(data)}`);
       assert(data.extensionConnected === true, `D: remote extension should be connected: ${JSON.stringify(data)}`);
-      assert(data.sessionId === '[redacted]', `D: expected redacted remote session: ${JSON.stringify(data)}`);
+      assert(data.sessionId === undefined, `D: expected no synthetic remote sessionId: ${JSON.stringify(data)}`);
 
       // Proof of bypass: no local relay was spawned → no local pidfile, and the
       // local agent port stays closed.

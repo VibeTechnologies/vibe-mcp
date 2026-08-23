@@ -2146,9 +2146,14 @@ function withNavigateArgs(tool: ToolDefinition, url: string, timeoutMs?: number)
 function withPageArgs(tool: ToolDefinition, id: string): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   const numeric = Number.parseInt(id, 10);
-  const key = hasProperty(tool, 'pageId', 'tabId', 'id');
+  // chrome-use's select_tab/close_tab tools declare their target parameter as
+  // `tab` (a raw "t1"/"t2" style id string), not pageId/tabId/id — without this,
+  // hasProperty() never matches and focus/close silently send {}, which makes
+  // select_tab throw "tab is required" and makes close_tab fall back to closing
+  // whatever tab happens to be active instead of the one the caller asked for.
+  const key = hasProperty(tool, 'pageId', 'tabId', 'id', 'tab');
   if (key) {
-    args[key] = Number.isFinite(numeric) && String(numeric) === id ? numeric : id;
+    args[key] = key === 'tab' ? id : Number.isFinite(numeric) && String(numeric) === id ? numeric : id;
   }
   return args;
 }

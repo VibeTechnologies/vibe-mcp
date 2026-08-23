@@ -27,6 +27,7 @@ import {
   scrollBy,
 } from './chrome-use/input.js';
 import type { CdpClient, TabSession } from './chrome-use/types.js';
+import { isRestrictedUrl, RESTRICTED_PAGE_CAPTURE_BLOCKED } from './chrome-use/restricted-url.js';
 import type { ToolDefinition, ToolResult, ToolResultContent } from './types.js';
 
 const UNAVAILABLE_PREFIX = 'chrome-use DevTools backend unavailable';
@@ -594,6 +595,16 @@ export class ChromeUseConnection extends EventEmitter {
 
   private async screenshot(args: Record<string, unknown>): Promise<ToolResult> {
     const tab = await this.session!.getActiveTab();
+    // Restricted pages (CWS gallery, chrome://*, edge://*, etc.) must fail with a
+    // typed error rather than a false success -- CDP's Page.captureScreenshot has
+    // no scripting-permission restriction and will happily return real pixels of
+    // a page the extension backend cannot capture, producing backend-inconsistent
+    // behavior for the exact same URL (issue #1858 / AGE-1310).
+    if (isRestrictedUrl(tab.url)) {
+      throw new Error(
+        `${RESTRICTED_PAGE_CAPTURE_BLOCKED}: Cannot capture screenshot of this tab (${tab.url || 'no URL loaded'}). This is a restricted page (system page, extension gallery, or similar) that Chrome does not allow capturing. Navigate to a regular webpage first.`
+      );
+    }
     const res = await this.cdp!.send<{ data?: string }>(
       'Page.captureScreenshot',
       { format: 'png', captureBeyondViewport: args.fullPage === true, fromSurface: true },

@@ -202,6 +202,45 @@ function makeFakeCdp() {
   return state;
 }
 
+/**
+ * Regression fixture for the browser-cli `focus`/`close` command layer: two
+ * live page targets so `select_tab`/`close_tab` (which take a `tab` id string,
+ * not `pageId`/`tabId`/`id`) can be exercised against a *specific* tab rather
+ * than whatever tab happens to be active by default.
+ */
+function makeFakeCdpMultiTab() {
+  const closedTargetIds = [];
+  const state = {
+    connected: true,
+    closedTargetIds,
+    close() { state.connected = false; },
+    on() { return () => {}; },
+    async send(method, params = {}) {
+      switch (method) {
+        case 'Browser.getVersion':
+          return { product: 'HeadlessChrome/144.0.0' };
+        case 'Target.getTargets':
+          return {
+            targetInfos: [
+              { targetId: 'T1', type: 'page', url: 'https://mail.example.com/' },
+              { targetId: 'T2', type: 'page', url: 'https://github.example.com/settings/tokens' },
+            ],
+          };
+        case 'Target.attachToTarget':
+          return { sessionId: params.targetId === 'T2' ? 'S2' : 'S1' };
+        case 'Target.detachFromTarget':
+          return {};
+        case 'Target.closeTarget':
+          closedTargetIds.push(params.targetId);
+          return {};
+        default:
+          return {};
+      }
+    },
+  };
+  return state;
+}
+
 async function main() {
   const relayPort = await findFreePort();
   const httpPort = await findFreePort();
@@ -367,6 +406,52 @@ async function main() {
       assert(evalOut.ok !== false, `cli evaluate failed: ${JSON.stringify(evalOut)}`);
     } finally {
       await cliCtx.shutdown();
+    }
+
+    // Regression for withPageArgs: chrome-use's select_tab/close_tab tools
+    // declare their target parameter as `tab` (a "t1"/"t2" id), not
+    // pageId/tabId/id. Before the fix, `focus <id>`/`close <id>` always sent
+    // `{}` to those tools — select_tab threw "tab is required" outright, and
+    // close_tab silently fell back to closing whatever tab happened to be
+    // active instead of the tab the caller named. Prove both commands now
+    // resolve and act on the *specific* tab id passed on the CLI, against a
+    // fixture with two distinct live targets so a wrong-tab close is provable.
+    const multiTabCdp = makeFakeCdpMultiTab();
+    const multiTabCtx = new BrowserCliContext({
+      port: 0,
+      debug: false,
+      devtools: true,
+      profile: 'user',
+      json: true,
+      timeoutMs: 10_000,
+      chromeUseConnector: { connect: async () => multiTabCdp },
+    });
+    await multiTabCtx.connect();
+    try {
+      // The fixture registers T1 (mail.example.com) then T2
+      // (github.example.com) via Target.getTargets, so chrome-use's
+      // SessionManager assigns them 't1'/'t2' in that same order — asserted
+      // via the raw tabs listing rather than the (separately broken, and out
+      // of scope here) structured `pages` extractor, which does not yet parse
+      // chrome-use's "t1  <url>" list_tabs text format.
+      const tabsOut = await multiTabCtx.listPages();
+      assert(tabsOut.ok !== false, `cli tabs failed: ${JSON.stringify(tabsOut)}`);
+      const tabsText = tabsOut.raw?.content?.[0]?.text ?? '';
+      assert(/t1\s+https:\/\/mail\.example\.com/.test(tabsText), `Expected t1=mail tab in: ${tabsText}`);
+      assert(/t2\s+https:\/\/github\.example\.com/.test(tabsText), `Expected t2=github tab in: ${tabsText}`);
+
+      const focusOut = await multiTabCtx.focus('t2');
+      assert(focusOut.ok !== false, `cli focus failed (regression: select_tab "tab is required"): ${JSON.stringify(focusOut)}`);
+
+      const closeOut = await multiTabCtx.close('t2');
+      assert(closeOut.ok !== false, `cli close failed: ${JSON.stringify(closeOut)}`);
+      assert(
+        multiTabCdp.closedTargetIds.length === 1 && multiTabCdp.closedTargetIds[0] === 'T2',
+        `Expected close('t2') to target only T2 (github tab), got: ${JSON.stringify(multiTabCdp.closedTargetIds)} ` +
+          '(regression: withPageArgs silently sent {} and close_tab fell back to closing the active/default tab)',
+      );
+    } finally {
+      await multiTabCtx.shutdown();
     }
 
     console.log('devtools flag e2e ok');

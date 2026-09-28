@@ -97,6 +97,37 @@ remote). For those requests:
 
 Use `npx -y @vibebrowser/cli@latest` when the user wants OpenClaw to drive their real local browser through the Vibe extension.
 
+### CLI installation and PATH fallback
+
+`npx` is the required portable path and should work without a global install. On a
+long-lived agent host, optionally install a direct command:
+
+```bash
+npm install -g @vibebrowser/cli@latest
+command -v vibebrowser-cli
+vibebrowser-cli --version
+vibebrowser-cli --remote "<remote>" --json status
+```
+
+A successful `npm install -g` does **not** prove a service agent can resolve the
+command: launchd/container PATH can omit npm's global bin directory. If
+`command -v vibebrowser-cli` fails, immediately use the portable fallback instead:
+
+```bash
+npx -y @vibebrowser/cli@latest --remote "<remote>" --json status
+```
+
+**Always pass the saved remote to `status`.** A bare `status` (no `--remote` and no
+remote env var) only probes the *local* relay and reports `extensionConnected: false`
+even when the extension is healthy and connected through the internet relay
+(`relay.api.vibebrowser.app`, shown in extension Settings as "Relay (internet) —
+connected"). That result is NOT evidence the extension is off. Healthy remote status:
+`mode: "remote"`, `extensionConnected: true`, `toolCount > 0`.
+
+Do not claim the Vibe Browser path is unavailable until the `--remote` status command fails
+with its exact error. This fallback still uses the Vibe extension relay; it is not a
+Chrome DevTools/CDP fallback and does not require a remote-debugging approval dialog.
+
 Prefer this skill when the task depends on:
 
 - the user's real browser profile

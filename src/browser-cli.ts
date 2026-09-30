@@ -258,7 +258,7 @@ function registerBrowserSubcommands(browser: Command): void {
   browser
     .command('snapshot')
     .description('Capture a textual browser snapshot')
-    .option('--format <format>', 'Snapshot format: "ai" (default, content-script markdown — may fail on background tabs or complex SPAs) or "aria" (CDP accessibility tree — reliable for all tabs)', 'ai')
+    .option('--format <format>', 'Snapshot format: "markdown" (default, content-script markdown — may fail on background tabs or complex SPAs; "ai" is a legacy alias) or "aria" (CDP accessibility tree — reliable for all tabs)', 'markdown')
     .option('--limit <count>', 'Max visible lines/items to print in human mode')
     .option('--interactive', 'Prefer interactive/ARIA-flavored snapshot output', false)
     .option('--selector <selector>', 'Selector to scope the snapshot to')
@@ -270,7 +270,7 @@ function registerBrowserSubcommands(browser: Command): void {
     .action(async function (this: Command) {
       await runBrowserCommand(this, 'snapshot', true, async (ctx, options) =>
         ctx.snapshot({
-          format: String(options.format || 'ai'),
+          format: canonicalSnapshotFormat(String(options.format || 'markdown')),
           limit: options.limit ? parsePositiveInteger(String(options.limit), '--limit') : undefined,
           interactive: Boolean(options.interactive),
           selector: options.selector ? String(options.selector) : undefined,
@@ -815,7 +815,8 @@ export class BrowserCliContext {
     efficient: boolean;
     labels: boolean;
   }): Promise<CommandOutput> {
-    const wantsAria = options.format === 'aria' || options.interactive || Boolean(options.selector) || Boolean(options.frame);
+    const format = canonicalSnapshotFormat(options.format);
+    const wantsAria = format === 'aria' || options.interactive || Boolean(options.selector) || Boolean(options.frame);
     const invocation = await this.callTool(
       'snapshot',
       [
@@ -825,7 +826,7 @@ export class BrowserCliContext {
           // `snapshot`. Prefer the format-specific extension tool, then fall back
           // to legacy take_snapshot / the chrome-use `snapshot`.
           names: [wantsAria ? 'take_a11y_snapshot' : 'take_md_snapshot', 'take_snapshot', 'snapshot'],
-          buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, options),
+          buildArgs: (tool: ToolDefinition) => withSnapshotArgs(tool, { ...options, format }),
         },
       ],
       {}
@@ -839,7 +840,7 @@ export class BrowserCliContext {
       mode: this.mode(),
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       tool: invocation.tool,
-      format: wantsAria ? 'aria' : options.format,
+      format: wantsAria ? 'aria' : format,
       snapshot: limitText(text, options.limit),
       raw: normalizeToolResult(invocation.result),
     };
@@ -1198,6 +1199,7 @@ export class BrowserCliContext {
             args[pageKey] = this.pageId;
           }
         }
+        await this.ensureNavigatePageId(tool, args);
         if (shouldRequestPageStateForCommand(commandName)) {
           const pageStateKey = hasProperty(tool, 'pageStateFormat', 'page_state_format');
           if (pageStateKey && !('pageStateFormat' in args) && !('page_state_format' in args)) {
@@ -1377,6 +1379,26 @@ export class BrowserCliContext {
     return { content: latest, pageId };
   }
 
+  private async ensureNavigatePageId(tool: ToolDefinition, args: Record<string, unknown>): Promise<void> {
+    if (!isNavigatePageTool(tool.name)) {
+      return;
+    }
+    const pageKey = hasProperty(tool, 'pageId', 'tabId');
+    if (!pageKey || hasFinitePageId(args[pageKey])) {
+      return;
+    }
+    const resolved = await this.resolveActivePageId();
+    if (resolved !== undefined) {
+      args[pageKey] = resolved;
+    }
+  }
+
+  private async resolveActivePageId(): Promise<number | undefined> {
+    const pages = await this.listPagesForRecovery(this.timeoutMs);
+    const active = pages.find((page) => page.active === true);
+    return coercePageId(active?.id);
+  }
+
   private async listPagesForRecovery(timeoutMs: number): Promise<PageSummary[]> {
     try {
       await this.ensureToolsLoaded(timeoutMs);
@@ -1417,6 +1439,10 @@ export class BrowserCliContext {
     const pageStateKey = hasProperty(snapshotTool, 'pageStateFormat', 'page_state_format');
     if (pageStateKey) {
       args[pageStateKey] = 'markdown';
+    }
+    const formatKey = hasProperty(snapshotTool, 'format');
+    if (formatKey && !(formatKey in args)) {
+      args[formatKey] = 'markdown';
     }
 
     try {
@@ -2097,6 +2123,37 @@ function hasProperty(tool: ToolDefinition, ...names: string[]): string | undefin
   return names.find((name) => Object.prototype.hasOwnProperty.call(properties, name));
 }
 
+function isNavigatePageTool(name: string): boolean {
+  const normalized = normalizeName(name);
+  return normalized === 'navigate_page' || normalized === 'navigate_to_url' || normalized === 'navigate';
+}
+
+function hasFinitePageId(value: unknown): boolean {
+  return coercePageId(value) !== undefined;
+}
+
+function coercePageId(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    const parsed = Number.parseInt(value, 10);
+    if (parsed > 0) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+/** Extension take_snapshot accepts markdown|accessibility_tree|aria. Legacy CLI default "ai" is markdown. */
+function canonicalSnapshotFormat(format: string | undefined): string {
+  const value = String(format ?? '').trim().toLowerCase();
+  if (value === '' || value === 'ai') {
+    return 'markdown';
+  }
+  return value;
+}
+
 function withCanonicalArgs(tool: ToolDefinition, canonicalArgs: Record<string, unknown>): Record<string, unknown> {
   const output: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(canonicalArgs)) {
@@ -2167,7 +2224,7 @@ function withSnapshotArgs(
   },
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
-  maybeAssign(args, tool, 'format', options.format);
+  maybeAssign(args, tool, 'format', canonicalSnapshotFormat(options.format));
   // chrome-use `snapshot` tool: interactive-only flag.
   maybeAssign(args, tool, 'interactive', options.interactive || undefined);
   maybeAssign(args, tool, 'selector', options.selector);

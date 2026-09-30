@@ -36,6 +36,8 @@ const ONE_PIXEL_PNG_BASE64 =
 
 // When true, list_pages returns plain-text format (like the real extension does)
 let listPagesPlainText = false;
+let exposedTools = null;
+const observedCalls = [];
 
 const TOOLS = [
   tool('list_pages', {}),
@@ -91,7 +93,7 @@ try {
         ws.send(JSON.stringify({
           type: 'tools_list',
           requestId: message.requestId,
-          data: TOOLS,
+          data: exposedTools ?? TOOLS,
         }));
         return;
       }
@@ -108,6 +110,10 @@ try {
       }
 
       if (message.type === 'call_tool') {
+        observedCalls.push({
+          name: message.data?.name,
+          arguments: message.data?.arguments ?? {},
+        });
         if (credentialToolResultMode) {
           ws.send(JSON.stringify({
             type: 'tool_result',
@@ -247,6 +253,16 @@ try {
   assert(navigatedTimeout.ok === true && navigatedTimeout.tool === 'navigate_page', `navigate with timeout failed: ${JSON.stringify(navigatedTimeout)}`);
   assert(navigatedTimeout.raw?.timeoutMs === 12345, `navigate should pass timeoutMs=12345: ${JSON.stringify(navigatedTimeout.raw)}`);
 
+  // navigate without --page-id must resolve the active page before navigate_page
+  // so extensions that still require pageId accept the call.
+  missingPageIdMode = true;
+  observedCalls.length = 0;
+  const navigatedActive = await runCli(['navigate', 'https://example.com/active']);
+  assert(navigatedActive.ok === true && navigatedActive.tool === 'navigate_page', `navigate without --page-id failed: ${JSON.stringify(navigatedActive)}`);
+  const activeNavCall = observedCalls.filter((call) => call.name === 'navigate_page').at(-1);
+  assert(activeNavCall?.arguments?.pageId === 1, `navigate without --page-id should send the active page id: ${JSON.stringify(observedCalls)}`);
+  missingPageIdMode = false;
+
   const closed = await runCli(['close', '2']);
   assert(closed.ok === true && closed.tool === 'close_page', `close failed: ${JSON.stringify(closed)}`);
   assert(closed.pageContent === undefined, `close should never include fallback pageContent: ${JSON.stringify(closed)}`);
@@ -306,7 +322,7 @@ try {
   //   - tool-only snapshot path must be used consistently
   //   - snapshot --format aria with --page-id must inject pageId
 
-  // #907 / #906: snapshot --format ai (default) with --page-id should use
+  // #907 / #906: default snapshot (markdown; legacy alias ai) with --page-id should use
   // take_md_snapshot and inject pageId into the tool call.
   const snapshotWithPage = await runCli(['--page-id', '3', 'snapshot']);
   assert(snapshotWithPage.ok === true, `snapshot --page-id failed: ${JSON.stringify(snapshotWithPage)}`);
@@ -323,6 +339,36 @@ try {
     `aria snapshot should use take_a11y_snapshot, got: ${ariaWithPage.tool}`);
   assert(ariaWithPage.raw?.pageId === 5,
     `aria snapshot --page-id 5 should inject pageId=5: ${JSON.stringify(ariaWithPage.raw)}`);
+
+  // Strict take_snapshot (no take_md_snapshot) must receive a Zod-legal format.
+  // Default and legacy --format ai both send markdown; aria is unchanged.
+  exposedTools = [
+    tool('take_snapshot', {
+      format: { type: 'string', enum: ['markdown', 'accessibility_tree', 'aria'] },
+      pageId: { type: 'number' },
+    }),
+  ];
+  observedCalls.length = 0;
+  const strictDefault = await runCli(['snapshot']);
+  assert(strictDefault.ok === true && strictDefault.tool === 'take_snapshot', `strict default snapshot failed: ${JSON.stringify(strictDefault)}`);
+  assert(strictDefault.format === 'markdown', `default snapshot format should be markdown: ${JSON.stringify(strictDefault)}`);
+  const defaultSnapCall = observedCalls.filter((call) => call.name === 'take_snapshot').at(-1);
+  assert(defaultSnapCall?.arguments?.format === 'markdown', `default snapshot args should send format markdown: ${JSON.stringify(defaultSnapCall)}`);
+
+  observedCalls.length = 0;
+  const strictAi = await runCli(['snapshot', '--format', 'ai']);
+  assert(strictAi.ok === true && strictAi.tool === 'take_snapshot', `strict ai snapshot failed: ${JSON.stringify(strictAi)}`);
+  assert(strictAi.format === 'markdown', `legacy ai format should be reported as markdown: ${JSON.stringify(strictAi)}`);
+  const aiSnapCall = observedCalls.filter((call) => call.name === 'take_snapshot').at(-1);
+  assert(aiSnapCall?.arguments?.format === 'markdown', `legacy ai snapshot args should map to markdown: ${JSON.stringify(aiSnapCall)}`);
+
+  observedCalls.length = 0;
+  const strictAria = await runCli(['snapshot', '--format', 'aria']);
+  assert(strictAria.ok === true && strictAria.tool === 'take_snapshot', `strict aria snapshot failed: ${JSON.stringify(strictAria)}`);
+  assert(strictAria.format === 'aria', `aria format should stay aria: ${JSON.stringify(strictAria)}`);
+  const ariaSnapCall = observedCalls.filter((call) => call.name === 'take_snapshot').at(-1);
+  assert(ariaSnapCall?.arguments?.format === 'aria', `aria snapshot args should stay aria: ${JSON.stringify(ariaSnapCall)}`);
+  exposedTools = null;
 
   // snapshot without --page-id should still use tool-only snapshot path.
   const snapshotNoPage = await runCli(['snapshot']);

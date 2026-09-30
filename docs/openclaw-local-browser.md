@@ -163,7 +163,7 @@ The connector URL (preferred) and `--remote <uuid>` both use the default public 
 
 `snapshot` is tool-only and maps to the specific snapshot tool for the requested format:
 
-- default (`--format ai`) -> `take_md_snapshot`
+- default (`--format markdown`; legacy alias `--format ai`, sent as `markdown`) -> `take_md_snapshot`
 - ARIA (`--format aria`) -> `take_a11y_snapshot`
 
 Use `--page-id <id>` (or `--pageId <id>`) to target a specific tab without switching user focus.

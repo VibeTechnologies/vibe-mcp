@@ -269,7 +269,7 @@ If `jq` is unavailable, parse `.pages` from `tabs --json` directly and still pas
   npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json --page-id 2 click 7
   ```
 - Prefer `tabs` or `snapshot` before acting.
-- `snapshot` is tool-only: default `--format ai` maps to `take_md_snapshot`; `--format aria` maps to `take_a11y_snapshot`.
+- `snapshot` is tool-only: default `--format markdown` (legacy alias `--format ai`, mapped to `markdown` before the tool call) maps to `take_md_snapshot`; `--format aria` maps to `take_a11y_snapshot`.
 - Use `open <url>` to create a fresh page when possible. It opens a **background** tab and returns the new page id (`... (ID: <n>) ...`); pass that id as `--page-id` to any follow-up snapshot/evaluate/click — a bare follow-up reads the old active tab, not the page you just opened.
 - Use `evaluate --fn ...` only for simple compatibility-safe expressions such as:
   - `() => 21 + 21`
@@ -337,16 +337,16 @@ Evaluate JavaScript:
 npx -y @vibebrowser/cli@latest --remote "$VIBE_REMOTE_URL" --json evaluate --fn '() => document.title'
 ```
 
-## Snapshot format: `ai` vs `aria`
+## Snapshot format: `markdown` vs `aria`
 
 The `snapshot` command supports two extraction formats:
 
 | Format | Flag | Engine | Best for |
 |--------|------|--------|----------|
-| `ai` (default) | `--format ai` | Content script (in-page JS) | Simple pages, articles, search results |
+| `markdown` (default) | `--format markdown` (legacy alias `--format ai`) | Content script (in-page JS) | Simple pages, articles, search results |
 | `aria` | `--format aria` | CDP accessibility tree | **SPAs, background tabs, Notion, Gmail, complex apps** |
 
-**When the default `--format ai` returns only the page title or empty content**, switch to `--format aria`:
+**When the default markdown snapshot returns only the page title or empty content**, switch to `--format aria`:
 
 ```bash
 # Default — may return empty for background tabs or SPAs like Notion
@@ -356,7 +356,7 @@ npx -y @vibebrowser/cli@latest ... snapshot
 npx -y @vibebrowser/cli@latest ... snapshot --format aria --interactive
 ```
 
-**Known limitations of `--format ai`:**
+**Known limitations of the default markdown snapshot (`--format ai` is a legacy alias):**
 - Returns empty for **background tabs** (content script not injected or `getBoundingClientRect` returns 0x0)
 - Returns `"Could not establish connection"` when the content script is unreachable
 - May miss content behind `aria-hidden` containers in SPAs like Notion

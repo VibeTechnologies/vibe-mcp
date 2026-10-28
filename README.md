@@ -7,6 +7,10 @@ MCP server for [Vibe AI Browser](https://vibebrowser.app) — drive your **real,
 
 > ⚠️ **Security — treat your relay URL/UUID like a password.** A relay URL or extension UUID (`wss://relay.api.vibebrowser.app/<uuid>`) grants **live control of your browser session** (read your tabs, take screenshots, read page content). Never share it, paste it into a chat with untrusted parties, or commit it to a repo. Every example UUID in this documentation is a non-routable placeholder (`YOUR-EXTENSION-UUID` or `00000000-0000-0000-0000-000000000000`) — substitute your own secret value locally and keep it out of version control.
 
+## Privacy
+
+Privacy policy: https://vibebrowser.app/privacy — what the extension, the local MCP server, and the hosted relay collect, log, and retain, including the relay's security audit records and how to revoke a connection URL.
+
 ## Install prompt for AI agents (OpenClaw / Hermes)
 
 Paste the block below into your **OpenClaw** or **Hermes** agent. Replace the last line with your remote value — the connector URL (`https://relay.api.vibebrowser.app/mcp/<uuid>`) shown in the Vibe extension's **Settings → AI Agent Control → Remote (internet) → Relay access** (a bare UUID or a `wss://` relay URL also still work). That's the only edit you make.

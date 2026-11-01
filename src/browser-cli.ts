@@ -666,6 +666,21 @@ export class BrowserCliContext {
       ? this.connection.getLastClose()
       : null;
 
+    // Liveness contracts (#2318 G1/G2/G5): status reports responsiveness
+    // from a dispatcher-path ping probe (3 s deadline), never from socket
+    // state alone, and names exactly one extensionState.
+    let extensionResponsive: boolean | undefined;
+    let extensionState: string | undefined;
+    let extensionReconnecting = false;
+    let extensionProbeMs: number | null = null;
+    if (this.connection instanceof ExtensionConnection) {
+      const extension = this.connection;
+      extensionReconnecting = extension.isExtensionReconnecting();
+      extensionState = await extension.measureExtensionState();
+      extensionResponsive = extensionState === 'connected-responsive';
+      extensionProbeMs = extension.getLastProbeDurationMs();
+    }
+
     return {
       ok: !shouldFailClosed,
       command: 'status',
@@ -677,6 +692,9 @@ export class BrowserCliContext {
       ignoredCompatibilityOptions: this.ignoredCompatibilityOptions,
       relayConnected,
       extensionConnected,
+      ...(extensionState !== undefined ? { extensionResponsive, extensionState } : {}),
+      ...(extensionProbeMs !== null ? { extensionProbeMs } : {}),
+      ...(extensionReconnecting ? { extensionReconnecting: true } : {}),
       ...(relayClose
         ? { relayCloseCode: relayClose.code, relayCloseReason: relayClose.reason }
         : {}),
@@ -1758,11 +1776,15 @@ function emitError(
   }
   if (asJson) {
     const context = ctx.outputContext();
+    // G3 (#2318): preserve the structured errorCode from extension error
+    // replies in --json output so callers can branch on it.
+    const errorCode = (error as { errorCode?: unknown } | null | undefined)?.errorCode;
     console.log(JSON.stringify({
       ok: false,
       command: commandName,
       ...context,
       error: message,
+      ...(typeof errorCode === 'string' ? { errorCode } : {}),
     }, null, 2));
     return;
   }
@@ -1783,6 +1805,15 @@ function formatHumanOutput(commandName: string, output: CommandOutput): string {
         output.relayCloseCode !== undefined ? `Relay close code: ${String(output.relayCloseCode)}` : null,
         output.relayCloseReason ? `Relay close reason: ${String(output.relayCloseReason)}` : null,
         `Extension connected: ${boolText(output.extensionConnected)}`,
+        output.extensionResponsive !== undefined ? `Extension responsive: ${boolText(output.extensionResponsive)}` : null,
+        output.extensionState ? `Extension state: ${String(output.extensionState)}` : null,
+        output.extensionState === 'unknown-session'
+          ? 'Extension: session unknown to relay — relay may have restarted; reopen Chrome / check the extension'
+          : null,
+        output.extensionState === 'known-offline'
+          ? 'Extension: known to relay but offline — open Chrome with the Vibe extension enabled'
+          : null,
+        output.extensionReconnecting ? 'Extension reconnecting: yes (waiting out the reconnect grace window)' : null,
         `Managed lifecycle: ${boolText(output.managedLifecycle)}`,
         output.toolCount !== undefined ? `Tools: ${String(output.toolCount)}` : null,
         output.note ? String(output.note) : null,

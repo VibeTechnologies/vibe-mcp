@@ -127,6 +127,12 @@ function startFakeRelay({ port, uuid, toolName }) {
         return;
       }
 
+      if (message.type === 'ping') {
+        // Real-shape fixture (#2318): relay forwards ping to the extension,
+        // which replies {type:'connected', requestId}; relayed back verbatim.
+        ws.send(JSON.stringify({ type: 'connected', requestId: message.requestId }));
+        return;
+      }
       if (message.type === 'list_tools') {
         ws.send(JSON.stringify({ type: 'tools_list', requestId: message.requestId, data: [tool(toolName)] }));
         return;

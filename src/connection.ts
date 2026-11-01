@@ -34,6 +34,30 @@ const NO_CONNECTION_REMOTE_MESSAGE = `No connection to Vibe extension via remote
 
 const RELAY_CONNECT_TIMEOUT = 10000;
 const RELAY_RECONNECT_DELAY = 2000;
+
+/**
+ * Liveness contracts (#2318, TDD §7 G1/G2/G5).
+ * The responsiveness probe is a dispatcher-path `ping` (agent -> relay ->
+ * extension, the same path as call_tool) with a hard 3 s deadline — never
+ * the relay-local JSON-RPC ping, never socket-level ws.ping(), and never
+ * the 120 s relay request timeout.
+ */
+export const EXTENSION_PROBE_TIMEOUT_MS = 3_000;
+/** AGE-62 reconnect grace the CLI waits out on the extension_reconnecting broadcast (G5). */
+export const EXTENSION_RECONNECT_GRACE_MS = 10_000;
+export const UNKNOWN_SESSION_MESSAGE = 'Session unknown to relay — this session is unknown to the relay process; the relay may have restarted. Reopen Chrome / check the extension, then retry.';
+export type ExtensionState = 'unknown-session' | 'known-offline' | 'connected-responsive' | 'connected-unresponsive';
+
+/** Error carrying a structured errorCode across the relay (G3), preserved for --json output. */
+export class RelayRequestError extends Error {
+  errorCode?: string;
+
+  constructor(message: string, errorCode?: string) {
+    super(message);
+    this.name = 'RelayRequestError';
+    this.errorCode = errorCode;
+  }
+}
 export const DEFAULT_RELAY_HANDSHAKE_TIMEOUT_MS = 10_000;
 export const REDACTED_REMOTE_ID = '[redacted]';
 
@@ -328,6 +352,11 @@ export class ExtensionConnection extends EventEmitter {
   private remoteUpdate: Promise<void> = Promise.resolve();
   private reconnectSuppressed = false;
   private lastClose: { code: number; reason: string } | null = null;
+  /** Set when the relay's pre-close {code:'unknown_session'} frame arrives (#2318 G2). */
+  private sessionUnknown = false;
+  /** Timestamp of the latest extension_reconnecting broadcast, or null (G5). */
+  private reconnectingSince: number | null = null;
+  private lastProbeDurationMs: number | null = null;
   private readonly handshakeTimeoutMs: number;
 
   constructor(
@@ -565,6 +594,8 @@ export class ExtensionConnection extends EventEmitter {
           this.log('Connected to relay');
           this.status = 'connected';
           this.lastClose = null;
+          this.sessionUnknown = false;
+          this.reconnectingSince = null;
           this.emit('connected');
           settleResolve();
         });
@@ -602,6 +633,7 @@ export class ExtensionConnection extends EventEmitter {
             this.log(this.formatCloseMessage(code, reason));
           }
           this.ws = null;
+          this.reconnectingSince = null;
           this.status = 'disconnected';
           this.rejectPendingRequests(closeError);
           this.clearExtensionState();
@@ -734,10 +766,31 @@ export class ExtensionConnection extends EventEmitter {
   private handleMessage(message: ExtensionMessage): void {
     this.log(`Received: ${message.type}`);
 
+    // G5 (#2318): the relay broadcasts this when the extension socket drops
+    // or re-authenticates. Mark the session reconnecting so calls initiated
+    // in the window wait out the AGE-62 grace instead of failing raw, and
+    // status can report the window distinctly.
+    if (message.type === 'extension_reconnecting') {
+      this.reconnectingSince = Date.now();
+      this.emit('extension_reconnecting');
+      return;
+    }
+
+    // G2 (#2318): pre-close frame sent on the agent socket right before the
+    // relay closes it with 4004 — the session is unknown to this relay
+    // process (e.g. it restarted and wiped registrations).
+    if (message.type === 'error' && !message.requestId && message.code === 'unknown_session') {
+      this.sessionUnknown = true;
+      this.emit('session_unknown');
+      return;
+    }
+
     // Handle extension status updates
     if (message.type === 'extension_status') {
       if (message.connected) {
         this.extensionConnected = true;
+        this.sessionUnknown = false;
+        this.reconnectingSince = null;
         this.emit('extension_status', true);
       } else {
         this.rejectPendingRequests(new Error('Extension disconnected from relay'));
@@ -747,6 +800,7 @@ export class ExtensionConnection extends EventEmitter {
     }
 
     if (message.type === 'extension_disconnected') {
+      this.reconnectingSince = null;
       this.rejectPendingRequests(new Error('Extension disconnected from relay'));
       this.clearExtensionState();
       this.emit('extension_disconnected');
@@ -773,7 +827,12 @@ export class ExtensionConnection extends EventEmitter {
           const errorMessage = typeof message.error === 'string' ? message.error : 'Unknown relay error';
           clearTimeout(pending.timeout);
           this.pendingRequests.delete(message.requestId);
-          pending.reject(new Error(this.redactRemoteCredential(errorMessage)));
+          // G3 (#2318): preserve the extension's structured errorCode so
+          // callers can branch on it instead of the raw message text.
+          pending.reject(new RelayRequestError(
+            this.redactRemoteCredential(errorMessage),
+            message.errorCode || message.code,
+          ));
         } else {
           let payload: unknown = message.data;
           if (message.type === 'tool_result') {
@@ -817,6 +876,10 @@ export class ExtensionConnection extends EventEmitter {
     // Handle unsolicited messages
     switch (message.type) {
       case 'tools_list':
+        // A fresh tools_list means the extension (re-)registered: any
+        // reconnecting window and any stale unknown-session flag are over.
+        this.sessionUnknown = false;
+        this.reconnectingSince = null;
         this.tools = message.data as ToolDefinition[];
         if (this.remoteConfig) {
           this.extensionConnected = true;
@@ -835,11 +898,42 @@ export class ExtensionConnection extends EventEmitter {
   /**
    * Send a message to the extension via relay and wait for response
    */
+  /**
+   * G5 (#2318): a call initiated during the extension_reconnecting window
+   * waits out the remainder of the AGE-62 grace (10 s). If the extension
+   * re-registers inside the window the flag clears and the call dispatches;
+   * if the window expires, the call fails with the reconnecting state
+   * surfaced in the error — never as a bare inner error.
+   */
+  private async waitOutReconnectWindow(): Promise<void> {
+    if (this.reconnectingSince === null) {
+      return;
+    }
+    const deadline = this.reconnectingSince + EXTENSION_RECONNECT_GRACE_MS;
+    while (this.reconnectingSince !== null) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) {
+        this.reconnectingSince = null;
+        throw new RelayRequestError(
+          `Extension reconnecting: the session was reconnecting for the full ${EXTENSION_RECONNECT_GRACE_MS / 1000}s grace window and the extension did not re-register`,
+          'extension_reconnecting',
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.min(100, remaining)));
+    }
+  }
+
   private async sendRequest<T>(
     type: ServerMessage['type'],
     data?: ServerMessage['data'],
     timeoutMs: number = 30000
   ): Promise<T> {
+    if (!this.ws || this.status !== 'connected') {
+      throw new Error('Not connected to relay');
+    }
+
+    await this.waitOutReconnectWindow();
+
     if (!this.ws || this.status !== 'connected') {
       throw new Error('Not connected to relay');
     }
@@ -907,6 +1001,11 @@ export class ExtensionConnection extends EventEmitter {
 
   getConnectionErrorMessage(): string {
     if (this.remoteConfig) {
+      // G2 (#2318): decode the 4004/unknown_session case into its actual
+      // meaning instead of surfacing the bare close reason.
+      if (this.isSessionUnknown()) {
+        return UNKNOWN_SESSION_MESSAGE;
+      }
       if (this.lastClose) {
         return `${this.formatCloseMessage(this.lastClose.code, this.lastClose.reason)}. ${NO_CONNECTION_REMOTE_MESSAGE}`;
       }
@@ -1024,6 +1123,66 @@ export class ExtensionConnection extends EventEmitter {
    */
   isExtensionConnected(): boolean {
     return this.extensionConnected;
+  }
+
+  /** True when the relay told us (pre-close frame or the 4004 close itself) that this session is unknown to its process (#2318 G2). */
+  isSessionUnknown(): boolean {
+    return this.sessionUnknown || this.lastClose?.code === 4004;
+  }
+
+  /** True while inside the AGE-62 reconnect grace after an extension_reconnecting broadcast (#2318 G5). */
+  isExtensionReconnecting(): boolean {
+    return this.reconnectingSince !== null
+      && Date.now() - this.reconnectingSince < EXTENSION_RECONNECT_GRACE_MS;
+  }
+
+  getLastProbeDurationMs(): number | null {
+    return this.lastProbeDurationMs;
+  }
+
+  /**
+   * G1 responsiveness probe (#2318): a `ping` through the dispatcher path
+   * (agent -> relay -> extension, answered by the extension's own message
+   * handler) with a hard 3 s deadline. Socket state alone never counts as
+   * responsive; during the reconnecting window the probe is not attempted.
+   */
+  async probeExtensionResponsive(timeoutMs: number = EXTENSION_PROBE_TIMEOUT_MS): Promise<boolean> {
+    if (!this.ws || this.status !== 'connected' || !this.extensionConnected) {
+      return false;
+    }
+    if (this.isExtensionReconnecting()) {
+      return false;
+    }
+    const startedAt = Date.now();
+    try {
+      await this.sendRequest('ping', undefined, timeoutMs);
+      this.lastProbeDurationMs = Date.now() - startedAt;
+      return true;
+    } catch {
+      this.lastProbeDurationMs = Date.now() - startedAt;
+      return false;
+    }
+  }
+
+  /**
+   * The single liveness state an agent may report (#2318 G1): exactly one of
+   * unknown-session / known-offline / connected-responsive /
+   * connected-unresponsive. Never connected-responsive during the
+   * reconnecting window (G5).
+   */
+  async measureExtensionState(): Promise<ExtensionState> {
+    if (this.isSessionUnknown()) {
+      return 'unknown-session';
+    }
+    if (!this.extensionConnected) {
+      return 'known-offline';
+    }
+    if (this.isExtensionReconnecting()) {
+      return 'connected-unresponsive';
+    }
+    return (await this.probeExtensionResponsive())
+      ? 'connected-responsive'
+      : 'connected-unresponsive';
   }
 
   /**

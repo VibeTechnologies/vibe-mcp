@@ -177,6 +177,11 @@ function attachFakeExtension(extensionPort, sessionId) {
     ws.on('message', (raw) => {
       let msg;
       try { msg = JSON.parse(raw.toString()); } catch { return; }
+      if (msg.type === 'ping' && msg.requestId) {
+        // Real-shape fixture (#2318): the real extension answers a
+        // dispatcher-path ping with {type:'connected', requestId}.
+        ws.send(JSON.stringify({ type: 'connected', requestId: msg.requestId, sessionId }));
+      }
       if (msg.type === 'list_tools' && msg.requestId) {
         ws.send(JSON.stringify({ type: 'tools_list', requestId: msg.requestId, sessionId, data: FAKE_TOOLS }));
       }
@@ -224,7 +229,11 @@ function startFakeRemoteRelay(port) {
     ws.on('message', (raw) => {
       let msg;
       try { msg = JSON.parse(raw.toString()); } catch { return; }
-      if (msg.type === 'list_tools') {
+      if (msg.type === 'ping') {
+        // Real-shape fixture (#2318): relay forwards ping to the extension,
+        // which replies {type:'connected', requestId}; relayed back verbatim.
+        ws.send(JSON.stringify({ type: 'connected', requestId: msg.requestId }));
+      } else if (msg.type === 'list_tools') {
         ws.send(JSON.stringify({ type: 'tools_list', requestId: msg.requestId, data: FAKE_TOOLS }));
       } else if (msg.type === 'list_sessions') {
         ws.send(JSON.stringify({

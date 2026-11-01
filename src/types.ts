@@ -45,10 +45,14 @@ export interface RelaySessionSummary {
  * Message from extension to MCP server
  */
 export interface ExtensionMessage {
-  type: 'connected' | 'disconnected' | 'tool_result' | 'tool_progress' | 'tools_list' | 'error' | 'extension_status' | 'extension_disconnected' | 'sessions_list';
+  type: 'connected' | 'disconnected' | 'tool_result' | 'tool_progress' | 'tools_list' | 'error' | 'extension_status' | 'extension_disconnected' | 'extension_reconnecting' | 'sessions_list';
   requestId?: string;
   data?: unknown;
   error?: string;
+  /** Machine-readable code on unsolicited error frames, e.g. `unknown_session` (#2318 G2). */
+  code?: string;
+  /** Structured tool-error code from the extension, e.g. `tool_execution_failed` (#2318 G3). */
+  errorCode?: string;
   connected?: boolean;
   sessionId?: string;
   sessionIds?: string[];

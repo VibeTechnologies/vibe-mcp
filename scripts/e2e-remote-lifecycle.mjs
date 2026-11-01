@@ -924,6 +924,232 @@ async function testHttpHandshakeRejectionMatrix() {
   }
 }
 
+/**
+ * #2318 liveness contracts (TDD §7 G1/G2/G3/G5) against a fake relay that
+ * reproduces the platform relay's agent-side wire behavior: dispatcher-path
+ * ping forwarding, the unknown_session pre-close frame + 4004, placeholder
+ * extension_status for known-offline, structured errorCode replies, and the
+ * extension_reconnecting broadcast. (The same behaviors are proven against
+ * the REAL platform relay in subscriptions/relay-service/tests and against
+ * the real extension in VibeWebAgent's tests/mcp-relay.test.js.)
+ */
+function startLivenessRelay(port, uuid, { unknown = false, extConnected = true } = {}) {
+  const wss = new WebSocketServer({ host: HOST, port });
+  const state = { answerPing: true, toolErrorCode: null, extConnected };
+  let agentWs = null;
+  wss.on('connection', (ws, request) => {
+    assert(request.url === `/${uuid}`, `unexpected relay path: ${request.url}`);
+    agentWs = ws;
+    if (unknown) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        code: 'unknown_session',
+        error: 'Session unknown to this relay process; the relay may have restarted — reopen Chrome / check the extension',
+      }));
+      ws.close(4004, 'Extension not found or not connected');
+      return;
+    }
+    ws.send(JSON.stringify({ type: 'extension_status', connected: state.extConnected }));
+    if (state.extConnected) ws.send(JSON.stringify({ type: 'tools_list', data: [TOOL] }));
+    ws.on('message', (raw) => {
+      const message = JSON.parse(raw.toString());
+      if (message.type === 'ping') {
+        if (state.answerPing) ws.send(JSON.stringify({ type: 'connected', requestId: message.requestId }));
+        return;
+      }
+      if (message.type === 'list_tools') {
+        ws.send(JSON.stringify({ type: 'tools_list', requestId: message.requestId, data: [TOOL] }));
+        return;
+      }
+      if (message.type === 'call_tool') {
+        if (state.toolErrorCode) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            requestId: message.requestId,
+            error: 'Failed to list pages: boom',
+            errorCode: state.toolErrorCode,
+          }));
+          return;
+        }
+        ws.send(JSON.stringify({
+          type: 'tool_result',
+          requestId: message.requestId,
+          data: { success: true, content: [{ type: 'text', text: 'ok' }] },
+        }));
+      }
+    });
+  });
+  return {
+    url: `ws://${HOST}:${port}/${uuid}`,
+    state,
+    broadcastReconnecting() {
+      agentWs?.send(JSON.stringify({ type: 'extension_reconnecting' }));
+    },
+    reregister() {
+      state.extConnected = true;
+      agentWs?.send(JSON.stringify({ type: 'extension_status', connected: true }));
+      agentWs?.send(JSON.stringify({ type: 'tools_list', data: [TOOL] }));
+    },
+    close: async () => {
+      for (const client of wss.clients) client.terminate();
+      await new Promise((resolve, reject) => wss.close((error) => error ? reject(error) : resolve()));
+    },
+  };
+}
+
+async function waitUntil(fn, label, timeoutMs = 3_000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (fn()) return;
+    await delay(50);
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+}
+
+function livenessConnection(port, uuid) {
+  return new ExtensionConnection(0, false, {
+    uuid,
+    relayUrl: `ws://${HOST}:${port}`,
+  }, undefined, 2_000, RECONNECT_DELAY_MS);
+}
+
+async function testProbeResponsiveThenUnresponsive() {
+  const port = await findFreePort();
+  const relay = startLivenessRelay(port, UUID_A);
+  const connection = livenessConnection(port, UUID_A);
+  try {
+    await connection.start();
+    await waitUntil(() => connection.isExtensionConnected(), 'extension connected');
+
+    const stateResponsive = await connection.measureExtensionState();
+    assert(stateResponsive === 'connected-responsive', `expected connected-responsive, got ${stateResponsive}`);
+    assert(connection.getLastProbeDurationMs() < 3_000, `responsive probe took ${connection.getLastProbeDurationMs()}ms`);
+
+    // Socket stays open, extension_status still connected — but ping answers
+    // stop. The probe must report not-responsive on its own 3 s deadline.
+    relay.state.answerPing = false;
+    const probeStarted = Date.now();
+    const responsive = await connection.probeExtensionResponsive();
+    const probeElapsed = Date.now() - probeStarted;
+    assert(responsive === false, 'probe reported responsive for a silent extension');
+    assert(probeElapsed >= 2_500 && probeElapsed < 5_000, `probe deadline was ${probeElapsed}ms, expected ~3000ms`);
+    assert(connection.isExtensionConnected() === true, 'extension_status must still read connected in the wedge');
+    const stateUnresponsive = await connection.measureExtensionState();
+    assert(stateUnresponsive === 'connected-unresponsive', `expected connected-unresponsive, got ${stateUnresponsive}`);
+  } finally {
+    await connection.stop();
+    await relay.close();
+  }
+}
+
+async function testUnknownSessionFrameAndState() {
+  const port = await findFreePort();
+  const relay = startLivenessRelay(port, UUID_A, { unknown: true });
+  const connection = livenessConnection(port, UUID_A);
+  try {
+    await connection.start().catch(() => {});
+    await waitForEvent(connection, 'session_unknown', () => true).catch(() => {});
+    await delay(200);
+    assert(connection.isSessionUnknown() === true, 'unknown_session frame / 4004 close was not recorded');
+    const state = await connection.measureExtensionState();
+    assert(state === 'unknown-session', `expected unknown-session, got ${state}`);
+    const message = connection.getConnectionErrorMessage();
+    assert(/unknown/i.test(message) && /restart/i.test(message),
+      `unknown-session guidance must name the meaning, got: ${message}`);
+  } finally {
+    await connection.stop();
+    await relay.close();
+  }
+}
+
+async function testKnownOfflineState() {
+  const port = await findFreePort();
+  const relay = startLivenessRelay(port, UUID_A, { extConnected: false });
+  const connection = livenessConnection(port, UUID_A);
+  try {
+    await connection.start();
+    await delay(200);
+    const state = await connection.measureExtensionState();
+    assert(state === 'known-offline', `expected known-offline, got ${state}`);
+    assert(connection.isSessionUnknown() === false, 'known-offline must not look like unknown-session');
+  } finally {
+    await connection.stop();
+    await relay.close();
+  }
+}
+
+async function testErrorCodePreserved() {
+  const port = await findFreePort();
+  const relay = startLivenessRelay(port, UUID_A);
+  relay.state.toolErrorCode = 'tool_execution_failed';
+  const connection = livenessConnection(port, UUID_A);
+  try {
+    await connection.start();
+    await waitUntil(() => connection.isExtensionConnected(), 'extension connected');
+    let caught = null;
+    try {
+      await connection.callTool('list_pages', {});
+    } catch (error) {
+      caught = error;
+    }
+    assert(caught, 'callTool should reject on an extension error reply');
+    assert(caught.errorCode === 'tool_execution_failed',
+      `errorCode was not preserved: ${JSON.stringify({ message: caught.message, errorCode: caught.errorCode })}`);
+    assert(/Failed to list pages/.test(caught.message), `message lost: ${caught.message}`);
+  } finally {
+    await connection.stop();
+    await relay.close();
+  }
+}
+
+async function testReconnectingWindowWaitsThenDispatches() {
+  const port = await findFreePort();
+  const relay = startLivenessRelay(port, UUID_A);
+  const connection = livenessConnection(port, UUID_A);
+  try {
+    await connection.start();
+    await waitUntil(() => connection.isExtensionConnected(), 'extension connected');
+
+    // Window 1: call initiated during the window, extension re-registers 5 s
+    // in — the call must wait, then dispatch and complete with no error.
+    relay.broadcastReconnecting();
+    await delay(100);
+    assert(connection.isExtensionReconnecting() === true, 'broadcast did not mark the session reconnecting');
+    const stateDuringWindow = await connection.measureExtensionState();
+    assert(stateDuringWindow !== 'connected-responsive',
+      `status during the window must not report connected-responsive, got ${stateDuringWindow}`);
+
+    const callStarted = Date.now();
+    const callPromise = connection.callTool('list_pages', {});
+    await delay(5_000);
+    relay.reregister();
+    const result = await callPromise;
+    const waitedMs = Date.now() - callStarted;
+    assert(result?.content?.[0]?.text === 'ok', `call after re-register returned ${JSON.stringify(result)}`);
+    assert(waitedMs >= 4_500, `call dispatched after only ${waitedMs}ms; it did not wait out the window`);
+
+    // Window 2: no re-registration — the call fails only after the full 10 s
+    // grace, with the reconnecting state named in the error.
+    relay.broadcastReconnecting();
+    await delay(100);
+    const failStarted = Date.now();
+    let caught = null;
+    try {
+      await connection.callTool('list_pages', {});
+    } catch (error) {
+      caught = error;
+    }
+    const failedAfterMs = Date.now() - failStarted;
+    assert(caught, 'call in an unrecovered window should fail');
+    assert(failedAfterMs >= 9_500, `call failed after ${failedAfterMs}ms, before the 10s grace expired`);
+    assert(/reconnecting/i.test(caught.message), `error must name the reconnecting state, got: ${caught.message}`);
+    assert(caught.errorCode === 'extension_reconnecting', `errorCode should be extension_reconnecting, got ${caught.errorCode}`);
+  } finally {
+    await connection.stop();
+    await relay.close();
+  }
+}
+
 await testUrlValidation();
 await testConnectorUrlNormalization();
 await testDoubleMcpPathRedaction();
@@ -944,4 +1170,9 @@ await testReconnectRaceWithSetRemote();
 await testStopCancelsQueuedSetRemote();
 await testStopWhileConnecting();
 await testHttpHandshakeRejectionMatrix();
+await testProbeResponsiveThenUnresponsive();
+await testUnknownSessionFrameAndState();
+await testKnownOfflineState();
+await testErrorCodePreserved();
+await testReconnectingWindowWaitsThenDispatches();
 console.log('remote lifecycle e2e ok');

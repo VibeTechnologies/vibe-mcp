@@ -300,6 +300,13 @@ async function main() {
         let msg;
         try { msg = JSON.parse(raw.toString()); } catch { return; }
 
+        if (msg.type === 'ping' && msg.requestId) {
+          // Real-shape fixture (#2318): the real extension answers a
+          // dispatcher-path ping with {type:'connected', requestId}
+          // (external-client.ts handleMessage case 'ping').
+          extension.send(JSON.stringify({ type: 'connected', requestId: msg.requestId, sessionId }));
+        }
+
         if (msg.type === 'list_tools' && msg.requestId) {
           extension.send(JSON.stringify({
             type: 'tools_list',

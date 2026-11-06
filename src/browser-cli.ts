@@ -572,7 +572,6 @@ export class BrowserCliContext {
     await this.connection.start();
     if (this.connection instanceof ExtensionConnection) {
       const extension = this.connection;
-      await delay(100);
       this.sessions = await extension.listSessions(1_500).catch(() => extension.getSessions());
       await extension.waitForToolsUpdate(500);
     }
@@ -1251,6 +1250,25 @@ export class BrowserCliContext {
 
   private async ensureToolsLoaded(timeoutMs?: number): Promise<void> {
     if (this.toolsLoaded && this.tools.length > 0) {
+      return;
+    }
+    // G6 (#2415): the relay pushes its cached tool list when an agent
+    // attaches, and the connection stores it (tools_list / tools_updated).
+    // Adopt a non-empty list the connection already holds instead of
+    // paying a second, identical list_tools round trip for it — but only
+    // when that list is for the session this invocation targets. Remote
+    // mode attaches to a single session and the devtools catalog is
+    // static, so held tools are always the target's there; in local mode
+    // the push carries the default session's tools, so a `--session`
+    // invocation must still refresh to get its own session's list.
+    const heldTools = this.connection.getTools();
+    const heldToolsAreForTargetSession =
+      !(this.connection instanceof ExtensionConnection)
+      || Boolean(this.remoteUuid)
+      || !this.requestedSessionId;
+    if (heldTools.length > 0 && heldToolsAreForTargetSession) {
+      this.tools = heldTools;
+      this.toolsLoaded = true;
       return;
     }
     const effectiveTimeout = timeoutMs ?? this.timeoutMs;
